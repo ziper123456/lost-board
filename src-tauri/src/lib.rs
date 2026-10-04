@@ -68,23 +68,34 @@ async fn pick_solution() -> Result<Option<String>, String> {
     Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
 }
 
+/// A process-wide `System` kept alive so CPU usage (a delta between samples)
+/// accumulates across calls instead of resetting to 0 on every fresh instance.
+/// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
+/// is an *empty* set and yields 0 for both used and total RAM.
+fn system_handle() -> &'static std::sync::Mutex<System> {
+    use std::sync::{Mutex, OnceLock};
+    static SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
+    SYSTEM.get_or_init(|| {
+        Mutex::new(System::new_with_specifics(
+            RefreshKind::new()
+                .with_cpu(CpuRefreshKind::new().with_cpu_usage())
+                .with_memory(MemoryRefreshKind::new().with_ram()),
+        ))
+    })
+}
+
 /// Read current CPU and RAM usage.
 #[tauri::command]
 fn get_system_stats() -> SystemStats {
-    let s = System::new_with_specifics(
-        RefreshKind::new()
-            .with_cpu(CpuRefreshKind::new().with_cpu_usage())
-            .with_memory(MemoryRefreshKind::new()),
-    );
-    let mut s = s;
-    // First sample just primes counters; sleep briefly so the second read is meaningful.
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    s.refresh_cpu_usage();
-    s.refresh_memory();
+    let mut sys = system_handle().lock().expect("system mutex poisoned");
+    // Let a little time pass so the CPU delta since the previous sample is meaningful.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
 
-    let cpu_percent = s.global_cpu_usage();
-    let ram_used_bytes = s.used_memory();
-    let ram_total_bytes = s.total_memory();
+    let cpu_percent = sys.global_cpu_usage();
+    let ram_used_bytes = sys.used_memory();
+    let ram_total_bytes = sys.total_memory();
     let ram_percent = if ram_total_bytes > 0 {
         (ram_used_bytes as f64 / ram_total_bytes as f64 * 100.0) as f32
     } else {
