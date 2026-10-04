@@ -760,7 +760,9 @@ let gesture = null;
 dashboard.addEventListener("mousedown", (e) => {
   const handle = e.target.closest(".resize-handle");
   const header = e.target.closest(".compartment-header");
-  if (!handle && (!header || e.target.closest(".remove"))) return;
+  // Don't start a drag when pressing any header button (rename, settings,
+  // remove) — those need their click to fire instead of being swallowed.
+  if (!handle && (!header || e.target.closest(".header-actions button"))) return;
   const comp = e.target.closest(".compartment");
   if (!comp) return;
   const item = state.compartments.find((c) => c.id === comp.dataset.id);
