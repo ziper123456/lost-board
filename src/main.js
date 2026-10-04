@@ -163,6 +163,7 @@ function render() {
       <div class="compartment-header">
         <span class="comp-title">${escapeHtml(c.title)}</span>
         <div class="header-actions">
+          <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
           <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
           <button class="btn ghost remove" data-id="${c.id}">✕</button>
         </div>
@@ -170,6 +171,11 @@ function render() {
       <div class="compartment-body" data-id="${c.id}"></div>
       <div class="resize-handle" title="Resize"></div>
     `;
+
+    el.querySelector(".settings-tile").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openTileSettings(c.id);
+    });
 
     el.querySelector(".rename").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -312,15 +318,34 @@ document.addEventListener("mouseup", () => {
   settingsDrag = null;
 });
 
+function activateTab(tabName) {
+  document.querySelectorAll(".settings-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
+  document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === tabName));
+  if (tabName === "folders") renderFoldersSettings();
+  if (tabName === "bookmarks") renderBookmarksSettings();
+}
+
+// Map a compartment kind to its dedicated Settings tab (used by the per-tile
+// settings button so it lands on the right panel and preselects the tile).
+const KIND_TAB = {
+  launcher: "folders",
+  bookmarks: "bookmarks",
+  system: "grid",
+  weather: "weather",
+};
+
+function openTileSettings(id) {
+  const comp = state.compartments.find((c) => c.id === id);
+  if (!comp) return;
+  const tab = KIND_TAB[comp.kind] || "grid";
+  if (comp.kind === "launcher") selectedLauncherId = id;
+  if (comp.kind === "bookmarks") selectedBookmarksId = id;
+  activateTab(tab);
+  settingsEl.classList.remove("hidden");
+}
+
 document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    document.querySelectorAll(".settings-tabs .tab").forEach((t) => t.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`).classList.add("active");
-    if (tab.dataset.tab === "folders") renderFoldersSettings();
-    if (tab.dataset.tab === "bookmarks") renderBookmarksSettings();
-  });
+  tab.addEventListener("click", () => activateTab(tab.dataset.tab));
 });
 
 // ---------------------------------------------------------------------------
@@ -688,11 +713,13 @@ async function initialize() {
 // OS drag-and-drop: dropping a folder or .sln from the OS file explorer onto a
 // Folders & Solutions tile adds it to that tile's items (same as Settings).
 // ---------------------------------------------------------------------------
-function setupDragDrop() {
+async function setupDragDrop() {
   const win = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+  // scaleFactor() is async and returns a Promise; resolve it once up front so the
+  // drop handler can convert physical drop pixels to CSS coordinates correctly.
+  const scale = (await window.__TAURI__.window.getCurrentWindow().scaleFactor()) || 1;
   win.onDragDropEvent(async (event) => {
     const { type, paths, position } = event.payload;
-    const scale = (window.__TAURI__.window.getCurrentWindow().scaleFactor?.()) || 1;
     const x = position ? position.x / scale : 0;
     const y = position ? position.y / scale : 0;
     const targetAt = (point) =>
