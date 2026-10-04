@@ -282,6 +282,32 @@ async function renderCompartmentBody(c) {
     body.querySelectorAll(".bmk-tile").forEach((b) =>
       b.addEventListener("click", () => native.openUrl(b.dataset.url))
     );
+  } else if (c.kind === "azure") {
+    const d = c.data || {};
+    const repos = d.repos || [];
+    if (!d.org || !d.project || !repos.length) {
+      body.innerHTML = `<div class="muted">No Azure repos configured — add some in Settings.</div>`;
+      return;
+    }
+    const encOrg = encodeURIComponent(d.org);
+    const encProj = encodeURIComponent(d.project);
+    body.innerHTML = repos
+      .map((r) => {
+        const base = `https://dev.azure.com/${encOrg}/${encProj}/_git/${encodeURIComponent(r.repo)}`;
+        const name = r.label || r.repo;
+        return `
+          <div class="azure-repo">
+            <span class="azure-name">${escapeHtml(name)}</span>
+            <div class="azure-links">
+              <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</button>
+              <button class="btn ghost azure-files" data-url="${escapeHtml(base)}">Files</button>
+            </div>
+          </div>`;
+      })
+      .join("");
+    body.querySelectorAll(".azure-pr, .azure-files").forEach((b) =>
+      b.addEventListener("click", () => native.openUrl(b.dataset.url))
+    );
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -323,6 +349,7 @@ function activateTab(tabName) {
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === tabName));
   if (tabName === "folders") renderFoldersSettings();
   if (tabName === "bookmarks") renderBookmarksSettings();
+  if (tabName === "azure") renderAzureSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -330,6 +357,7 @@ function activateTab(tabName) {
 const KIND_TAB = {
   launcher: "folders",
   bookmarks: "bookmarks",
+  azure: "azure",
   system: "grid",
   weather: "weather",
 };
@@ -340,6 +368,7 @@ function openTileSettings(id) {
   const tab = KIND_TAB[comp.kind] || "grid";
   if (comp.kind === "launcher") selectedLauncherId = id;
   if (comp.kind === "bookmarks") selectedBookmarksId = id;
+  if (comp.kind === "azure") selectedAzureId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -573,9 +602,125 @@ function renderBookmarksSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Azure DevOps settings editor. Each Azure tile holds an org + project (set
+// once) and a list of repos; each repo deep-links to its PRs and Files.
+// ---------------------------------------------------------------------------
+let selectedAzureId = null;
+
+function ensureAzureComp() {
+  const comps = state.compartments.filter((c) => c.kind === "azure");
+  if (comps.length === 0) {
+    const comp = {
+      id: "az" + Date.now(),
+      kind: "azure",
+      title: "Azure DevOps",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 4,
+      data: { org: "", project: "", repos: [] },
+    };
+    state.compartments.push(comp);
+    selectedAzureId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedAzureId)) {
+    selectedAzureId = comps[0].id;
+  }
+  const comp = state.compartments.find((c) => c.id === selectedAzureId);
+  comp.data = comp.data || {};
+  comp.data.repos = comp.data.repos || [];
+  return comp;
+}
+
+function commitAzure(comp) {
+  saveState();
+  render();
+  renderAzureSettings();
+}
+
+function renderAzureSettings() {
+  const panel = document.getElementById("azure-list");
+  if (!panel) return;
+  const comp = ensureAzureComp();
+  const comps = state.compartments.filter((c) => c.kind === "azure");
+  const d = comp.data;
+  d.repos = d.repos || [];
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="azure-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
+  const orgRow = document.createElement("div");
+  orgRow.className = "item-row";
+  orgRow.innerHTML = `<label>Org</label><input id="azure-org" type="text" placeholder="e.g. b4valuenet" value="${escapeHtml(d.org || "")}" /><label>Project</label><input id="azure-project" type="text" placeholder="e.g. TRAFFIQX Core" value="${escapeHtml(d.project || "")}" />`;
+  panel.appendChild(orgRow);
+
+  d.repos.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `
+      <input class="az-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(r.label || "")}" />
+      <input class="az-repo" data-i="${i}" type="text" placeholder="Repo name" value="${escapeHtml(r.repo || "")}" />
+      <button class="btn ghost danger az-remove" data-i="${i}">✕</button>`;
+    panel.appendChild(row);
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "item-row";
+  addRow.innerHTML = `<button class="btn primary" id="add-repo">+ Repo</button>`;
+  panel.appendChild(addRow);
+
+  panel.querySelector("#azure-select").addEventListener("change", (e) => {
+    selectedAzureId = e.target.value;
+    renderAzureSettings();
+  });
+  panel.querySelector("#azure-org").addEventListener("change", (e) => {
+    d.org = e.target.value.trim();
+    commitAzure(comp);
+  });
+  panel.querySelector("#azure-project").addEventListener("change", (e) => {
+    d.project = e.target.value.trim();
+    commitAzure(comp);
+  });
+  panel.querySelectorAll(".az-label").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      d.repos[Number(e.target.dataset.i)].label = e.target.value;
+      commitAzure(comp);
+    })
+  );
+  panel.querySelectorAll(".az-repo").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      d.repos[Number(e.target.dataset.i)].repo = e.target.value;
+      commitAzure(comp);
+    })
+  );
+  panel.querySelectorAll(".az-remove").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      d.repos.splice(Number(e.target.dataset.i), 1);
+      commitAzure(comp);
+    })
+  );
+  panel.querySelector("#add-repo").addEventListener("click", () => {
+    d.repos.push({ label: "", repo: "" });
+    commitAzure(comp);
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
+  azure: { title: "Azure DevOps", data: { org: "", project: "", repos: [] } },
   system: { title: "System", data: {} },
   weather: { title: "Weather", data: { location: "" } },
 };
@@ -615,7 +760,9 @@ let gesture = null;
 dashboard.addEventListener("mousedown", (e) => {
   const handle = e.target.closest(".resize-handle");
   const header = e.target.closest(".compartment-header");
-  if (!handle && (!header || e.target.closest(".remove"))) return;
+  // Don't start a drag when pressing any header button (rename, settings,
+  // remove) — those need their click to fire instead of being swallowed.
+  if (!handle && (!header || e.target.closest(".header-actions button"))) return;
   const comp = e.target.closest(".compartment");
   if (!comp) return;
   const item = state.compartments.find((c) => c.id === comp.dataset.id);

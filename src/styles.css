@@ -160,6 +160,30 @@ html, body {
   white-space: nowrap;
 }
 
+/* Azure repo tiles */
+.azure-repo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  margin: 3px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.azure-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.azure-links { display: flex; gap: 4px; }
+.azure-links .btn { padding: 2px 8px; font-size: 0.72rem; }
+
 /* Buttons */
 .btn {
   padding: 6px 12px;
