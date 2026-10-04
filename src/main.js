@@ -22,6 +22,7 @@ const DEFAULT_STATE = {
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
     { id: "bmk", kind: "bookmarks", title: "Bookmarks", x: 6, y: 0, w: 6, h: 2, data: { urls: [] } },
+    { id: "lch", kind: "launcher", title: "Folders & Solutions", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
 
@@ -67,6 +68,14 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("open_url", { url });
     window.open(url, "_blank");
   },
+  async pickFolder() {
+    if (window.__TAURI__) return invoke("pick_folder");
+    return prompt("Folder path (browser prototype):") || null;
+  },
+  async pickSolution() {
+    if (window.__TAURI__) return invoke("pick_solution");
+    return prompt("Solution path (.sln) (browser prototype):") || null;
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -95,20 +104,56 @@ function clearCompartmentTimers() {
   compartmentTimers.clear();
 }
 
+const ROW_H = 44;
+const GUTTER = 8;
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+// Pixel geometry for a compartment given the current column count and the
+// dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
+function cellWidth() {
+  return (dashboard.clientWidth - GUTTER) / state.columns;
+}
+function applyBox(el, c) {
+  const cw = cellWidth();
+  el.style.left = `${GUTTER / 2 + c.x * cw}px`;
+  el.style.top = `${GUTTER / 2 + c.y * ROW_H}px`;
+  el.style.width = `${c.w * cw - GUTTER}px`;
+  el.style.height = `${c.h * ROW_H - GUTTER}px`;
+}
+function gridHeight() {
+  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
+  return GUTTER / 2 + rows * ROW_H;
+}
+function overlaps(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+// Push overlapping compartments below `anchor` until the grid is collision-free.
+function resolveCollisions(anchor) {
+  let guard = 0;
+  while (guard++ < 200) {
+    let moved = false;
+    for (const o of state.compartments) {
+      if (o.id === anchor.id) continue;
+      if (overlaps(anchor, o)) {
+        o.y = anchor.y + anchor.h;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
 function render() {
   clearCompartmentTimers();
   dashboard.innerHTML = "";
-  const cols = state.columns;
-  const cellW = 100 / cols;
+  dashboard.style.height = `${gridHeight()}px`;
 
   for (const c of state.compartments) {
     const el = document.createElement("div");
     el.className = "compartment";
+    el.dataset.id = c.id;
     el.style.position = "absolute";
-    el.style.width = `calc(${cellW * c.w}% - 8px)`;
-    el.style.left = `calc(${cellW * c.x}% + 4px)`;
-    el.style.top = `${c.y * 140 + 8}px`;
-    el.style.height = `${c.h * 130}px`;
+    applyBox(el, c);
 
     el.innerHTML = `
       <div class="compartment-header">
@@ -116,6 +161,7 @@ function render() {
         <button class="btn ghost remove" data-id="${c.id}">✕</button>
       </div>
       <div class="compartment-body" data-id="${c.id}"></div>
+      <div class="resize-handle" title="Resize"></div>
     `;
 
     el.querySelector(".remove").addEventListener("click", (e) => {
@@ -147,6 +193,36 @@ async function renderCompartmentBody(c) {
     compartmentTimers.add(t);
   } else if (c.kind === "weather") {
     body.innerHTML = `<div class="muted">Weather — configure a location in Settings.</div>`;
+  } else if (c.kind === "launcher") {
+    const items = c.data?.items || [];
+    if (!items.length) {
+      body.innerHTML = `<div class="muted">No folders or solutions yet — add some in Settings.</div>`;
+      return;
+    }
+    body.innerHTML = items
+      .map(
+        (it, i) => `
+        <div class="launcher-tile ${it.kind}">
+          <button class="launcher-open" data-id="${c.id}" data-idx="${i}">${escapeHtml(it.label || it.path)}</button>
+          <span class="launcher-path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</span>
+        </div>`
+      )
+      .join("");
+    body.querySelectorAll(".launcher-open").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const comp = state.compartments.find((x) => x.id === b.dataset.id);
+        const it = comp?.data?.items?.[Number(b.dataset.idx)];
+        if (!it) return;
+        b.classList.remove("err");
+        try {
+          if (it.kind === "folder") await native.openFolder(it.path);
+          else await native.openSolution(it.path);
+        } catch (err) {
+          b.classList.add("err");
+          b.textContent = "Not found: " + (it.label || it.path);
+        }
+      });
+    });
   } else if (c.kind === "bookmarks") {
     const urls = c.data?.urls || [];
     if (!urls.length) {
@@ -181,20 +257,148 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
     document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
     tab.classList.add("active");
     document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`).classList.add("active");
+    if (tab.dataset.tab === "folders") renderFoldersSettings();
   });
 });
 
-document.getElementById("btn-add-compartment").addEventListener("click", () => {
-  state.compartments.push({
-    id: "c" + Date.now(),
-    kind: "placeholder",
-    title: "New compartment",
-    x: 0,
-    y: state.compartments.length,
-    w: 4,
-    h: 2,
-    data: {},
+// ---------------------------------------------------------------------------
+// Folders / Solutions settings editor. Operates on the launcher compartment
+// the user selects in the panel (not merely the first launcher), so edits are
+// predictable even with multiple launcher compartments on the grid.
+// ---------------------------------------------------------------------------
+let selectedLauncherId = null;
+
+function ensureLauncher() {
+  const launchers = state.compartments.filter((c) => c.kind === "launcher");
+  if (launchers.length === 0) {
+    const launcher = {
+      id: "launcher" + Date.now(),
+      kind: "launcher",
+      title: "Folders & Solutions",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 3,
+      data: { items: [] },
+    };
+    state.compartments.push(launcher);
+    selectedLauncherId = launcher.id;
+    return launcher;
+  }
+  if (!launchers.some((l) => l.id === selectedLauncherId)) {
+    selectedLauncherId = launchers[0].id;
+  }
+  const launcher = state.compartments.find((c) => c.id === selectedLauncherId);
+  launcher.data = launcher.data || {};
+  launcher.data.items = launcher.data.items || [];
+  return launcher;
+}
+
+function commitLauncher(launcher) {
+  saveState();
+  render();
+  renderFoldersSettings();
+}
+
+function renderFoldersSettings() {
+  const panel = document.getElementById("folders-list");
+  if (!panel) return;
+  const launcher = ensureLauncher();
+  const launchers = state.compartments.filter((c) => c.kind === "launcher");
+  const items = launcher.data.items;
+
+  panel.innerHTML = "";
+
+  // Compartment selector — which launcher tile these items belong to.
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="launcher-select">
+      ${launchers
+        .map((l) => `<option value="${l.id}" ${l.id === launcher.id ? "selected" : ""}>${escapeHtml(l.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
+  items.forEach((it, i) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `
+      <select class="it-kind" data-i="${i}">
+        <option value="folder" ${it.kind === "folder" ? "selected" : ""}>Folder</option>
+        <option value="solution" ${it.kind === "solution" ? "selected" : ""}>Solution</option>
+      </select>
+      <input class="it-label" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(it.label || "")}" />
+      <input class="it-path" data-i="${i}" type="text" placeholder="Path" value="${escapeHtml(it.path || "")}" readonly />
+      <button class="btn ghost it-browse" data-i="${i}">Browse</button>
+      <button class="btn ghost danger it-remove" data-i="${i}">✕</button>`;
+    panel.appendChild(row);
   });
+
+  const addRow = document.createElement("div");
+  addRow.className = "item-row";
+  addRow.innerHTML = `<button class="btn primary" id="add-folder">+ Folder</button><button class="btn primary" id="add-solution">+ Solution</button>`;
+  panel.appendChild(addRow);
+
+  panel.querySelector("#launcher-select").addEventListener("change", (e) => {
+    selectedLauncherId = e.target.value;
+    renderFoldersSettings();
+  });
+  panel.querySelectorAll(".it-kind").forEach((sel) =>
+    sel.addEventListener("change", (e) => {
+      items[Number(e.target.dataset.i)].kind = e.target.value;
+      commitLauncher(launcher);
+    })
+  );
+  panel.querySelectorAll(".it-label").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      items[Number(e.target.dataset.i)].label = e.target.value;
+      commitLauncher(launcher);
+    })
+  );
+  panel.querySelectorAll(".it-browse").forEach((btn) =>
+    btn.addEventListener("click", async (e) => {
+      const i = Number(e.target.dataset.i);
+      const it = items[i];
+      const isFolder = it.kind === "folder";
+      const p = isFolder ? await native.pickFolder() : await native.pickSolution();
+      if (!p) return;
+      it.path = p;
+      if (!it.label) it.label = p.split(/[\\/]/).pop();
+      commitLauncher(launcher);
+    })
+  );
+  panel.querySelectorAll(".it-remove").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      items.splice(Number(e.target.dataset.i), 1);
+      commitLauncher(launcher);
+    })
+  );
+  panel.querySelector("#add-folder").addEventListener("click", () => {
+    items.push({ kind: "folder", label: "", path: "" });
+    commitLauncher(launcher);
+  });
+  panel.querySelector("#add-solution").addEventListener("click", () => {
+    items.push({ kind: "solution", label: "", path: "" });
+    commitLauncher(launcher);
+  });
+}
+
+document.getElementById("btn-add-compartment").addEventListener("click", () => {
+  const y = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
+  const launcher = {
+    id: "c" + Date.now(),
+    kind: "launcher",
+    title: "Folders & Solutions",
+    x: 0,
+    y,
+    w: 4,
+    h: 3,
+    data: { items: [] },
+  };
+  state.compartments.push(launcher);
+  selectedLauncherId = launcher.id;
   saveState();
   render();
 });
@@ -206,36 +410,64 @@ document.getElementById("set-cols").addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Drag to reorder (scaffold-level: simple drag on header). Resize via TODO.
+// Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
 // ---------------------------------------------------------------------------
-let drag = null;
+let gesture = null;
+
 dashboard.addEventListener("mousedown", (e) => {
+  const handle = e.target.closest(".resize-handle");
   const header = e.target.closest(".compartment-header");
-  if (!header || e.target.closest(".remove")) return;
-  const comp = header.closest(".compartment");
-  drag = { comp, startX: e.clientX, startY: e.clientY, origX: comp.offsetLeft, origY: comp.offsetTop, moved: false };
+  if (!handle && (!header || e.target.closest(".remove"))) return;
+  const comp = e.target.closest(".compartment");
+  if (!comp) return;
+  const item = state.compartments.find((c) => c.id === comp.dataset.id);
+  if (!item) return;
+  e.preventDefault();
+  gesture = { mode: handle ? "resize" : "drag", item, comp, startX: e.clientX, startY: e.clientY };
 });
 
 dashboard.addEventListener("mousemove", (e) => {
-  if (!drag) return;
-  drag.comp.style.left = `${drag.origX + e.clientX - drag.startX}px`;
-  drag.comp.style.top = `${drag.origY + e.clientY - drag.startY}px`;
-  drag.moved = true;
+  if (!gesture) return;
+  const dx = e.clientX - gesture.startX;
+  const dy = e.clientY - gesture.startY;
+  const cw = cellWidth();
+  const item = gesture.item;
+
+  if (gesture.mode === "drag") {
+    const nx = clamp(Math.round((item.x * cw + dx) / cw), 0, state.columns - item.w);
+    const ny = Math.max(0, Math.round((item.y * ROW_H + dy) / ROW_H));
+    gesture.comp.style.left = `${GUTTER / 2 + nx * cw}px`;
+    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H}px`;
+    gesture._nx = nx;
+    gesture._ny = ny;
+    gesture.moved = nx !== item.x || ny !== item.y;
+  } else {
+    const nw = clamp(item.w + Math.round(dx / cw), 1, state.columns - item.x);
+    const nh = Math.max(1, item.h + Math.round(dy / ROW_H));
+    gesture.comp.style.width = `${nw * cw - GUTTER}px`;
+    gesture.comp.style.height = `${nh * ROW_H - GUTTER}px`;
+    gesture._nw = nw;
+    gesture._nh = nh;
+    gesture.moved = nw !== item.w || nh !== item.h;
+  }
 });
 
 dashboard.addEventListener("mouseup", () => {
-  if (!drag) return;
-  const comp = drag.comp;
-  const id = comp.querySelector(".compartment-body").dataset.id;
-  const cell = Math.round(comp.offsetLeft / (dashboard.clientWidth / state.columns));
-  const row = Math.max(0, Math.round(comp.offsetTop / 140));
-  const item = state.compartments.find((c) => c.id === id);
-  if (item && drag.moved) {
-    item.x = Math.min(state.columns - item.w, cell);
-    item.y = row;
-    saveState();
+  if (!gesture) return;
+  const item = gesture.item;
+  if (gesture.mode === "drag") {
+    if (gesture.moved) {
+      item.x = gesture._nx;
+      item.y = gesture._ny;
+      resolveCollisions(item);
+    }
+  } else if (gesture.moved) {
+    item.w = gesture._nw;
+    item.h = gesture._nh;
+    resolveCollisions(item);
   }
-  drag = null;
+  gesture = null;
+  saveState();
   render();
 });
 

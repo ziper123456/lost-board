@@ -61,11 +61,11 @@ data storage, error states, and secrets consistent across the dashboard.
 - [ ] Verify compile on a machine with MSVC Build Tools (`cargo build`)
 - [x] Config persistence to app-data JSON (migrate from localStorage) — awaiting Rust build verification
 - [x] Make the configured Tauri development URL available through an npm-managed frontend server
-- [ ] Replace scaffold drag behavior with collision-aware snap and resize behavior
+- [x] Replace scaffold drag behavior with collision-aware snap and resize behavior
 - [x] Clear compartment refresh timers when tiles re-render or are removed
 
 ### Phase 1 — Core launchers
-- [ ] **Folders / Solutions** compartment: pick paths in Settings, click to open
+- [x] **Folders / Solutions** compartment: pick paths in Settings, click to open
 - [ ] **Bookmarks** compartment: CRUD + click-to-open
 - [ ] **Azure DevOps** compartment: repo config, deep-links (PR + Files) to specific repo
 - [ ] **Azure live tiles** (needs PAT from Settings, stored in OS secret store): open-PR count
