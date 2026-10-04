@@ -184,6 +184,25 @@ html, body {
 .azure-links { display: flex; gap: 4px; }
 .azure-links .btn { padding: 2px 8px; font-size: 0.72rem; }
 
+/* Weather + world clock */
+.wea-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.wea-name { font-weight: 600; font-size: 0.9rem; }
+.wea-clock {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.wea-temp { font-size: 2rem; font-weight: 700; line-height: 1; margin: 6px 0 2px; }
+.wea-desc { color: var(--muted); font-size: 0.8rem; }
+.wea-err { color: var(--red); }
+
 /* Buttons */
 .btn {
   padding: 6px 12px;

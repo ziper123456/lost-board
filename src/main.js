@@ -233,7 +233,7 @@ async function renderCompartmentBody(c) {
     const t = setInterval(renderStats, 2000);
     compartmentTimers.add(t);
   } else if (c.kind === "weather") {
-    body.innerHTML = `<div class="muted">Weather — configure a location in Settings.</div>`;
+    renderWeatherBody(c, body);
   } else if (c.kind === "launcher") {
     const items = c.data?.items || [];
     if (!items.length) {
@@ -314,6 +314,91 @@ async function renderCompartmentBody(c) {
 }
 
 // ---------------------------------------------------------------------------
+// Weather + world clock. Open-Meteo (no API key). Each weather compartment
+// holds its own location (name + lat/lon). timezone=auto returns the local
+// utc offset so we can show that location's current time in real time.
+// ---------------------------------------------------------------------------
+const WEATHER_BASE = "https://api.open-meteo.com/v1/forecast";
+const WMO = {
+  0: "Clear",
+  1: "Mostly clear",
+  2: "Partly cloudy",
+  3: "Overcast",
+  45: "Fog",
+  48: "Rime fog",
+  51: "Light drizzle",
+  53: "Drizzle",
+  55: "Heavy drizzle",
+  61: "Light rain",
+  63: "Rain",
+  65: "Heavy rain",
+  71: "Light snow",
+  73: "Snow",
+  75: "Heavy snow",
+  80: "Light showers",
+  81: "Showers",
+  82: "Heavy showers",
+  95: "Thunderstorm",
+  96: "Thunderstorm + hail",
+  99: "Severe thunderstorm + hail",
+};
+const wmoLabel = (code) => WMO[code] || "—";
+
+async function fetchWeather(lat, lon) {
+  const url = `${WEATHER_BASE}?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`weather HTTP ${res.status}`);
+  const j = await res.json();
+  const cur = j.current;
+  return {
+    temp: cur.temperature_2m,
+    code: cur.weather_code,
+    wind: cur.wind_speed_10m,
+    utcOffsetSec: j.utc_offset_seconds,
+  };
+}
+
+function renderWeatherBody(c, body) {
+  const loc = c.data?.location;
+  if (!loc || loc.lat === undefined || loc.lon === undefined) {
+    body.innerHTML = `<div class="muted">Weather — add a location in Settings.</div>`;
+    return;
+  }
+  body.innerHTML = `<div class="muted">Loading weather…</div>`;
+
+  const show = (html) => {
+    if (body.isConnected) body.innerHTML = html;
+  };
+
+  fetchWeather(loc.lat, loc.lon)
+    .then((w) => {
+      const clock = () => {
+        const now = new Date();
+        const local = new Date(now.getTime() + w.utcOffsetSec * 1000);
+        return local.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      };
+      show(`
+        <div class="wea-head">
+          <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
+          <span class="wea-clock" data-clock>${clock()}</span>
+        </div>
+        <div class="wea-temp">${Math.round(w.temp)}°</div>
+        <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
+      `);
+      const clockEl = body.querySelector("[data-clock]");
+      if (clockEl) {
+        const t = setInterval(() => {
+          clockEl.textContent = clock();
+        }, 1000);
+        compartmentTimers.add(t);
+      }
+    })
+    .catch((e) => {
+      show(`<div class="muted wea-err">Weather unavailable (${escapeHtml(e.message || "error")}).</div>`);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Settings overlay wiring.
 // ---------------------------------------------------------------------------
 const settingsEl = document.getElementById("settings");
@@ -350,6 +435,7 @@ function activateTab(tabName) {
   if (tabName === "folders") renderFoldersSettings();
   if (tabName === "bookmarks") renderBookmarksSettings();
   if (tabName === "azure") renderAzureSettings();
+  if (tabName === "weather") renderWeatherSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -369,6 +455,7 @@ function openTileSettings(id) {
   if (comp.kind === "launcher") selectedLauncherId = id;
   if (comp.kind === "bookmarks") selectedBookmarksId = id;
   if (comp.kind === "azure") selectedAzureId = id;
+  if (comp.kind === "weather") selectedWeatherId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -717,12 +804,125 @@ function renderAzureSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Weather settings editor. Each weather compartment has its own location:
+// a name plus lat/lon, resolved either by typing coords or by geocoding a
+// city name through Open-Meteo's free geocoding API.
+// ---------------------------------------------------------------------------
+let selectedWeatherId = null;
+
+function ensureWeatherComp() {
+  const comps = state.compartments.filter((c) => c.kind === "weather");
+  if (comps.length === 0) {
+    const comp = {
+      id: "wea" + Date.now(),
+      kind: "weather",
+      title: "Weather",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 3,
+      h: 3,
+      data: { location: { name: "", lat: undefined, lon: undefined } },
+    };
+    state.compartments.push(comp);
+    selectedWeatherId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedWeatherId)) {
+    selectedWeatherId = comps[0].id;
+  }
+  const comp = state.compartments.find((c) => c.id === selectedWeatherId);
+  comp.data = comp.data || {};
+  comp.data.location = comp.data.location || { name: "", lat: undefined, lon: undefined };
+  return comp;
+}
+
+function commitWeather(comp) {
+  saveState();
+  render();
+  renderWeatherSettings();
+}
+
+async function geocodeCity(name) {
+  const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1`);
+  if (!res.ok) throw new Error(`geocoding HTTP ${res.status}`);
+  const j = await res.json();
+  if (!j.results || !j.results.length) throw new Error("place not found");
+  return j.results[0];
+}
+
+function renderWeatherSettings() {
+  const panel = document.getElementById("weather-list");
+  if (!panel) return;
+  const comp = ensureWeatherComp();
+  const comps = state.compartments.filter((c) => c.kind === "weather");
+  const loc = comp.data.location;
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="weather-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
+  const nameRow = document.createElement("div");
+  nameRow.className = "item-row";
+  nameRow.innerHTML = `<label>City</label><input id="weather-city" type="text" placeholder="e.g. Berlin" value="${escapeHtml(loc.name || "")}" /><button class="btn ghost" id="weather-lookup">Look up</button>`;
+  panel.appendChild(nameRow);
+
+  const coordRow = document.createElement("div");
+  coordRow.className = "item-row";
+  coordRow.innerHTML = `<label>Lat</label><input id="weather-lat" type="text" placeholder="52.52" value="${loc.lat ?? ""}" /><label>Lon</label><input id="weather-lon" type="text" placeholder="13.41" value="${loc.lon ?? ""}" />`;
+  panel.appendChild(coordRow);
+
+  panel.querySelector("#weather-select").addEventListener("change", (e) => {
+    selectedWeatherId = e.target.value;
+    renderWeatherSettings();
+  });
+  panel.querySelector("#weather-city").addEventListener("change", (e) => {
+    loc.name = e.target.value.trim();
+    commitWeather(comp);
+  });
+  panel.querySelector("#weather-lookup").addEventListener("click", async (e) => {
+    const city = panel.querySelector("#weather-city").value.trim();
+    if (!city) return;
+    e.target.disabled = true;
+    e.target.textContent = "…";
+    try {
+      const r = await geocodeCity(city);
+      loc.name = r.name;
+      loc.lat = r.latitude;
+      loc.lon = r.longitude;
+      commitWeather(comp);
+    } catch (err) {
+      alert(`Could not find "${city}": ${err.message}`);
+    } finally {
+      e.target.disabled = false;
+      e.target.textContent = "Look up";
+    }
+  });
+  panel.querySelector("#weather-lat").addEventListener("change", (e) => {
+    loc.lat = parseFloat(e.target.value);
+    commitWeather(comp);
+  });
+  panel.querySelector("#weather-lon").addEventListener("change", (e) => {
+    loc.lon = parseFloat(e.target.value);
+    commitWeather(comp);
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
   azure: { title: "Azure DevOps", data: { org: "", project: "", repos: [] } },
   system: { title: "System", data: {} },
-  weather: { title: "Weather", data: { location: "" } },
+  weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
