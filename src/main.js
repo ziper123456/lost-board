@@ -43,6 +43,9 @@ let state = loadState();
 function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (window.__TAURI__) {
+      void native.saveState(state).catch((e) => console.error("Failed to persist app state", e));
+    }
   } catch (e) {
     console.error("Failed to persist state", e);
   }
@@ -68,6 +71,13 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
   },
+  async loadState() {
+    if (window.__TAURI__) return invoke("load_state");
+    return null;
+  },
+  async saveState(nextState) {
+    if (window.__TAURI__) return invoke("save_state", { stateJson: JSON.stringify(nextState) });
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -75,7 +85,18 @@ async openFolder(path) {
 // ---------------------------------------------------------------------------
 const dashboard = document.getElementById("dashboard");
 
+// Registry of interval timers owned by compartment bodies. Tracked at module
+// scope so they are cleared even for compartments that have been removed from
+// `state` (the ✕ button filters them out before render() runs).
+const compartmentTimers = new Set();
+
+function clearCompartmentTimers() {
+  compartmentTimers.forEach((t) => clearInterval(t));
+  compartmentTimers.clear();
+}
+
 function render() {
+  clearCompartmentTimers();
   dashboard.innerHTML = "";
   const cols = state.columns;
   const cellW = 100 / cols;
@@ -123,8 +144,7 @@ async function renderCompartmentBody(c) {
     };
     await renderStats();
     const t = setInterval(renderStats, 2000);
-    c._timers = c._timers || [];
-    c._timers.push(t);
+    compartmentTimers.add(t);
   } else if (c.kind === "weather") {
     body.innerHTML = `<div class="muted">Weather — configure a location in Settings.</div>`;
   } else if (c.kind === "bookmarks") {
@@ -232,6 +252,22 @@ function fmtBytes(n) {
   return `${(n / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
 }
 
-// Entry.
-render();
-saveState();
+// Entry. Browser localStorage remains a prototype-mode fallback. In the desktop
+// app, load (or migrate to) the native app-data file before keeping it current.
+async function initialize() {
+  if (window.__TAURI__) {
+    try {
+      const nativeState = await native.loadState();
+      if (nativeState) {
+        state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(nativeState) };
+      } else {
+        saveState();
+      }
+    } catch (e) {
+      console.error("Failed to load app state", e);
+    }
+  }
+  render();
+}
+
+void initialize();
