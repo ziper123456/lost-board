@@ -18,6 +18,7 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 // ---------------------------------------------------------------------------
 const DEFAULT_STATE = {
   columns: 12,
+  expandMode: "click",
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -25,6 +26,9 @@ const DEFAULT_STATE = {
     { id: "lch", kind: "launcher", title: "Folders & Solutions", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
+
+// Id of the currently-open collapsed tile overlay (transient, not persisted).
+let openTileId = null;
 
 const STORAGE_KEY = "lost-board.state.v1";
 
@@ -157,24 +161,51 @@ function render() {
   dashboard.style.height = `${gridHeight()}px`;
 
   for (const c of state.compartments) {
+    const collapsed = c.collapsed === true;
     const el = document.createElement("div");
-    el.className = "compartment";
+    el.className = "compartment" + (collapsed ? " collapsed" : "");
     el.dataset.id = c.id;
     el.style.position = "absolute";
     applyBox(el, c);
+    if (collapsed) el.style.height = `${ROW_H - GUTTER}px`;
 
+    const toggle = collapsed ? "▸" : "▾";
     el.innerHTML = `
       <div class="compartment-header">
         <span class="comp-title">${escapeHtml(c.title)}</span>
         <div class="header-actions">
+          <button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>
           <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
           <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
           <button class="btn ghost remove" data-id="${c.id}">✕</button>
         </div>
       </div>
-      <div class="compartment-body" data-id="${c.id}"></div>
-      <div class="resize-handle" title="Resize"></div>
+      ${collapsed ? "" : `<div class="compartment-body" data-id="${c.id}"></div>`}
+      ${collapsed ? "" : `<div class="resize-handle" title="Resize"></div>`}
     `;
+
+    el.querySelector(".collapse").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (state.expandMode === "hover") {
+        // In hover mode the button just collapses/expands the tile.
+        c.collapsed = !collapsed;
+        openTileId = null;
+        saveState();
+        render();
+        return;
+      }
+      // Click mode: toggle collapse, and when collapsed the button also
+      // opens (and stays open) the floating body overlay.
+      if (!collapsed) {
+        c.collapsed = true;
+        openTileId = null;
+        saveState();
+        render();
+      } else {
+        openTileId = openTileId === c.id ? null : c.id;
+        render();
+      }
+    });
 
     el.querySelector(".settings-tile").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -212,13 +243,51 @@ function render() {
     el.querySelector(".remove").addEventListener("click", (e) => {
       e.stopPropagation();
       state.compartments = state.compartments.filter((x) => x.id !== c.id);
+      if (openTileId === c.id) openTileId = null;
       saveState();
       render();
     });
 
+    // Hover mode: hovering a collapsed tile's header opens its overlay.
+    if (collapsed && state.expandMode === "hover") {
+      const header = el.querySelector(".compartment-header");
+      header.addEventListener("mouseenter", () => {
+        if (openTileId !== c.id) {
+          openTileId = c.id;
+          render();
+        }
+      });
+      header.addEventListener("mouseleave", () => {
+        if (openTileId === c.id) {
+          openTileId = null;
+          render();
+        }
+      });
+    }
+
     dashboard.appendChild(el);
-    renderCompartmentBody(c);
+    if (collapsed) {
+      if (openTileId === c.id) renderCollapsedOverlay(c);
+    } else {
+      renderCompartmentBody(c);
+    }
   }
+}
+
+// Render a collapsed tile's body as a floating overlay that can overlap other
+// tiles (the header stays anchored and non-overlapping in the grid).
+function renderCollapsedOverlay(c) {
+  const cw = cellWidth();
+  const overlay = document.createElement("div");
+  overlay.className = "compartment-overlay";
+  overlay.dataset.id = c.id;
+  overlay.style.left = `${GUTTER / 2 + c.x * cw}px`;
+  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`; // below the header
+  overlay.style.width = `${c.w * cw - GUTTER}px`;
+  overlay.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
+  overlay.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
+  dashboard.appendChild(overlay);
+  renderCompartmentBody(c);
 }
 
 async function renderCompartmentBody(c) {
@@ -1145,6 +1214,13 @@ document.getElementById("set-cols").addEventListener("change", (e) => {
   render();
 });
 
+document.getElementById("set-expandmode").addEventListener("change", (e) => {
+  state.expandMode = e.target.value === "hover" ? "hover" : "click";
+  openTileId = null;
+  saveState();
+  render();
+});
+
 // ---------------------------------------------------------------------------
 // Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
 // ---------------------------------------------------------------------------
@@ -1246,6 +1322,7 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  document.getElementById("set-expandmode").value = state.expandMode || "click";
   render();
 }
 

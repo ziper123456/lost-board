@@ -77,6 +77,29 @@ html, body {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* Collapsed tile: header-only bar, stays anchored/non-overlapping in the grid */
+.compartment.collapsed .compartment-body,
+.compartment.collapsed .resize-handle { display: none; }
+.compartment.collapsed .compartment-header {
+  height: 100%;
+  border-bottom: none;
+  border-radius: 10px;
+}
+
+/* Floating overlay for an open collapsed tile — can overlap other tiles */
+.compartment-overlay {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+}
+.compartment-overlay .compartment-body { flex: 1; overflow: auto; padding: 10px 12px; }
+
 /* Resize handle (bottom-right corner) */
 .resize-handle {
   position: absolute;
