@@ -356,6 +356,12 @@ const WMO = {
 };
 const wmoLabel = (code) => WMO[code] || "—";
 
+// Transient caches for network compartments (weather, news), keyed by
+// compartment id. Kept out of persisted state so a grid drag/resize/rename
+// doesn't refetch, but stale data is never saved to disk.
+const weatherCache = new Map();
+const newsCache = new Map();
+
 async function fetchWeather(lat, lon) {
   const url = `${WEATHER_BASE}?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
   const res = await fetch(url);
@@ -376,35 +382,49 @@ function renderWeatherBody(c, body) {
     body.innerHTML = `<div class="muted">Weather — add a location in Settings.</div>`;
     return;
   }
-  body.innerHTML = `<div class="muted">Loading weather…</div>`;
 
+  const paint = (w) => {
+    const clock = () =>
+      new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: w.tz,
+      });
+    body.innerHTML = `
+      <div class="wea-head">
+        <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
+        <span class="wea-clock" data-clock>${clock()}</span>
+      </div>
+      <div class="wea-temp">${Math.round(w.temp)}°</div>
+      <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
+    `;
+    const clockEl = body.querySelector("[data-clock]");
+    if (clockEl) {
+      const t = setInterval(() => {
+        clockEl.textContent = clock();
+      }, 1000);
+      compartmentTimers.add(t);
+    }
+  };
+
+  // Reuse cached data unless the configured location changed, so grid
+  // drag/resize/rename re-renders don't hit the weather API every time.
+  const sig = `${loc.lat},${loc.lon}`;
+  const cached = weatherCache.get(c.id);
+  if (cached && cached.sig === sig) {
+    paint(cached.data);
+    return;
+  }
+
+  body.innerHTML = `<div class="muted">Loading weather…</div>`;
   const show = (html) => {
     if (body.isConnected) body.innerHTML = html;
   };
 
   fetchWeather(loc.lat, loc.lon)
-    .then((w) => {
-      const clock = () =>
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: w.tz,
-        });
-      show(`
-        <div class="wea-head">
-          <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
-          <span class="wea-clock" data-clock>${clock()}</span>
-        </div>
-        <div class="wea-temp">${Math.round(w.temp)}°</div>
-        <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
-      `);
-      const clockEl = body.querySelector("[data-clock]");
-      if (clockEl) {
-        const t = setInterval(() => {
-          clockEl.textContent = clock();
-        }, 1000);
-        compartmentTimers.add(t);
-      }
+    .then((data) => {
+      weatherCache.set(c.id, { sig, data });
+      paint(data);
     })
     .catch((e) => {
       show(`<div class="muted wea-err">Weather unavailable (${escapeHtml(e.message || "error")}).</div>`);
@@ -417,12 +437,26 @@ function renderWeatherBody(c, body) {
 // isolated per feed so one broken feed never blocks the others (FR-NEW-003).
 // ---------------------------------------------------------------------------
 async function renderNewsFeeds(c, body, feeds) {
-  const results = await Promise.allSettled(
-    feeds.map(async (f) => {
-      const r = await native.fetchRss(f.url);
-      return { feed: f, r };
-    })
-  );
+  // Reuse cached feed data unless the feed list changed, so grid drag/resize/
+  // rename re-renders don't refetch every feed each time.
+  const sig = JSON.stringify(feeds.map((f) => f.url));
+  const cached = newsCache.get(c.id);
+  let results = cached && cached.sig === sig ? cached.data : null;
+
+  if (!results) {
+    results = await Promise.allSettled(
+      feeds.map(async (f) => {
+        const r = await native.fetchRss(f.url);
+        return { feed: f, r };
+      })
+    );
+    // Cache only if at least one feed succeeded; an all-failed fetch (e.g. a
+    // transient network blip) isn't cached so the next render retries — mirrors
+    // how weather caches on success only.
+    if (results.some((res) => res.status === "fulfilled" && res.value.r.items.length)) {
+      newsCache.set(c.id, { sig, data: results });
+    }
+  }
 
   if (!body.isConnected) return;
   const parts = [];
