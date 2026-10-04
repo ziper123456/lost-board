@@ -247,9 +247,32 @@ async function renderCompartmentBody(c) {
 // Settings overlay wiring.
 // ---------------------------------------------------------------------------
 const settingsEl = document.getElementById("settings");
+const settingsPanel = document.querySelector(".settings-panel");
 
 document.getElementById("btn-settings").addEventListener("click", () => settingsEl.classList.remove("hidden"));
 document.getElementById("btn-settings-close").addEventListener("click", () => settingsEl.classList.add("hidden"));
+
+// Drag the settings window by its header so it can be moved aside to see the
+// dashboard behind it. The panel is centered via transform; we switch to
+// explicit left/top once the user starts dragging so it stays where they drop it.
+let settingsDrag = null;
+settingsPanel.querySelector("header").addEventListener("mousedown", (e) => {
+  if (e.target.closest("button")) return; // don't start a drag on the close button
+  const rect = settingsPanel.getBoundingClientRect();
+  settingsPanel.style.transform = "none";
+  settingsPanel.style.left = `${rect.left}px`;
+  settingsPanel.style.top = `${rect.top}px`;
+  settingsDrag = { startX: e.clientX, startY: e.clientY, origX: rect.left, origY: rect.top };
+  e.preventDefault();
+});
+document.addEventListener("mousemove", (e) => {
+  if (!settingsDrag) return;
+  settingsPanel.style.left = `${settingsDrag.origX + e.clientX - settingsDrag.startX}px`;
+  settingsPanel.style.top = `${settingsDrag.origY + e.clientY - settingsDrag.startY}px`;
+});
+document.addEventListener("mouseup", () => {
+  settingsDrag = null;
+});
 
 document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
   tab.addEventListener("click", () => {
