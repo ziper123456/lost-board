@@ -354,7 +354,7 @@ async function fetchWeather(lat, lon) {
     temp: cur.temperature_2m,
     code: cur.weather_code,
     wind: cur.wind_speed_10m,
-    utcOffsetSec: j.utc_offset_seconds,
+    tz: j.timezone,
   };
 }
 
@@ -372,11 +372,12 @@ function renderWeatherBody(c, body) {
 
   fetchWeather(loc.lat, loc.lon)
     .then((w) => {
-      const clock = () => {
-        const now = new Date();
-        const local = new Date(now.getTime() + w.utcOffsetSec * 1000);
-        return local.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      };
+      const clock = () =>
+        new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: w.tz,
+        });
       show(`
         <div class="wea-head">
           <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
