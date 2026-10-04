@@ -133,11 +133,16 @@ function applyBox(el, c) {
   el.style.height = `${c.h * ROW_H - GUTTER}px`;
 }
 function gridHeight() {
-  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
+  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
   return GUTTER / 2 + rows * ROW_H;
 }
+// A collapsed tile occupies just its header (1 row) in the grid layout, so
+// other tiles can flow into the freed space instead of being pushed down.
+function tileRows(c) {
+  return c.collapsed === true ? 1 : c.h;
+}
 function overlaps(a, b) {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + tileRows(b) && b.y < a.y + tileRows(a);
 }
 // Push overlapping compartments below `anchor` until the grid is collision-free.
 function resolveCollisions(anchor) {
@@ -147,7 +152,7 @@ function resolveCollisions(anchor) {
     for (const o of state.compartments) {
       if (o.id === anchor.id) continue;
       if (overlaps(anchor, o)) {
-        o.y = anchor.y + anchor.h;
+        o.y = anchor.y + tileRows(anchor);
         moved = true;
       }
     }
