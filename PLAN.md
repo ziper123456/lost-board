@@ -73,7 +73,7 @@ data storage, error states, and secrets consistent across the dashboard.
 - [ ] Azure live tiles (open PR count and latest commit)
 
 ### Phase 2 — Live information
-- [ ] **Weather + world clock** compartment: per-location conditions + local time
+- [x] **Weather + world clock** compartment: per-location conditions + local time
 - [ ] **News** compartment: RSS feeds, headline list, click-through
 - [ ] **Service Healthcheck** compartment: GET /health, green/red + latency
 - [ ] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume
