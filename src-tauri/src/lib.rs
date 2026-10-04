@@ -127,8 +127,65 @@ pub fn run() {
 
 const STATE_FILE_NAME: &str = "dashboard-state.json";
 
+/// Validate the expected dashboard-state schema. The payload must be an object
+/// with a positive-integer `columns` and an array of `compartments`, each a
+/// valid compartment object. This guards against syntactically-valid but
+/// semantically-broken payloads (e.g. `[]`, `"oops"`, `{ "columns": "12" }`)
+/// that would otherwise break render logic later.
+fn validate_state(state_json: &str) -> bool {
+    let value: serde_json::Value = match serde_json::from_str(state_json) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let obj = match value.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let columns = match obj.get("columns") {
+        Some(serde_json::Value::Number(n)) => n.as_i64(),
+        _ => None,
+    };
+    if !matches!(columns, Some(n) if n > 0) {
+        return false;
+    }
+
+    let compartments = match obj.get("compartments") {
+        Some(serde_json::Value::Array(a)) => a,
+        _ => return false,
+    };
+
+    compartments.iter().all(validate_compartment)
+}
+
+/// A compartment is valid when it has a string `id`, a string `kind`, a string
+/// `title`, and numeric `x`, `y`, `w`, `h`. `data` is optional (objects only).
+fn validate_compartment(c: &serde_json::Value) -> bool {
+    let obj = match c.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let is_string = |k: &str| matches!(obj.get(k), Some(serde_json::Value::String(_)));
+    let is_num = |k: &str| matches!(obj.get(k), Some(serde_json::Value::Number(_)));
+
+    if !is_string("id") || !is_string("kind") || !is_string("title") {
+        return false;
+    }
+    if !is_num("x") || !is_num("y") || !is_num("w") || !is_num("h") {
+        return false;
+    }
+    match obj.get("data") {
+        None => true,
+        Some(serde_json::Value::Object(_)) => true,
+        Some(_) => false,
+    }
+}
+
 /// Read non-secret dashboard configuration from the app-data directory.
-/// A malformed file is preserved as `.bak` and treated as absent.
+/// A file that is not valid, expected dashboard state is preserved as `.bak`
+/// and treated as absent (so the app falls back to defaults).
 #[tauri::command]
 fn load_state(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let path = state_file_path(&app)?;
@@ -139,7 +196,7 @@ fn load_state(app: tauri::AppHandle) -> Result<Option<String>, String> {
     let contents = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read dashboard state: {e}"))?;
 
-    if serde_json::from_str::<serde_json::Value>(&contents).is_ok() {
+    if validate_state(&contents) {
         Ok(Some(contents))
     } else {
         let backup = path.with_extension("json.bak");
@@ -153,8 +210,9 @@ fn load_state(app: tauri::AppHandle) -> Result<Option<String>, String> {
 /// store and must never be included in this JSON payload.
 #[tauri::command]
 fn save_state(app: tauri::AppHandle, state_json: String) -> Result<(), String> {
-    serde_json::from_str::<serde_json::Value>(&state_json)
-        .map_err(|e| format!("Refusing to save invalid dashboard state: {e}"))?;
+    if !validate_state(&state_json) {
+        return Err("Refusing to save dashboard state that does not match the expected schema".into());
+    }
 
     let path = state_file_path(&app)?;
     let parent = path.parent().ok_or("Dashboard state has no parent directory")?;
