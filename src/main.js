@@ -157,12 +157,43 @@ function render() {
 
     el.innerHTML = `
       <div class="compartment-header">
-        <span>${escapeHtml(c.title)}</span>
-        <button class="btn ghost remove" data-id="${c.id}">✕</button>
+        <span class="comp-title">${escapeHtml(c.title)}</span>
+        <div class="header-actions">
+          <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
+          <button class="btn ghost remove" data-id="${c.id}">✕</button>
+        </div>
       </div>
       <div class="compartment-body" data-id="${c.id}"></div>
       <div class="resize-handle" title="Resize"></div>
     `;
+
+    el.querySelector(".rename").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const span = el.querySelector(".comp-title");
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "comp-title-input";
+      input.value = c.title;
+      span.replaceWith(input);
+      input.focus();
+      input.select();
+
+      const commit = () => {
+        const val = input.value.trim();
+        if (val && val !== c.title) {
+          c.title = val;
+          saveState();
+          render();
+        } else {
+          render();
+        }
+      };
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") commit();
+        if (ev.key === "Escape") render();
+      });
+      input.addEventListener("blur", commit);
+    });
 
     el.querySelector(".remove").addEventListener("click", (e) => {
       e.stopPropagation();
