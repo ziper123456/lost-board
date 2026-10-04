@@ -408,20 +408,30 @@ function renderFoldersSettings() {
   });
 }
 
+const KIND_DEFAULTS = {
+  launcher: { title: "Folders & Solutions", data: { items: [] } },
+  bookmarks: { title: "Bookmarks", data: { urls: [] } },
+  system: { title: "System", data: {} },
+  weather: { title: "Weather", data: { location: "" } },
+};
+
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
+  const kind = document.getElementById("add-kind").value || "launcher";
+  const d = KIND_DEFAULTS[kind] || KIND_DEFAULTS.launcher;
   const y = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
-  const launcher = {
+  const comp = {
     id: "c" + Date.now(),
-    kind: "launcher",
-    title: "Folders & Solutions",
+    kind,
+    title: (document.getElementById("add-title").value || "").trim() || d.title,
     x: 0,
     y,
     w: 4,
     h: 3,
-    data: { items: [] },
+    data: JSON.parse(JSON.stringify(d.data)),
   };
-  state.compartments.push(launcher);
-  selectedLauncherId = launcher.id;
+  state.compartments.push(comp);
+  if (kind === "launcher") selectedLauncherId = comp.id;
+  document.getElementById("add-title").value = "";
   saveState();
   render();
 });

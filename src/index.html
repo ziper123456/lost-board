@@ -40,9 +40,21 @@
         <div class="settings-body">
           <!-- Each section is filled by main.js from state. -->
           <div class="tab-panel active" data-panel="grid">
-            <p>Drag compartments to rearrange. Resize via the bottom-right handle. Layout is saved automatically. Click + Add compartment to create more Folders &amp; Solutions tiles (each configured under the Folders tab).</p>
+            <p>Drag compartments to rearrange. Resize via the bottom-right handle. Layout is saved automatically.</p>
             <label>Columns <input id="set-cols" type="number" min="4" max="24" value="12" /></label>
-            <button id="btn-add-compartment" class="btn primary">+ Add compartment</button>
+            <div class="add-tile">
+              <h3>Add a tile</h3>
+              <div class="item-row">
+                <input id="add-title" type="text" placeholder="Tile name" />
+                <select id="add-kind">
+                  <option value="launcher">Folders &amp; Solutions</option>
+                  <option value="bookmarks">Bookmarks</option>
+                  <option value="system">System</option>
+                  <option value="weather">Weather</option>
+                </select>
+                <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
+              </div>
+            </div>
           </div>
           <div class="tab-panel" data-panel="folders">
             <p>Choose a tile, then add folders and solution (.sln) files to it. Click a tile on the dashboard to open it.</p>

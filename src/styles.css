@@ -190,6 +190,14 @@ html, body {
 .item-row input { flex: 1; }
 .item-row .btn { flex: 0 0 auto; }
 
+/* Add-tile form in the Grid settings tab */
+.add-tile {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.add-tile h3 { margin: 0 0 8px; font-size: 0.95rem; }
+
 input[type="text"], input[type="number"], input[type="password"], select {
   background: var(--panel-2);
   border: 1px solid var(--border);
