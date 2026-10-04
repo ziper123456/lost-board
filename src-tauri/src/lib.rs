@@ -84,6 +84,64 @@ fn classify_path(path: String) -> String {
     }
 }
 
+#[derive(Serialize)]
+struct FeedItem {
+    title: String,
+    link: String,
+}
+
+#[derive(Serialize)]
+struct FeedResult {
+    feed_title: String,
+    items: Vec<FeedItem>,
+}
+
+/// Fetch and parse an RSS/Atom feed. Running in Rust avoids browser CORS
+/// restrictions that would block arbitrary news feeds from the webview.
+/// Returns the feed title and its entries (title + link each).
+#[tauri::command]
+async fn fetch_rss(url: String) -> Result<FeedResult, String> {
+    let body = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "lost-board/0.1")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("read failed: {e}"))?;
+
+    let feed = feed_rs::parser::parse(&body[..])
+        .map_err(|e| format!("parse failed: {e}"))?;
+
+    let items = feed
+        .entries
+        .into_iter()
+        .filter_map(|e| {
+            let link = e
+                .links
+                .iter()
+                .find(|l| l.rel.as_deref().unwrap_or("alternate") == "alternate" || l.href.starts_with("http"))
+                .map(|l| l.href.clone())
+                .or(e.links.first().map(|l| l.href.clone()));
+            let title = e.title.map(|t| t.content).unwrap_or_default();
+            let link = link.unwrap_or_default();
+            if title.is_empty() && link.is_empty() {
+                None
+            } else {
+                Some(FeedItem { title, link })
+            }
+        })
+        .take(20)
+        .collect();
+
+    Ok(FeedResult {
+        feed_title: feed.title.map(|t| t.content).unwrap_or_default(),
+        items,
+    })
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
 /// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
@@ -170,6 +228,7 @@ pub fn run() {
             open_folder,
             open_solution,
             open_url,
+            fetch_rss,
             get_system_stats,
         ])
         .run(tauri::generate_context!())
