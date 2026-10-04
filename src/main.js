@@ -262,12 +262,16 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
 });
 
 // ---------------------------------------------------------------------------
-// Folders / Solutions settings editor.
+// Folders / Solutions settings editor. Operates on the launcher compartment
+// the user selects in the panel (not merely the first launcher), so edits are
+// predictable even with multiple launcher compartments on the grid.
 // ---------------------------------------------------------------------------
-function getLauncher() {
-  let launcher = state.compartments.find((c) => c.kind === "launcher");
-  if (!launcher) {
-    launcher = {
+let selectedLauncherId = null;
+
+function ensureLauncher() {
+  const launchers = state.compartments.filter((c) => c.kind === "launcher");
+  if (launchers.length === 0) {
+    const launcher = {
       id: "launcher" + Date.now(),
       kind: "launcher",
       title: "Folders & Solutions",
@@ -278,7 +282,13 @@ function getLauncher() {
       data: { items: [] },
     };
     state.compartments.push(launcher);
+    selectedLauncherId = launcher.id;
+    return launcher;
   }
+  if (!launchers.some((l) => l.id === selectedLauncherId)) {
+    selectedLauncherId = launchers[0].id;
+  }
+  const launcher = state.compartments.find((c) => c.id === selectedLauncherId);
   launcher.data = launcher.data || {};
   launcher.data.items = launcher.data.items || [];
   return launcher;
@@ -291,12 +301,26 @@ function commitLauncher(launcher) {
 }
 
 function renderFoldersSettings() {
-  const list = document.getElementById("folders-list");
-  if (!list) return;
-  const launcher = getLauncher();
+  const panel = document.getElementById("folders-list");
+  if (!panel) return;
+  const launcher = ensureLauncher();
+  const launchers = state.compartments.filter((c) => c.kind === "launcher");
   const items = launcher.data.items;
 
-  list.innerHTML = "";
+  panel.innerHTML = "";
+
+  // Compartment selector — which launcher tile these items belong to.
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="launcher-select">
+      ${launchers
+        .map((l) => `<option value="${l.id}" ${l.id === launcher.id ? "selected" : ""}>${escapeHtml(l.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
   items.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "item-row";
@@ -309,27 +333,31 @@ function renderFoldersSettings() {
       <input class="it-path" data-i="${i}" type="text" placeholder="Path" value="${escapeHtml(it.path || "")}" readonly />
       <button class="btn ghost it-browse" data-i="${i}">Browse</button>
       <button class="btn ghost danger it-remove" data-i="${i}">✕</button>`;
-    list.appendChild(row);
+    panel.appendChild(row);
   });
 
   const addRow = document.createElement("div");
   addRow.className = "item-row";
   addRow.innerHTML = `<button class="btn primary" id="add-folder">+ Folder</button><button class="btn primary" id="add-solution">+ Solution</button>`;
-  list.appendChild(addRow);
+  panel.appendChild(addRow);
 
-  list.querySelectorAll(".it-kind").forEach((sel) =>
+  panel.querySelector("#launcher-select").addEventListener("change", (e) => {
+    selectedLauncherId = e.target.value;
+    renderFoldersSettings();
+  });
+  panel.querySelectorAll(".it-kind").forEach((sel) =>
     sel.addEventListener("change", (e) => {
       items[Number(e.target.dataset.i)].kind = e.target.value;
       commitLauncher(launcher);
     })
   );
-  list.querySelectorAll(".it-label").forEach((inp) =>
+  panel.querySelectorAll(".it-label").forEach((inp) =>
     inp.addEventListener("change", (e) => {
       items[Number(e.target.dataset.i)].label = e.target.value;
       commitLauncher(launcher);
     })
   );
-  list.querySelectorAll(".it-browse").forEach((btn) =>
+  panel.querySelectorAll(".it-browse").forEach((btn) =>
     btn.addEventListener("click", async (e) => {
       const i = Number(e.target.dataset.i);
       const it = items[i];
@@ -341,17 +369,17 @@ function renderFoldersSettings() {
       commitLauncher(launcher);
     })
   );
-  list.querySelectorAll(".it-remove").forEach((btn) =>
+  panel.querySelectorAll(".it-remove").forEach((btn) =>
     btn.addEventListener("click", (e) => {
       items.splice(Number(e.target.dataset.i), 1);
       commitLauncher(launcher);
     })
   );
-  list.querySelector("#add-folder").addEventListener("click", () => {
+  panel.querySelector("#add-folder").addEventListener("click", () => {
     items.push({ kind: "folder", label: "", path: "" });
     commitLauncher(launcher);
   });
-  list.querySelector("#add-solution").addEventListener("click", () => {
+  panel.querySelector("#add-solution").addEventListener("click", () => {
     items.push({ kind: "solution", label: "", path: "" });
     commitLauncher(launcher);
   });
@@ -359,7 +387,7 @@ function renderFoldersSettings() {
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
   const y = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
-  state.compartments.push({
+  const launcher = {
     id: "c" + Date.now(),
     kind: "launcher",
     title: "Folders & Solutions",
@@ -368,7 +396,9 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
     w: 4,
     h: 3,
     data: { items: [] },
-  });
+  };
+  state.compartments.push(launcher);
+  selectedLauncherId = launcher.id;
   saveState();
   render();
 });
