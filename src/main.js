@@ -299,7 +299,7 @@ async function renderCompartmentBody(c) {
           <div class="azure-repo">
             <span class="azure-name">${escapeHtml(name)}</span>
             <div class="azure-links">
-              <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests">PR</button>
+              <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</button>
               <button class="btn ghost azure-files" data-url="${escapeHtml(base)}">Files</button>
             </div>
           </div>`;
