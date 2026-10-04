@@ -80,6 +80,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("classify_path", { path });
     return path.endsWith(".sln") ? "sln" : "dir";
   },
+  async fetchRss(url) {
+    if (window.__TAURI__) return invoke("fetch_rss", { url });
+    return { feed_title: "", items: [] };
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -308,6 +312,14 @@ async function renderCompartmentBody(c) {
     body.querySelectorAll(".azure-pr, .azure-files").forEach((b) =>
       b.addEventListener("click", () => native.openUrl(b.dataset.url))
     );
+  } else if (c.kind === "news") {
+    const feeds = c.data?.feeds || [];
+    if (!feeds.length) {
+      body.innerHTML = `<div class="muted">No news feeds — add some in Settings.</div>`;
+      return;
+    }
+    body.innerHTML = `<div class="muted">Loading news…</div>`;
+    renderNewsFeeds(c, body, feeds);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -344,6 +356,12 @@ const WMO = {
 };
 const wmoLabel = (code) => WMO[code] || "—";
 
+// Transient caches for network compartments (weather, news), keyed by
+// compartment id. Kept out of persisted state so a grid drag/resize/rename
+// doesn't refetch, but stale data is never saved to disk.
+const weatherCache = new Map();
+const newsCache = new Map();
+
 async function fetchWeather(lat, lon) {
   const url = `${WEATHER_BASE}?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
   const res = await fetch(url);
@@ -364,39 +382,108 @@ function renderWeatherBody(c, body) {
     body.innerHTML = `<div class="muted">Weather — add a location in Settings.</div>`;
     return;
   }
-  body.innerHTML = `<div class="muted">Loading weather…</div>`;
 
+  const paint = (w) => {
+    const clock = () =>
+      new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: w.tz,
+      });
+    body.innerHTML = `
+      <div class="wea-head">
+        <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
+        <span class="wea-clock" data-clock>${clock()}</span>
+      </div>
+      <div class="wea-temp">${Math.round(w.temp)}°</div>
+      <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
+    `;
+    const clockEl = body.querySelector("[data-clock]");
+    if (clockEl) {
+      const t = setInterval(() => {
+        clockEl.textContent = clock();
+      }, 1000);
+      compartmentTimers.add(t);
+    }
+  };
+
+  // Reuse cached data unless the configured location changed, so grid
+  // drag/resize/rename re-renders don't hit the weather API every time.
+  const sig = `${loc.lat},${loc.lon}`;
+  const cached = weatherCache.get(c.id);
+  if (cached && cached.sig === sig) {
+    paint(cached.data);
+    return;
+  }
+
+  body.innerHTML = `<div class="muted">Loading weather…</div>`;
   const show = (html) => {
     if (body.isConnected) body.innerHTML = html;
   };
 
   fetchWeather(loc.lat, loc.lon)
-    .then((w) => {
-      const clock = () =>
-        new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: w.tz,
-        });
-      show(`
-        <div class="wea-head">
-          <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
-          <span class="wea-clock" data-clock>${clock()}</span>
-        </div>
-        <div class="wea-temp">${Math.round(w.temp)}°</div>
-        <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
-      `);
-      const clockEl = body.querySelector("[data-clock]");
-      if (clockEl) {
-        const t = setInterval(() => {
-          clockEl.textContent = clock();
-        }, 1000);
-        compartmentTimers.add(t);
-      }
+    .then((data) => {
+      weatherCache.set(c.id, { sig, data });
+      paint(data);
     })
     .catch((e) => {
       show(`<div class="muted wea-err">Weather unavailable (${escapeHtml(e.message || "error")}).</div>`);
     });
+}
+
+// ---------------------------------------------------------------------------
+// News / RSS. Each news compartment holds a list of feed URLs. Feeds are
+// fetched through the native fetch_rss command (avoids CORS). Failures are
+// isolated per feed so one broken feed never blocks the others (FR-NEW-003).
+// ---------------------------------------------------------------------------
+async function renderNewsFeeds(c, body, feeds) {
+  // Reuse cached feed data unless the feed list changed, so grid drag/resize/
+  // rename re-renders don't refetch every feed each time.
+  const sig = JSON.stringify(feeds.map((f) => f.url));
+  const cached = newsCache.get(c.id);
+  let results = cached && cached.sig === sig ? cached.data : null;
+
+  if (!results) {
+    results = await Promise.allSettled(
+      feeds.map(async (f) => {
+        const r = await native.fetchRss(f.url);
+        return { feed: f, r };
+      })
+    );
+    // Cache only if at least one feed succeeded; an all-failed fetch (e.g. a
+    // transient network blip) isn't cached so the next render retries — mirrors
+    // how weather caches on success only.
+    if (results.some((res) => res.status === "fulfilled" && res.value.r.items.length)) {
+      newsCache.set(c.id, { sig, data: results });
+    }
+  }
+
+  if (!body.isConnected) return;
+  const parts = [];
+  results.forEach((res, i) => {
+    const f = feeds[i];
+    if (res.status === "fulfilled" && res.value.r.items.length) {
+      parts.push(`
+        <div class="news-feed">
+          <div class="news-feed-title">${escapeHtml(f.label || res.value.r.feed_title || f.url)}</div>
+          <div class="news-items">
+            ${res.value.r.items
+              .map(
+                (it) =>
+                  `<button class="news-item" data-url="${escapeHtml(it.link)}">${escapeHtml(it.title)}</button>`
+              )
+              .join("")}
+          </div>
+        </div>`);
+    } else {
+      parts.push(`<div class="news-feed news-fail"><span class="news-feed-title">${escapeHtml(f.label || f.url)}</span><span class="news-err">failed to load</span></div>`);
+    }
+  });
+
+  body.innerHTML = parts.join("") || `<div class="muted">No headlines loaded.</div>`;
+  body.querySelectorAll(".news-item").forEach((b) =>
+    b.addEventListener("click", () => native.openUrl(b.dataset.url))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +524,7 @@ function activateTab(tabName) {
   if (tabName === "bookmarks") renderBookmarksSettings();
   if (tabName === "azure") renderAzureSettings();
   if (tabName === "weather") renderWeatherSettings();
+  if (tabName === "news") renderNewsSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -447,6 +535,7 @@ const KIND_TAB = {
   azure: "azure",
   system: "grid",
   weather: "weather",
+  news: "news",
 };
 
 function openTileSettings(id) {
@@ -457,6 +546,7 @@ function openTileSettings(id) {
   if (comp.kind === "bookmarks") selectedBookmarksId = id;
   if (comp.kind === "azure") selectedAzureId = id;
   if (comp.kind === "weather") selectedWeatherId = id;
+  if (comp.kind === "news") selectedNewsId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -918,12 +1008,114 @@ function renderWeatherSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// News settings editor. Each news compartment holds a list of feed URLs
+// (with optional labels) for that specific tile.
+// ---------------------------------------------------------------------------
+let selectedNewsId = null;
+
+function ensureNewsComp() {
+  const comps = state.compartments.filter((c) => c.kind === "news");
+  if (comps.length === 0) {
+    const comp = {
+      id: "nws" + Date.now(),
+      kind: "news",
+      title: "News",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 4,
+      data: { feeds: [] },
+    };
+    state.compartments.push(comp);
+    selectedNewsId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedNewsId)) {
+    selectedNewsId = comps[0].id;
+  }
+  const comp = state.compartments.find((c) => c.id === selectedNewsId);
+  comp.data = comp.data || {};
+  comp.data.feeds = comp.data.feeds || [];
+  return comp;
+}
+
+function commitNews(comp) {
+  saveState();
+  render();
+  renderNewsSettings();
+}
+
+function renderNewsSettings() {
+  const panel = document.getElementById("news-list");
+  if (!panel) return;
+  const comp = ensureNewsComp();
+  const comps = state.compartments.filter((c) => c.kind === "news");
+  const feeds = comp.data.feeds;
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="news-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
+  feeds.forEach((f, i) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `
+      <input class="news-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(f.label || "")}" />
+      <input class="news-url" data-i="${i}" type="text" placeholder="https://…/feed.xml" value="${escapeHtml(f.url || "")}" />
+      <button class="btn ghost danger news-remove" data-i="${i}">✕</button>`;
+    panel.appendChild(row);
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "item-row";
+  addRow.innerHTML = `<button class="btn primary" id="add-feed">+ Feed</button>`;
+  panel.appendChild(addRow);
+
+  panel.querySelector("#news-select").addEventListener("change", (e) => {
+    selectedNewsId = e.target.value;
+    renderNewsSettings();
+  });
+  panel.querySelectorAll(".news-label").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      feeds[Number(e.target.dataset.i)].label = e.target.value;
+      commitNews(comp);
+    })
+  );
+  panel.querySelectorAll(".news-url").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      feeds[Number(e.target.dataset.i)].url = e.target.value;
+      commitNews(comp);
+    })
+  );
+  panel.querySelectorAll(".news-remove").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      feeds.splice(Number(e.target.dataset.i), 1);
+      commitNews(comp);
+    })
+  );
+  panel.querySelector("#add-feed").addEventListener("click", () => {
+    feeds.push({ label: "", url: "" });
+    commitNews(comp);
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
   azure: { title: "Azure DevOps", data: { org: "", project: "", repos: [] } },
   system: { title: "System", data: {} },
   weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
+  news: { title: "News", data: { feeds: [] } },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {

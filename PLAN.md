@@ -74,7 +74,7 @@ data storage, error states, and secrets consistent across the dashboard.
 
 ### Phase 2 — Live information
 - [x] **Weather + world clock** compartment: per-location conditions + local time
-- [ ] **News** compartment: RSS feeds, headline list, click-through
+- [x] **News** compartment: RSS feeds, headline list, click-through
 - [ ] **Service Healthcheck** compartment: GET /health, green/red + latency
 - [ ] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume
 

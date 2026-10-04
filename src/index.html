@@ -50,8 +50,9 @@
                   <option value="launcher">Folders &amp; Solutions</option>
                   <option value="bookmarks">Bookmarks</option>
                   <option value="azure">Azure DevOps</option>
-                  <option value="system">System</option>
                   <option value="weather">Weather</option>
+                  <option value="news">News</option>
+                  <option value="system">System</option>
                 </select>
                 <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
               </div>
@@ -74,7 +75,10 @@
             <p>Each Weather tile has its own location. Type a city and Look up, or enter lat/lon.</p>
             <div id="weather-list"></div>
           </div>
-          <div class="tab-panel" data-panel="news"><div id="news-list"></div></div>
+          <div class="tab-panel" data-panel="news">
+            <p>Add RSS/Atom feed URLs. Each feed's headlines are fetched independently, so one broken feed doesn't block the others.</p>
+            <div id="news-list"></div>
+          </div>
           <div class="tab-panel" data-panel="healthcheck"><div id="healthcheck-list"></div></div>
         </div>
       </div>
