@@ -72,7 +72,7 @@ async fn pick_solution() -> Result<Option<String>, String> {
 #[tauri::command]
 fn get_system_stats() -> SystemStats {
     let s = System::new_with_specifics(
-        RefreshKind::nothing()
+        RefreshKind::new()
             .with_cpu(CpuRefreshKind::new().with_cpu_usage())
             .with_memory(MemoryRefreshKind::new()),
     );

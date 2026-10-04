@@ -58,7 +58,7 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] Settings overlay shell (tabs for each compartment type)
 - [x] State persistence (localStorage)
 - [x] `spec.md` + `PLAN.md` + `README.md` in repo
-- [ ] Verify compile on a machine with MSVC Build Tools (`cargo build`)
+- [x] Verify compile on a machine with MSVC Build Tools (`cargo build`) — verified via `npm run dev` on Windows
 - [x] Config persistence to app-data JSON (migrate from localStorage) — awaiting Rust build verification
 - [x] Make the configured Tauri development URL available through an npm-managed frontend server
 - [x] Replace scaffold drag behavior with collision-aware snap and resize behavior
