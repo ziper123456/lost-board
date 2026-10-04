@@ -8,7 +8,8 @@
 //! All commands are local-only (single-user app). No network server is exposed.
 
 use serde::Serialize;
-use std::path::Path;
+use std::{fs, path::{Path, PathBuf}};
+use tauri::Manager;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[derive(Serialize)]
@@ -113,6 +114,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
+            load_state,
+            save_state,
             open_folder,
             open_solution,
             open_url,
@@ -120,4 +123,50 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running lost-board");
+}
+
+const STATE_FILE_NAME: &str = "dashboard-state.json";
+
+/// Read non-secret dashboard configuration from the app-data directory.
+/// A malformed file is preserved as `.bak` and treated as absent.
+#[tauri::command]
+fn load_state(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let path = state_file_path(&app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read dashboard state: {e}"))?;
+
+    if serde_json::from_str::<serde_json::Value>(&contents).is_ok() {
+        Ok(Some(contents))
+    } else {
+        let backup = path.with_extension("json.bak");
+        fs::rename(&path, &backup)
+            .map_err(|e| format!("Failed to back up corrupt dashboard state: {e}"))?;
+        Ok(None)
+    }
+}
+
+/// Save ordinary dashboard configuration. Credentials belong in the OS secret
+/// store and must never be included in this JSON payload.
+#[tauri::command]
+fn save_state(app: tauri::AppHandle, state_json: String) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(&state_json)
+        .map_err(|e| format!("Refusing to save invalid dashboard state: {e}"))?;
+
+    let path = state_file_path(&app)?;
+    let parent = path.parent().ok_or("Dashboard state has no parent directory")?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("Failed to create app-data directory: {e}"))?;
+    fs::write(&path, state_json)
+        .map_err(|e| format!("Failed to save dashboard state: {e}"))
+}
+
+fn state_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join(STATE_FILE_NAME))
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))
 }

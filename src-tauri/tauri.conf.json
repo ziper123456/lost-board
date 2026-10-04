@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.lostboard.app",
   "build": {
-    "beforeDevCommand": "",
+    "beforeDevCommand": "npm run dev:frontend",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "",
     "frontendDist": "../src"
