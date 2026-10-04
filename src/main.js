@@ -76,6 +76,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("pick_solution");
     return prompt("Solution path (.sln) (browser prototype):") || null;
   },
+  async classifyPath(path) {
+    if (window.__TAURI__) return invoke("classify_path", { path });
+    return path.endsWith(".sln") ? "sln" : "dir";
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -675,8 +679,63 @@ async function initialize() {
     } catch (e) {
       console.error("Failed to load app state", e);
     }
+    setupDragDrop();
   }
   render();
+}
+
+// ---------------------------------------------------------------------------
+// OS drag-and-drop: dropping a folder or .sln from the OS file explorer onto a
+// Folders & Solutions tile adds it to that tile's items (same as Settings).
+// ---------------------------------------------------------------------------
+function setupDragDrop() {
+  const win = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+  win.onDragDropEvent(async (event) => {
+    const { type, paths, position } = event.payload;
+    const scale = (window.__TAURI__.window.getCurrentWindow().scaleFactor?.()) || 1;
+    const x = position ? position.x / scale : 0;
+    const y = position ? position.y / scale : 0;
+    const targetAt = (point) =>
+      [...dashboard.querySelectorAll(".compartment")].find((el) => {
+        const r = el.getBoundingClientRect();
+        return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
+      });
+
+    if (type === "over") {
+      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      const over = targetAt({ x, y });
+      if (over && state.compartments.find((c) => c.id === over.dataset.id)?.kind === "launcher") {
+        over.classList.add("drag-over");
+      }
+      return;
+    }
+    if (type === "leave") {
+      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      return;
+    }
+    if (type !== "drop") return;
+    dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+    if (!paths || !paths.length) return;
+
+    // Find the launcher tile under the drop point.
+    const target = targetAt({ x, y });
+    if (!target) return;
+    const comp = state.compartments.find((c) => c.id === target.dataset.id);
+    if (!comp || comp.kind !== "launcher") return;
+
+    comp.data = comp.data || {};
+    comp.data.items = comp.data.items || [];
+
+    for (const p of paths) {
+      const kind = await native.classifyPath(p);
+      if (kind !== "dir" && kind !== "sln") continue;
+      const label = p.split(/[\\/]/).pop() || p;
+      if (comp.data.items.some((it) => it.path === p)) continue; // no dupes
+      comp.data.items.push({ kind: kind === "dir" ? "folder" : "solution", label, path: p });
+    }
+    saveState();
+    render();
+  });
 }
 
 void initialize();

@@ -68,6 +68,22 @@ async fn pick_solution() -> Result<Option<String>, String> {
     Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
 }
 
+/// Classify a dropped path so the frontend can add it as a folder or a solution:
+/// returns `"dir"`, `"sln"` (a `.sln` file), or `"file"` (any other file).
+#[tauri::command]
+fn classify_path(path: String) -> String {
+    let p = Path::new(&path);
+    if p.is_dir() {
+        "dir".into()
+    } else if p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("sln") {
+        "sln".into()
+    } else if p.is_file() {
+        "file".into()
+    } else {
+        "missing".into()
+    }
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
 /// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
@@ -150,6 +166,7 @@ pub fn run() {
             save_state,
             pick_folder,
             pick_solution,
+            classify_path,
             open_folder,
             open_solution,
             open_url,
