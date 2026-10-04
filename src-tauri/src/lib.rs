@@ -47,6 +47,27 @@ fn open_url(url: String) -> Result<(), String> {
     open_path(&url)
 }
 
+/// Open a native folder picker; returns the chosen absolute path or `None`.
+#[tauri::command]
+async fn pick_folder() -> Result<Option<String>, String> {
+    let dir = rfd::AsyncFileDialog::new()
+        .set_title("Choose a folder")
+        .pick_folder()
+        .await;
+    Ok(dir.map(|d| d.path().to_string_lossy().into_owned()))
+}
+
+/// Open a native file picker filtered to solutions; returns the path or `None`.
+#[tauri::command]
+async fn pick_solution() -> Result<Option<String>, String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Choose a solution (.sln)")
+        .add_filter("Solution", &["sln"])
+        .pick_file()
+        .await;
+    Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
+}
+
 /// Read current CPU and RAM usage.
 #[tauri::command]
 fn get_system_stats() -> SystemStats {
@@ -116,6 +137,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_state,
             save_state,
+            pick_folder,
+            pick_solution,
             open_folder,
             open_solution,
             open_url,

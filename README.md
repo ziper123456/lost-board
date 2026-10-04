@@ -59,6 +59,6 @@ PLAN.md               # roadmap + implementation TODO (cross-machine)
 
 ## Status
 
-Scaffold complete (grid + system compartment + settings shell + native commands wired).
-Compartments still to build per [`PLAN.md`](PLAN.md): folders, solutions, bookmarks, Azure,
+Scaffold complete. Fixed-column grid (drag + snap + resize) and the Folders/Solutions
+compartment are done. Compartments still to build per [`PLAN.md`](PLAN.md): bookmarks, Azure,
 Spotify, weather+world-clock, news, healthcheck.
