@@ -257,16 +257,19 @@ async function renderCompartmentBody(c) {
   } else if (c.kind === "bookmarks") {
     const urls = c.data?.urls || [];
     if (!urls.length) {
-      body.innerHTML = `<div class="muted">No bookmarks yet.</div>`;
+      body.innerHTML = `<div class="muted">No bookmarks yet — add them in Settings.</div>`;
       return;
     }
     body.innerHTML = urls
       .map(
         (u) =>
-          `<button class="btn ghost bmk" data-url="${escapeHtml(u.url)}">${escapeHtml(u.title || u.url)}</button>`
+          `<button class="bmk-tile" data-url="${escapeHtml(u.url)}">
+             <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
+             <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
+           </button>`
       )
-      .join(" ");
-    body.querySelectorAll(".bmk").forEach((b) =>
+      .join("");
+    body.querySelectorAll(".bmk-tile").forEach((b) =>
       b.addEventListener("click", () => native.openUrl(b.dataset.url))
     );
   } else {
@@ -312,6 +315,7 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
     tab.classList.add("active");
     document.querySelector(`.tab-panel[data-panel="${tab.dataset.tab}"]`).classList.add("active");
     if (tab.dataset.tab === "folders") renderFoldersSettings();
+    if (tab.dataset.tab === "bookmarks") renderBookmarksSettings();
   });
 });
 
@@ -439,6 +443,107 @@ function renderFoldersSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Bookmarks settings editor. Mirrors the launcher editor: pick a bookmarks
+// compartment tile, then add/edit/remove URLs for that specific tile.
+// ---------------------------------------------------------------------------
+let selectedBookmarksId = null;
+
+function ensureBookmarksComp() {
+  const comps = state.compartments.filter((c) => c.kind === "bookmarks");
+  if (comps.length === 0) {
+    const comp = {
+      id: "bmk" + Date.now(),
+      kind: "bookmarks",
+      title: "Bookmarks",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 3,
+      data: { urls: [] },
+    };
+    state.compartments.push(comp);
+    selectedBookmarksId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedBookmarksId)) {
+    selectedBookmarksId = comps[0].id;
+  }
+  const comp = state.compartments.find((c) => c.id === selectedBookmarksId);
+  comp.data = comp.data || {};
+  comp.data.urls = comp.data.urls || [];
+  return comp;
+}
+
+function commitBookmarks(comp) {
+  saveState();
+  render();
+  renderBookmarksSettings();
+}
+
+function renderBookmarksSettings() {
+  const panel = document.getElementById("bookmarks-list");
+  if (!panel) return;
+  const comp = ensureBookmarksComp();
+  const comps = state.compartments.filter((c) => c.kind === "bookmarks");
+  const urls = comp.data.urls;
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="bookmarks-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+
+  urls.forEach((u, i) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `
+      <input class="bmk-title" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(u.title || "")}" />
+      <input class="bmk-url" data-i="${i}" type="text" placeholder="https://…" value="${escapeHtml(u.url || "")}" />
+      <button class="btn ghost danger bmk-remove" data-i="${i}">✕</button>`;
+    panel.appendChild(row);
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "item-row";
+  addRow.innerHTML = `<button class="btn primary" id="add-bookmark">+ Bookmark</button>`;
+  panel.appendChild(addRow);
+
+  panel.querySelector("#bookmarks-select").addEventListener("change", (e) => {
+    selectedBookmarksId = e.target.value;
+    renderBookmarksSettings();
+  });
+  panel.querySelectorAll(".bmk-title").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      urls[Number(e.target.dataset.i)].title = e.target.value;
+      commitBookmarks(comp);
+    })
+  );
+  panel.querySelectorAll(".bmk-url").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      urls[Number(e.target.dataset.i)].url = e.target.value;
+      commitBookmarks(comp);
+    })
+  );
+  panel.querySelectorAll(".bmk-remove").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      urls.splice(Number(e.target.dataset.i), 1);
+      commitBookmarks(comp);
+    })
+  );
+  panel.querySelector("#add-bookmark").addEventListener("click", () => {
+    urls.push({ title: "", url: "" });
+    commitBookmarks(comp);
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -540,6 +645,14 @@ dashboard.addEventListener("mouseup", () => {
 // ---------------------------------------------------------------------------
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+function hostOf(url) {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    return h || url;
+  } catch {
+    return url;
+  }
 }
 function fmtBytes(n) {
   if (!n) return "0 B";

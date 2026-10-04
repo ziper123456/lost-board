@@ -122,6 +122,40 @@ html, body {
   font-size: 0.75rem;
 }
 
+/* Bookmark tiles */
+.bmk-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 10px;
+  margin: 3px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  cursor: pointer;
+  text-align: left;
+}
+.bmk-tile:hover { border-color: var(--accent); }
+.bmk-name {
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bmk-host {
+  color: var(--muted);
+  font-size: 0.72rem;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Buttons */
 .btn {
   padding: 6px 12px;

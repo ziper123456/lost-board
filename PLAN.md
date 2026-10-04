@@ -66,7 +66,7 @@ data storage, error states, and secrets consistent across the dashboard.
 
 ### Phase 1 — Core launchers
 - [x] **Folders / Solutions** compartment: pick paths in Settings, click to open
-- [ ] **Bookmarks** compartment: CRUD + click-to-open
+- [x] **Bookmarks** compartment: CRUD + click-to-open
 - [ ] **Azure DevOps** compartment: repo config, deep-links (PR + Files) to specific repo
 - [ ] **Azure live tiles** (needs PAT from Settings, stored in OS secret store): open-PR count
 - [ ] Azure PAT input and OS-secret-store integration
