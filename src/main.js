@@ -18,7 +18,6 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 // ---------------------------------------------------------------------------
 const DEFAULT_STATE = {
   columns: 12,
-  expandMode: "click",
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -186,12 +185,14 @@ function render() {
         </div>
       </div>
       ${collapsed ? "" : `<div class="compartment-body" data-id="${c.id}"></div>`}
-      ${collapsed ? "" : `<div class="resize-handle" title="Resize"></div>`}
+      <div class="resize-handle" title="Resize"></div>
     `;
+
+    const expandMode = c.expandMode || "click";
 
     el.querySelector(".collapse").addEventListener("click", (e) => {
       e.stopPropagation();
-      if (state.expandMode === "hover") {
+      if (expandMode === "hover") {
         // In hover mode the button just collapses/expands the tile.
         c.collapsed = !collapsed;
         openTileId = null;
@@ -254,7 +255,7 @@ function render() {
     });
 
     // Hover mode: hovering a collapsed tile's header opens its overlay.
-    if (collapsed && state.expandMode === "hover") {
+    if (collapsed && expandMode === "hover") {
       const header = el.querySelector(".compartment-header");
       header.addEventListener("mouseenter", () => {
         if (openTileId !== c.id) {
@@ -636,6 +637,32 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
 // ---------------------------------------------------------------------------
 let selectedLauncherId = null;
 
+// Shared per-tile 'expand mode' control shown in every settings tab's
+// tile-selection row. Persisted per compartment (not global).
+function appendExpandModeRow(panel, comp) {
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `
+    <label>Open collapsed on</label>
+    <select class="expandmode">
+      <option value="click" ${(comp.expandMode || "click") === "click" ? "selected" : ""}>Click</option>
+      <option value="hover" ${comp.expandMode === "hover" ? "selected" : ""}>Hover</option>
+    </select>`;
+  row.querySelector("select").addEventListener("change", (e) => {
+    comp.expandMode = e.target.value;
+    openTileId = null;
+    saveState();
+    render();
+    // Re-render the panel so the control reflects the saved value.
+    if (comp.kind === "launcher") renderFoldersSettings();
+    if (comp.kind === "bookmarks") renderBookmarksSettings();
+    if (comp.kind === "azure") renderAzureSettings();
+    if (comp.kind === "weather") renderWeatherSettings();
+    if (comp.kind === "news") renderNewsSettings();
+  });
+  panel.appendChild(row);
+}
+
 function ensureLauncher() {
   const launchers = state.compartments.filter((c) => c.kind === "launcher");
   if (launchers.length === 0) {
@@ -688,6 +715,7 @@ function renderFoldersSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendExpandModeRow(panel, launcher);
 
   items.forEach((it, i) => {
     const row = document.createElement("div");
@@ -810,6 +838,7 @@ function renderBookmarksSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendExpandModeRow(panel, comp);
 
   urls.forEach((u, i) => {
     const row = document.createElement("div");
@@ -912,6 +941,7 @@ function renderAzureSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendExpandModeRow(panel, comp);
 
   const orgRow = document.createElement("div");
   orgRow.className = "item-row";
@@ -1035,6 +1065,7 @@ function renderWeatherSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendExpandModeRow(panel, comp);
 
   const nameRow = document.createElement("div");
   nameRow.className = "item-row";
@@ -1139,6 +1170,7 @@ function renderNewsSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendExpandModeRow(panel, comp);
 
   feeds.forEach((f, i) => {
     const row = document.createElement("div");
@@ -1215,13 +1247,6 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
   state.columns = Math.min(24, Math.max(4, Number(e.target.value) || 12));
-  saveState();
-  render();
-});
-
-document.getElementById("set-expandmode").addEventListener("change", (e) => {
-  state.expandMode = e.target.value === "hover" ? "hover" : "click";
-  openTileId = null;
   saveState();
   render();
 });
@@ -1327,7 +1352,6 @@ async function initialize() {
     }
     setupDragDrop();
   }
-  document.getElementById("set-expandmode").value = state.expandMode || "click";
   render();
 }
 

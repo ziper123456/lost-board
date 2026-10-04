@@ -78,8 +78,7 @@ html, body {
 }
 
 /* Collapsed tile: header-only bar, stays anchored/non-overlapping in the grid */
-.compartment.collapsed .compartment-body,
-.compartment.collapsed .resize-handle { display: none; }
+.compartment.collapsed .compartment-body { display: none; }
 .compartment.collapsed .compartment-header {
   height: 100%;
   border-bottom: none;
