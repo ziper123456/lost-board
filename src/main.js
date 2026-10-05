@@ -107,6 +107,8 @@ async openFolder(path) {
 // Grid rendering (simple absolute-positioned grid for the scaffold).
 // ---------------------------------------------------------------------------
 const dashboard = document.getElementById("dashboard");
+const gridEl = document.getElementById("grid");
+const scalerEl = document.getElementById("grid-scaler");
 
 // Registry of interval timers owned by compartment bodies, keyed by the body
 // element they render into. Tracked at module scope so they are cleared even
@@ -126,18 +128,15 @@ function clearBodyTimers(body) {
   }
 }
 
-const ROW_H_BASE = 44;
+const ROW_H = 44;
 const GUTTER = 8;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 3;
 
-// Current zoom (1 = 100%). ROW_H scales with zoom so the whole grid (tile
-// positions, heights, gestures, overlays) scales proportionally.
+// Current zoom (1 = 100%). Applied as a CSS transform: scale() on the grid so
+// tiles, text and buttons all scale uniformly; geometry stays in unscaled px.
 let zoom = 1;
-function ROW_H() {
-  return ROW_H_BASE * zoom;
-}
 
 // Pixel geometry for a compartment given the current column count and the
 // dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
@@ -147,13 +146,13 @@ function cellWidth() {
 function applyBox(el, c) {
   const cw = cellWidth();
   el.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  el.style.top = `${GUTTER / 2 + c.y * ROW_H()}px`;
+  el.style.top = `${GUTTER / 2 + c.y * ROW_H}px`;
   el.style.width = `${c.w * cw - GUTTER}px`;
-  el.style.height = `${c.h * ROW_H() - GUTTER}px`;
+  el.style.height = `${c.h * ROW_H - GUTTER}px`;
 }
 function gridHeight() {
   const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
-  return GUTTER / 2 + rows * ROW_H();
+  return GUTTER / 2 + rows * ROW_H;
 }
 // A collapsed tile occupies just its header (1 row) in the grid layout, so
 // other tiles can flow into the freed space instead of being pushed down.
@@ -283,7 +282,15 @@ const tileEls = new Map();
 const overlayEls = new Map();
 
 function render() {
-  dashboard.style.height = `${gridHeight()}px`;
+  // Unscaled grid size; a CSS transform scales it visually, and the scaler is
+  // sized to the scaled dimensions so the dashboard scrolls correctly.
+  const w = dashboard.clientWidth;
+  const h = gridHeight();
+  gridEl.style.width = `${w}px`;
+  gridEl.style.height = `${h}px`;
+  gridEl.style.transform = `scale(${zoom})`;
+  scalerEl.style.width = `${w * zoom}px`;
+  scalerEl.style.height = `${h * zoom}px`;
 
   // Drop tiles for compartments that no longer exist.
   for (const [id, rec] of tileEls) {
@@ -302,7 +309,7 @@ function render() {
       el.className = "compartment";
       el.dataset.id = c.id;
       el.style.position = "absolute";
-      dashboard.appendChild(el);
+      gridEl.appendChild(el);
       rec = { el, headerSig: null, bodySig: null, bodyEl: null };
       tileEls.set(c.id, rec);
     }
@@ -310,7 +317,7 @@ function render() {
     // Cheap, always-updated geometry.
     applyBox(rec.el, c);
     rec.el.classList.toggle("collapsed", collapsed);
-    if (collapsed) rec.el.style.height = `${ROW_H() - GUTTER}px`;
+    if (collapsed) rec.el.style.height = `${ROW_H - GUTTER}px`;
 
     // Header — rebuild only when title / collapse / collapsible changed.
     const hs = tileHeaderSig(c);
@@ -365,15 +372,15 @@ function renderOverlays() {
       el.className = "compartment-overlay";
       el.dataset.id = c.id;
       el.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
-      dashboard.appendChild(el);
+      gridEl.appendChild(el);
       rec = { el, bodyEl: el.querySelector(".compartment-body"), bodySig: null };
       overlayEls.set(c.id, rec);
     }
     const cw = cellWidth();
     rec.el.style.left = `${GUTTER / 2 + c.x * cw}px`;
-    rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`;
+    rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`;
     rec.el.style.width = `${c.w * cw - GUTTER}px`;
-    rec.el.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
+    rec.el.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
 
     const bs = tileBodySig(c);
     if (rec.bodySig !== bs) {
@@ -386,7 +393,7 @@ function renderOverlays() {
 
 async function renderCompartmentBody(c, body) {
   if (!body) {
-    body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+    body = gridEl.querySelector(`.compartment-body[data-id="${c.id}"]`);
   }
   if (!body) return;
 
@@ -1452,7 +1459,7 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
   render();
   // New tiles are placed at the bottom of a tall grid; scroll it into view so
   // the user actually sees what they added.
-  dashboard.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
+  gridEl.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
 });
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
@@ -1504,24 +1511,26 @@ dashboard.addEventListener("mousedown", (e) => {
 
 dashboard.addEventListener("mousemove", (e) => {
   if (!gesture) return;
-  const dx = e.clientX - gesture.startX;
-  const dy = e.clientY - gesture.startY;
+  // Pointer deltas are screen px; the grid is CSS-scaled by `zoom`, so convert
+  // to unscaled grid px before snapping to cells.
+  const dx = (e.clientX - gesture.startX) / zoom;
+  const dy = (e.clientY - gesture.startY) / zoom;
   const cw = cellWidth();
   const item = gesture.item;
 
   if (gesture.mode === "drag") {
     const nx = clamp(Math.round((item.x * cw + dx) / cw), 0, state.columns - item.w);
-    const ny = Math.max(0, Math.round((item.y * ROW_H() + dy) / ROW_H()));
+    const ny = Math.max(0, Math.round((item.y * ROW_H + dy) / ROW_H));
     gesture.comp.style.left = `${GUTTER / 2 + nx * cw}px`;
-    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H()}px`;
+    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H}px`;
     gesture._nx = nx;
     gesture._ny = ny;
     gesture.moved = nx !== item.x || ny !== item.y;
   } else {
     const nw = clamp(item.w + Math.round(dx / cw), 1, state.columns - item.x);
-    const nh = Math.max(1, item.h + Math.round(dy / ROW_H()));
+    const nh = Math.max(1, item.h + Math.round(dy / ROW_H));
     gesture.comp.style.width = `${nw * cw - GUTTER}px`;
-    gesture.comp.style.height = `${nh * ROW_H() - GUTTER}px`;
+    gesture.comp.style.height = `${nh * ROW_H - GUTTER}px`;
     gesture._nw = nw;
     gesture._nh = nh;
     gesture.moved = nw !== item.w || nh !== item.h;
@@ -1609,13 +1618,13 @@ async function setupDragDrop() {
     const targetAt = (point) =>
       // Match both normal tiles and collapsed-tile overlays; both carry the
       // compartment id in data-id so a drop on an open overlay targets its tile.
-      [...dashboard.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
+      [...gridEl.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
         const r = el.getBoundingClientRect();
         return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
       });
 
     if (type === "over") {
-      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
       const over = targetAt({ x, y });
       if (over && state.compartments.find((c) => c.id === over.dataset.id)?.kind === "launcher") {
         over.classList.add("drag-over");
@@ -1623,11 +1632,11 @@ async function setupDragDrop() {
       return;
     }
     if (type === "leave") {
-      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
       return;
     }
     if (type !== "drop") return;
-    dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+    gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
     if (!paths || !paths.length) return;
 
     // Find the launcher tile under the drop point.

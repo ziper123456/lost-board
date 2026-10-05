@@ -85,9 +85,16 @@ html, body {
 
 /* Dashboard grid */
 .dashboard {
-  padding: 12px;
   height: calc(100% - 52px);
   overflow: auto;
+  position: relative;
+}
+/* Scaler sizes the scrollable area to the scaled grid; the grid itself is
+   CSS-transform-scaled so tiles/text/buttons all zoom uniformly. */
+.grid-scaler { position: relative; }
+.grid {
+  position: relative;
+  transform-origin: top left;
 }
 
 /* Compartment tiles */
