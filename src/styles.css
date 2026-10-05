@@ -32,6 +32,24 @@ html, body {
   background: var(--panel);
 }
 .logo { font-weight: 600; letter-spacing: 0.5px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  background: var(--panel-2);
+}
+.zoom-controls .btn { padding: 2px 8px; font-size: 0.9rem; }
+.zoom-level {
+  min-width: 42px;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Dashboard grid */
 .dashboard {

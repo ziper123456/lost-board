@@ -18,6 +18,7 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 // ---------------------------------------------------------------------------
 const DEFAULT_STATE = {
   columns: 12,
+  zoom: 1,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -116,9 +117,18 @@ function clearCompartmentTimers() {
   compartmentTimers.clear();
 }
 
-const ROW_H = 44;
+const ROW_H_BASE = 44;
 const GUTTER = 8;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 3;
+
+// Current zoom (1 = 100%). ROW_H scales with zoom so the whole grid (tile
+// positions, heights, gestures, overlays) scales proportionally.
+let zoom = 1;
+function ROW_H() {
+  return ROW_H_BASE * zoom;
+}
 
 // Pixel geometry for a compartment given the current column count and the
 // dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
@@ -128,13 +138,13 @@ function cellWidth() {
 function applyBox(el, c) {
   const cw = cellWidth();
   el.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  el.style.top = `${GUTTER / 2 + c.y * ROW_H}px`;
+  el.style.top = `${GUTTER / 2 + c.y * ROW_H()}px`;
   el.style.width = `${c.w * cw - GUTTER}px`;
-  el.style.height = `${c.h * ROW_H - GUTTER}px`;
+  el.style.height = `${c.h * ROW_H() - GUTTER}px`;
 }
 function gridHeight() {
   const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
-  return GUTTER / 2 + rows * ROW_H;
+  return GUTTER / 2 + rows * ROW_H();
 }
 // A collapsed tile occupies just its header (1 row) in the grid layout, so
 // other tiles can flow into the freed space instead of being pushed down.
@@ -173,7 +183,7 @@ function render() {
     el.dataset.id = c.id;
     el.style.position = "absolute";
     applyBox(el, c);
-    if (collapsed) el.style.height = `${ROW_H - GUTTER}px`;
+    if (collapsed) el.style.height = `${ROW_H() - GUTTER}px`;
 
     const toggle = collapsed ? "▸" : "▾";
     el.innerHTML = `
@@ -264,9 +274,9 @@ function renderCollapsedOverlay(c) {
   overlay.className = "compartment-overlay";
   overlay.dataset.id = c.id;
   overlay.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`; // below the header
+  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`; // below the header
   overlay.style.width = `${c.w * cw - GUTTER}px`;
-  overlay.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
+  overlay.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
   overlay.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
   dashboard.appendChild(overlay);
   renderCompartmentBody(c);
@@ -1235,6 +1245,33 @@ document.getElementById("set-cols").addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
+// Zoom controls (topbar). Scaling ROW_H scales the whole grid, so zoom out to
+// see off-screen tiles (e.g. ones added far down) and remove them.
+// ---------------------------------------------------------------------------
+function updateZoomUI() {
+  const el = document.getElementById("zoom-level");
+  if (el) el.textContent = `${Math.round(zoom * 100)}%`;
+}
+function setZoom(z) {
+  zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+  state.zoom = zoom;
+  updateZoomUI();
+  render();
+}
+function zoomFit() {
+  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
+  const avail = dashboard.clientHeight - GUTTER;
+  const z = avail > 0 && rows > 0 ? Math.min((avail / rows) / ROW_H_BASE, ZOOM_MAX) : 1;
+  zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+  state.zoom = zoom;
+  updateZoomUI();
+  render();
+}
+document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
+document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
+document.getElementById("zoom-fit").addEventListener("click", zoomFit);
+
+// ---------------------------------------------------------------------------
 // Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
 // ---------------------------------------------------------------------------
 let gesture = null;
@@ -1262,17 +1299,17 @@ dashboard.addEventListener("mousemove", (e) => {
 
   if (gesture.mode === "drag") {
     const nx = clamp(Math.round((item.x * cw + dx) / cw), 0, state.columns - item.w);
-    const ny = Math.max(0, Math.round((item.y * ROW_H + dy) / ROW_H));
+    const ny = Math.max(0, Math.round((item.y * ROW_H() + dy) / ROW_H()));
     gesture.comp.style.left = `${GUTTER / 2 + nx * cw}px`;
-    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H}px`;
+    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H()}px`;
     gesture._nx = nx;
     gesture._ny = ny;
     gesture.moved = nx !== item.x || ny !== item.y;
   } else {
     const nw = clamp(item.w + Math.round(dx / cw), 1, state.columns - item.x);
-    const nh = Math.max(1, item.h + Math.round(dy / ROW_H));
+    const nh = Math.max(1, item.h + Math.round(dy / ROW_H()));
     gesture.comp.style.width = `${nw * cw - GUTTER}px`;
-    gesture.comp.style.height = `${nh * ROW_H - GUTTER}px`;
+    gesture.comp.style.height = `${nh * ROW_H() - GUTTER}px`;
     gesture._nw = nw;
     gesture._nh = nh;
     gesture.moved = nw !== item.w || nh !== item.h;
@@ -1335,6 +1372,8 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
+  updateZoomUI();
   render();
 }
 
