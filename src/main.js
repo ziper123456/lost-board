@@ -191,6 +191,7 @@ function render() {
         <span class="comp-title">${escapeHtml(c.title)}</span>
         <div class="header-actions">
           ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
+          <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
           <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
           <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
           <button class="btn ghost remove" data-id="${c.id}">✕</button>
@@ -214,6 +215,11 @@ function render() {
         else openTiles.add(c.id);
         render();
       }
+    });
+
+    el.querySelector(".preview-tile").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPreview(c.id);
     });
 
     el.querySelector(".settings-tile").addEventListener("click", (e) => {
@@ -282,8 +288,10 @@ function renderCollapsedOverlay(c) {
   renderCompartmentBody(c);
 }
 
-async function renderCompartmentBody(c) {
-  const body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+async function renderCompartmentBody(c, body) {
+  if (!body) {
+    body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+  }
   if (!body) return;
 
   if (c.kind === "system") {
@@ -546,6 +554,44 @@ async function renderNewsFeeds(c, body, feeds) {
     b.addEventListener("click", () => native.openUrl(b.dataset.url))
   );
 }
+
+// ---------------------------------------------------------------------------
+// Preview panel (right side). Shows a tile's content read-only, floating above
+// the grid (no reflow). Toggled from the toolbar; the eye button on a tile
+// header opens it for that tile.
+// ---------------------------------------------------------------------------
+const previewEl = document.getElementById("preview");
+const previewBody = document.getElementById("preview-body");
+let previewTileId = null;
+
+function openPreview(id) {
+  const comp = state.compartments.find((c) => c.id === id);
+  if (!comp) return;
+  previewTileId = id;
+  document.getElementById("preview-title").textContent = comp.title;
+  previewEl.classList.remove("hidden");
+  renderPreview();
+}
+function closePreview() {
+  previewTileId = null;
+  previewEl.classList.add("hidden");
+  previewBody.innerHTML = "";
+  clearCompartmentTimers();
+}
+function togglePreview() {
+  if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
+  else closePreview();
+}
+function renderPreview() {
+  if (!previewTileId) return;
+  const comp = state.compartments.find((c) => c.id === previewTileId);
+  if (!comp) return;
+  document.getElementById("preview-title").textContent = comp.title;
+  renderCompartmentBody(comp, previewBody);
+}
+
+document.getElementById("btn-preview").addEventListener("click", togglePreview);
+document.getElementById("preview-close").addEventListener("click", closePreview);
 
 // ---------------------------------------------------------------------------
 // Settings overlay wiring.

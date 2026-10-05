@@ -17,9 +17,19 @@
           <button id="zoom-in" class="btn ghost">+</button>
           <button id="zoom-fit" class="btn ghost" title="Fit to window">⤢</button>
         </div>
+        <button id="btn-preview" class="btn ghost" title="Toggle preview panel">👁</button>
         <button id="btn-settings" class="btn ghost" title="Settings">⚙ Settings</button>
       </div>
     </header>
+
+    <!-- Right-side preview panel: shows a tile's content without reflowing the grid. -->
+    <aside id="preview" class="preview hidden">
+      <header>
+        <span id="preview-title" class="preview-title">Preview</span>
+        <button id="preview-close" class="btn ghost" title="Close preview">✕</button>
+      </header>
+      <div id="preview-body" class="compartment-body"></div>
+    </aside>
 
     <!-- The dashboard grid lives in this container. Compartments are created in JS. -->
     <main id="dashboard" class="dashboard"></main>
