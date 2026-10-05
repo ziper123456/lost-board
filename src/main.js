@@ -13,6 +13,19 @@
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 
+// Inline SVG icons (stroke-based, inherit currentColor) used by the tile header
+// and toolbar buttons instead of emoji glyphs.
+const ICON = {
+  collapse: (collapsed) =>
+    `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${collapsed ? '<path d="M6 4l4 4-4 4"/>' : '<path d="M4 6l4 4 4-4"/>'}</svg>`,
+  preview: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="1.8"/></svg>`,
+  settings: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`,
+  rename: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z"/><path d="M10 4l2 2"/></svg>`,
+  remove: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
+  folder: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>`,
+  solution: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/></svg>`,
+};
+
 // ---------------------------------------------------------------------------
 // State (persisted to localStorage). Each compartment has a `kind` and `data`.
 // ---------------------------------------------------------------------------
@@ -90,6 +103,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("fetch_rss", { url });
     return { feed_title: "", items: [] };
   },
+  async cacheFavicon(host) {
+    if (window.__TAURI__) return invoke("cache_favicon", { host });
+    return "";
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -107,6 +124,8 @@ async openFolder(path) {
 // Grid rendering (simple absolute-positioned grid for the scaffold).
 // ---------------------------------------------------------------------------
 const dashboard = document.getElementById("dashboard");
+const gridEl = document.getElementById("grid");
+const scalerEl = document.getElementById("grid-scaler");
 
 // Registry of interval timers owned by compartment bodies, keyed by the body
 // element they render into. Tracked at module scope so they are cleared even
@@ -118,10 +137,6 @@ function addTimer(body, t) {
   if (!compartmentTimers.has(body)) compartmentTimers.set(body, []);
   compartmentTimers.get(body).push(t);
 }
-function clearCompartmentTimers() {
-  compartmentTimers.forEach((arr) => arr.forEach(clearInterval));
-  compartmentTimers.clear();
-}
 function clearBodyTimers(body) {
   const arr = compartmentTimers.get(body);
   if (arr) {
@@ -130,18 +145,15 @@ function clearBodyTimers(body) {
   }
 }
 
-const ROW_H_BASE = 44;
+const ROW_H = 44;
 const GUTTER = 8;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 3;
 
-// Current zoom (1 = 100%). ROW_H scales with zoom so the whole grid (tile
-// positions, heights, gestures, overlays) scales proportionally.
+// Current zoom (1 = 100%). Applied as a CSS transform: scale() on the grid so
+// tiles, text and buttons all scale uniformly; geometry stays in unscaled px.
 let zoom = 1;
-function ROW_H() {
-  return ROW_H_BASE * zoom;
-}
 
 // Pixel geometry for a compartment given the current column count and the
 // dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
@@ -151,13 +163,13 @@ function cellWidth() {
 function applyBox(el, c) {
   const cw = cellWidth();
   el.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  el.style.top = `${GUTTER / 2 + c.y * ROW_H()}px`;
+  el.style.top = `${GUTTER / 2 + c.y * ROW_H}px`;
   el.style.width = `${c.w * cw - GUTTER}px`;
-  el.style.height = `${c.h * ROW_H() - GUTTER}px`;
+  el.style.height = `${c.h * ROW_H - GUTTER}px`;
 }
 function gridHeight() {
   const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
-  return GUTTER / 2 + rows * ROW_H();
+  return GUTTER / 2 + rows * ROW_H;
 }
 // A collapsed tile occupies just its header (1 row) in the grid layout, so
 // other tiles can flow into the freed space instead of being pushed down.
@@ -183,127 +195,223 @@ function resolveCollisions(anchor) {
   }
 }
 
-function render() {
-  clearCompartmentTimers();
-  dashboard.innerHTML = "";
-  dashboard.style.height = `${gridHeight()}px`;
-
-  for (const c of state.compartments) {
-    const collapsed = c.collapsed === true;
-    const collapsible = c.collapsible !== false;
-    const el = document.createElement("div");
-    el.className = "compartment" + (collapsed ? " collapsed" : "");
-    el.dataset.id = c.id;
-    el.style.position = "absolute";
-    applyBox(el, c);
-    if (collapsed) el.style.height = `${ROW_H() - GUTTER}px`;
-
-    const toggle = collapsed ? "▸" : "▾";
-    el.innerHTML = `
-      <div class="compartment-header">
-        <span class="comp-title">${escapeHtml(c.title)}</span>
-        <div class="header-actions">
-          ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
-          <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
-          <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
-          <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
-          <button class="btn ghost remove" data-id="${c.id}">✕</button>
-        </div>
+// Signatures used to decide what actually needs rebuilding. A tile's header is
+// rebuilt only when its title/collapse state changes; its body only when its
+// kind/data changes. Positions/sizes are always updated cheaply. This avoids
+// tearing down every tile (and re-fetching System stats / news / weather) on
+// unrelated actions like editing a bookmark.
+function tileHeaderSig(c) {
+  return JSON.stringify({ t: c.title, c: c.collapsed === true, col: c.collapsible !== false });
+}
+function tileBodySig(c) {
+  return JSON.stringify({ k: c.kind, d: c.data || {} });
+}
+function buildHeaderHtml(c) {
+  const collapsed = c.collapsed === true;
+  const collapsible = c.collapsible !== false;
+  return `
+    <div class="compartment-header">
+      <span class="comp-title">${escapeHtml(c.title)}</span>
+      <div class="header-actions">
+        ${collapsible ? `<button class="btn ghost icon-btn collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${ICON.collapse(collapsed)}</button>` : ""}
+        <button class="btn ghost icon-btn preview-tile" data-id="${c.id}" title="Preview">${ICON.preview}</button>
+        <button class="btn ghost icon-btn settings-tile" data-id="${c.id}" title="Settings">${ICON.settings}</button>
+        <button class="btn ghost icon-btn rename" data-id="${c.id}" title="Rename">${ICON.rename}</button>
+        <button class="btn ghost icon-btn remove" data-id="${c.id}" title="Remove">${ICON.remove}</button>
       </div>
-      ${collapsed ? "" : `<div class="compartment-body" data-id="${c.id}"></div>`}
-      <div class="resize-handle" title="Resize"></div>
-    `;
-
-    el.querySelector(".collapse")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Toggle collapse; when collapsed the button also opens (and stays
-      // open) the floating body overlay for this tile only.
-      if (!collapsed) {
-        c.collapsed = true;
-        openTiles.delete(c.id);
-        saveState();
-        render();
-      } else {
-        if (openTiles.has(c.id)) openTiles.delete(c.id);
-        else openTiles.add(c.id);
-        render();
-      }
-    });
-
-    el.querySelector(".preview-tile").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openPreview(c.id);
-    });
-
-    el.querySelector(".settings-tile").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openTileSettings(c.id);
-    });
-
-    el.querySelector(".rename").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const span = el.querySelector(".comp-title");
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "comp-title-input";
-      input.value = c.title;
-      span.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const commit = () => {
-        const val = input.value.trim();
-        if (val && val !== c.title) {
-          c.title = val;
-          saveState();
-          render();
-        } else {
-          render();
-        }
-      };
-      input.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") commit();
-        if (ev.key === "Escape") render();
-      });
-      input.addEventListener("blur", commit);
-    });
-
-    el.querySelector(".remove").addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.compartments = state.compartments.filter((x) => x.id !== c.id);
+    </div>
+    <div class="compartment-body" data-id="${c.id}"></div>
+    <div class="resize-handle" title="Resize"></div>
+  `;
+}
+function wireHeader(rec, c) {
+  const el = rec.el;
+  el.querySelector(".collapse")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (c.collapsed === true) {
+      if (openTiles.has(c.id)) openTiles.delete(c.id);
+      else openTiles.add(c.id);
+      render();
+    } else {
+      c.collapsed = true;
       openTiles.delete(c.id);
       saveState();
       render();
-    });
+    }
+  });
+  el.querySelector(".preview-tile").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openPreview(c.id);
+  });
+  el.querySelector(".settings-tile").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openTileSettings(c.id);
+  });
+  el.querySelector(".rename").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const span = el.querySelector(".comp-title");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "comp-title-input";
+    input.value = c.title;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
 
-    dashboard.appendChild(el);
+    const restore = (title) => {
+      const s = document.createElement("span");
+      s.className = "comp-title";
+      s.textContent = title;
+      input.replaceWith(s);
+    };
+    const commit = () => {
+      const val = input.value.trim();
+      if (val && val !== c.title) {
+        c.title = val;
+        saveState();
+      }
+      // Restore the span locally (header won't be rebuilt if title is unchanged).
+      if (input.isConnected) restore(c.title);
+      render();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") commit();
+      if (ev.key === "Escape") {
+        if (input.isConnected) restore(c.title);
+        render();
+      }
+    });
+    input.addEventListener("blur", commit);
+  });
+  el.querySelector(".remove").addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.compartments = state.compartments.filter((x) => x.id !== c.id);
+    openTiles.delete(c.id);
+    saveState();
+    render();
+  });
+}
+
+// Live tile elements by compartment id, so re-renders reuse them instead of
+// rebuilding the whole board.
+const tileEls = new Map();
+const overlayEls = new Map();
+
+function render() {
+  // Unscaled grid size; a CSS transform scales it visually, and the scaler is
+  // sized to the scaled dimensions so the dashboard scrolls correctly.
+  const w = dashboard.clientWidth;
+  const h = gridHeight();
+  gridEl.style.width = `${w}px`;
+  gridEl.style.height = `${h}px`;
+  gridEl.style.transform = `scale(${zoom})`;
+  scalerEl.style.width = `${w * zoom}px`;
+  scalerEl.style.height = `${h * zoom}px`;
+
+  // Drop tiles for compartments that no longer exist.
+  for (const [id, rec] of tileEls) {
+    if (!state.compartments.some((c) => c.id === id)) {
+      clearBodyTimers(rec.bodyEl);
+      rec.el.remove();
+      tileEls.delete(id);
+    }
+  }
+
+  for (const c of state.compartments) {
+    const collapsed = c.collapsed === true;
+    let rec = tileEls.get(c.id);
+    if (!rec) {
+      const el = document.createElement("div");
+      el.className = "compartment";
+      el.dataset.id = c.id;
+      el.style.position = "absolute";
+      gridEl.appendChild(el);
+      rec = { el, headerSig: null, bodySig: null, bodyEl: null };
+      tileEls.set(c.id, rec);
+    }
+
+    // Cheap, always-updated geometry.
+    applyBox(rec.el, c);
+    rec.el.classList.toggle("collapsed", collapsed);
+    if (collapsed) rec.el.style.height = `${ROW_H - GUTTER}px`;
+
+    // Header — rebuild only when title / collapse / collapsible changed.
+    const hs = tileHeaderSig(c);
+    if (rec.headerSig !== hs) {
+      if (rec.bodyEl) clearBodyTimers(rec.bodyEl);
+      rec.el.innerHTML = buildHeaderHtml(c);
+      rec.bodyEl = rec.el.querySelector(".compartment-body");
+      rec.headerSig = hs;
+      rec.bodySig = null;
+      wireHeader(rec, c);
+    }
+
+    // Body — render only when collapsed state or body data changed.
     if (collapsed) {
-      if (openTiles.has(c.id)) renderCollapsedOverlay(c);
+      if (rec.bodyEl) {
+        clearBodyTimers(rec.bodyEl);
+        rec.bodyEl.innerHTML = "";
+        rec.bodySig = null;
+      }
     } else {
-      renderCompartmentBody(c);
+      const bs = tileBodySig(c);
+      if (rec.bodySig !== bs) {
+        clearBodyTimers(rec.bodyEl);
+        rec.bodySig = bs;
+        renderCompartmentBody(c, rec.bodyEl);
+      }
+    }
+  }
+
+  renderOverlays();
+  // Keep the preview panel in sync if it's open (guarded by its own signature).
+  if (previewTileId) renderPreview();
+}
+
+// Collapsed tiles that are "open" show their body as a floating overlay.
+function renderOverlays() {
+  const desired = new Set(
+    state.compartments.filter((c) => c.collapsed === true && openTiles.has(c.id)).map((c) => c.id)
+  );
+
+  for (const [id, rec] of overlayEls) {
+    if (!desired.has(id)) {
+      clearBodyTimers(rec.bodyEl);
+      rec.el.remove();
+      overlayEls.delete(id);
+    }
+  }
+
+  for (const c of state.compartments) {
+    if (!desired.has(c.id)) continue;
+    let rec = overlayEls.get(c.id);
+    if (!rec) {
+      const el = document.createElement("div");
+      el.className = "compartment-overlay";
+      el.dataset.id = c.id;
+      el.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
+      gridEl.appendChild(el);
+      rec = { el, bodyEl: el.querySelector(".compartment-body"), bodySig: null };
+      overlayEls.set(c.id, rec);
+    }
+    const cw = cellWidth();
+    rec.el.style.left = `${GUTTER / 2 + c.x * cw}px`;
+    rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`;
+    rec.el.style.width = `${c.w * cw - GUTTER}px`;
+    rec.el.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
+
+    const bs = tileBodySig(c);
+    if (rec.bodySig !== bs) {
+      clearBodyTimers(rec.bodyEl);
+      rec.bodySig = bs;
+      renderCompartmentBody(c, rec.bodyEl);
     }
   }
 }
 
-// Render a collapsed tile's body as a floating overlay that can overlap other
-// tiles (the header stays anchored and non-overlapping in the grid).
-function renderCollapsedOverlay(c) {
-  const cw = cellWidth();
-  const overlay = document.createElement("div");
-  overlay.className = "compartment-overlay";
-  overlay.dataset.id = c.id;
-  overlay.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`; // below the header
-  overlay.style.width = `${c.w * cw - GUTTER}px`;
-  overlay.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
-  overlay.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
-  dashboard.appendChild(overlay);
-  renderCompartmentBody(c);
-}
-
 async function renderCompartmentBody(c, body) {
   if (!body) {
-    body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+    body = gridEl.querySelector(`.compartment-body[data-id="${c.id}"]`);
   }
   if (!body) return;
 
@@ -330,6 +438,7 @@ async function renderCompartmentBody(c, body) {
       .map(
         (it, i) => `
         <div class="launcher-tile ${it.kind}">
+          <span class="launcher-icon">${it.kind === "folder" ? ICON.folder : ICON.solution}</span>
           <button class="launcher-open" data-id="${c.id}" data-idx="${i}">${escapeHtml(it.label || it.path)}</button>
           <span class="launcher-path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</span>
         </div>`
@@ -356,12 +465,16 @@ async function renderCompartmentBody(c, body) {
       body.innerHTML = `<div class="muted">No bookmarks yet — add them in Settings.</div>`;
       return;
     }
+    const favs = await Promise.all(urls.map((u) => faviconData(u.url)));
     body.innerHTML = urls
       .map(
-        (u) =>
+        (u, i) =>
           `<button class="bmk-tile" data-url="${escapeHtml(u.url)}">
-             <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
-             <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
+             ${faviconHtml(favs[i], u.title || u.url)}
+             <span class="bmk-text">
+               <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
+               <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
+             </span>
            </button>`
       )
       .join("");
@@ -377,12 +490,14 @@ async function renderCompartmentBody(c, body) {
     }
     const encOrg = encodeURIComponent(d.org);
     const encProj = encodeURIComponent(d.project);
+    const azFav = await faviconData("https://dev.azure.com");
     body.innerHTML = repos
       .map((r) => {
         const base = `https://dev.azure.com/${encOrg}/${encProj}/_git/${encodeURIComponent(r.repo)}`;
         const name = r.label || r.repo;
         return `
           <div class="azure-repo">
+            ${faviconHtml(azFav, name)}
             <span class="azure-name">${escapeHtml(name)}</span>
             <div class="azure-links">
               <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</button>
@@ -581,12 +696,14 @@ function openPreview(id) {
   const comp = state.compartments.find((c) => c.id === id);
   if (!comp) return;
   previewTileId = id;
+  previewSig = null;
   document.getElementById("preview-title").textContent = comp.title;
   previewEl.classList.remove("hidden");
   renderPreview();
 }
 function closePreview() {
   previewTileId = null;
+  previewSig = null;
   previewEl.classList.add("hidden");
   previewBody.innerHTML = "";
   // Only clear timers bound to the preview body — not the dashboard's live
@@ -597,11 +714,17 @@ function togglePreview() {
   if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
   else closePreview();
 }
+let previewSig = null;
 function renderPreview() {
   if (!previewTileId) return;
   const comp = state.compartments.find((c) => c.id === previewTileId);
   if (!comp) return;
   document.getElementById("preview-title").textContent = comp.title;
+  // Skip if the previewed tile's content is unchanged (avoids flicker/refetch
+  // when render() is triggered by unrelated actions).
+  const sig = tileBodySig(comp);
+  if (previewSig === sig && previewBody.childElementCount) return;
+  previewSig = sig;
   // Clear any timers still bound to the preview body (e.g. a previous tile's
   // system-stats interval) so they don't keep overwriting the new content.
   clearBodyTimers(previewBody);
@@ -661,6 +784,7 @@ function activateTab(tabName) {
   if (tabName === "azure") renderAzureSettings();
   if (tabName === "weather") renderWeatherSettings();
   if (tabName === "news") renderNewsSettings();
+  if (tabName === "system") renderSystemSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -669,7 +793,7 @@ const KIND_TAB = {
   launcher: "folders",
   bookmarks: "bookmarks",
   azure: "azure",
-  system: "grid",
+  system: "system",
   weather: "weather",
   news: "news",
 };
@@ -683,6 +807,7 @@ function openTileSettings(id) {
   if (comp.kind === "azure") selectedAzureId = id;
   if (comp.kind === "weather") selectedWeatherId = id;
   if (comp.kind === "news") selectedNewsId = id;
+  if (comp.kind === "system") selectedSystemId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -726,6 +851,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "azure") renderAzureSettings();
   if (comp.kind === "weather") renderWeatherSettings();
   if (comp.kind === "news") renderNewsSettings();
+  if (comp.kind === "system") renderSystemSettings();
 }
 
 function ensureLauncher() {
@@ -793,7 +919,7 @@ function renderFoldersSettings() {
       <input class="it-label" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(it.label || "")}" />
       <input class="it-path" data-i="${i}" type="text" placeholder="Path" value="${escapeHtml(it.path || "")}" readonly />
       <button class="btn ghost it-browse" data-i="${i}">Browse</button>
-      <button class="btn ghost danger it-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn it-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -911,7 +1037,7 @@ function renderBookmarksSettings() {
     row.innerHTML = `
       <input class="bmk-title" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(u.title || "")}" />
       <input class="bmk-url" data-i="${i}" type="text" placeholder="https://…" value="${escapeHtml(u.url || "")}" />
-      <button class="btn ghost danger bmk-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn bmk-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1019,7 +1145,7 @@ function renderAzureSettings() {
     row.innerHTML = `
       <input class="az-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(r.label || "")}" />
       <input class="az-repo" data-i="${i}" type="text" placeholder="Repo name" value="${escapeHtml(r.repo || "")}" />
-      <button class="btn ghost danger az-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn az-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1243,7 +1369,7 @@ function renderNewsSettings() {
     row.innerHTML = `
       <input class="news-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(f.label || "")}" />
       <input class="news-url" data-i="${i}" type="text" placeholder="https://…/feed.xml" value="${escapeHtml(f.url || "")}" />
-      <button class="btn ghost danger news-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn news-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1280,6 +1406,62 @@ function renderNewsSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// System settings editor. System tiles have no per-tile content config, but
+// they still need the tile-selection row so their collapsible option (and
+// rename/preview via the header) is reachable.
+// ---------------------------------------------------------------------------
+let selectedSystemId = null;
+
+function ensureSystemComp() {
+  const comps = state.compartments.filter((c) => c.kind === "system");
+  if (comps.length === 0) {
+    const comp = {
+      id: "sys" + Date.now(),
+      kind: "system",
+      title: "System",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 3,
+      h: 2,
+      data: {},
+    };
+    state.compartments.push(comp);
+    selectedSystemId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedSystemId)) {
+    selectedSystemId = comps[0].id;
+  }
+  return state.compartments.find((c) => c.id === selectedSystemId);
+}
+
+function renderSystemSettings() {
+  const panel = document.getElementById("system-list");
+  if (!panel) return;
+  const comp = ensureSystemComp();
+  const comps = state.compartments.filter((c) => c.kind === "system");
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="system-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+
+  panel.querySelector("#system-select").addEventListener("change", (e) => {
+    selectedSystemId = e.target.value;
+    renderSystemSettings();
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -1310,7 +1492,7 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
   render();
   // New tiles are placed at the bottom of a tall grid; scroll it into view so
   // the user actually sees what they added.
-  dashboard.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
+  gridEl.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
 });
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
@@ -1362,24 +1544,26 @@ dashboard.addEventListener("mousedown", (e) => {
 
 dashboard.addEventListener("mousemove", (e) => {
   if (!gesture) return;
-  const dx = e.clientX - gesture.startX;
-  const dy = e.clientY - gesture.startY;
+  // Pointer deltas are screen px; the grid is CSS-scaled by `zoom`, so convert
+  // to unscaled grid px before snapping to cells.
+  const dx = (e.clientX - gesture.startX) / zoom;
+  const dy = (e.clientY - gesture.startY) / zoom;
   const cw = cellWidth();
   const item = gesture.item;
 
   if (gesture.mode === "drag") {
     const nx = clamp(Math.round((item.x * cw + dx) / cw), 0, state.columns - item.w);
-    const ny = Math.max(0, Math.round((item.y * ROW_H() + dy) / ROW_H()));
+    const ny = Math.max(0, Math.round((item.y * ROW_H + dy) / ROW_H));
     gesture.comp.style.left = `${GUTTER / 2 + nx * cw}px`;
-    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H()}px`;
+    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H}px`;
     gesture._nx = nx;
     gesture._ny = ny;
     gesture.moved = nx !== item.x || ny !== item.y;
   } else {
     const nw = clamp(item.w + Math.round(dx / cw), 1, state.columns - item.x);
-    const nh = Math.max(1, item.h + Math.round(dy / ROW_H()));
+    const nh = Math.max(1, item.h + Math.round(dy / ROW_H));
     gesture.comp.style.width = `${nw * cw - GUTTER}px`;
-    gesture.comp.style.height = `${nh * ROW_H() - GUTTER}px`;
+    gesture.comp.style.height = `${nh * ROW_H - GUTTER}px`;
     gesture._nw = nw;
     gesture._nh = nh;
     gesture.moved = nw !== item.w || nh !== item.h;
@@ -1419,6 +1603,35 @@ function hostOf(url) {
     return url;
   }
 }
+// Favicons are fetched and cached to disk by the native cache_favicon command
+// (returns a data: URI), then memoized here so re-renders don't re-invoke it.
+const faviconCache = new Map();
+async function faviconData(url) {
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return "";
+  }
+  if (!host) return "";
+  if (faviconCache.has(host)) return faviconCache.get(host);
+  let data = "";
+  try {
+    data = (await native.cacheFavicon(host)) || "";
+  } catch {
+    data = "";
+  }
+  faviconCache.set(host, data);
+  return data;
+}
+// A favicon <img> (cached data URI) over a letter-avatar fallback. If the image
+// fails, the letter shows through (the img hides itself via onerror).
+function faviconHtml(src, label) {
+  const letter = (label || "?").trim().charAt(0).toUpperCase() || "?";
+  return `<span class="favicon"><span class="favicon-letter">${escapeHtml(letter)}</span>${
+    src ? `<img class="favicon-img" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.remove()" />` : ""
+  }</span>`;
+}
 function fmtBytes(n) {
   if (!n) return "0 B";
   const u = ["B", "KB", "MB", "GB", "TB"];
@@ -1449,7 +1662,19 @@ async function initialize() {
     previewWidthEl.value = state.previewWidth;
   }
   render();
+  // Re-render once the layout has settled: the very first render can measure the
+  // dashboard before the window reaches its final size, leaving tiles sized for
+  // the wrong width until the next interaction.
+  requestAnimationFrame(() => render());
 }
+
+// Re-fit the grid whenever the viewport changes (window resize, maximize, etc.).
+// Without this, tiles keep the cell width measured at first paint.
+let resizeRaf = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => render());
+});
 
 // ---------------------------------------------------------------------------
 // OS drag-and-drop: dropping a folder or .sln from the OS file explorer onto a
@@ -1467,13 +1692,13 @@ async function setupDragDrop() {
     const targetAt = (point) =>
       // Match both normal tiles and collapsed-tile overlays; both carry the
       // compartment id in data-id so a drop on an open overlay targets its tile.
-      [...dashboard.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
+      [...gridEl.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
         const r = el.getBoundingClientRect();
         return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
       });
 
     if (type === "over") {
-      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
       const over = targetAt({ x, y });
       if (over && state.compartments.find((c) => c.id === over.dataset.id)?.kind === "launcher") {
         over.classList.add("drag-over");
@@ -1481,11 +1706,11 @@ async function setupDragDrop() {
       return;
     }
     if (type === "leave") {
-      dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+      gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
       return;
     }
     if (type !== "drop") return;
-    dashboard.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
+    gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
     if (!paths || !paths.length) return;
 
     // Find the launcher tile under the drop point.
