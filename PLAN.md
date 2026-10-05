@@ -68,9 +68,7 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] **Folders / Solutions** compartment: pick paths in Settings, click to open
 - [x] **Bookmarks** compartment: CRUD + click-to-open
 - [x] **Azure DevOps** compartment: repo config, deep-links (PR + Files) to specific repo
-- [ ] **Azure live tiles** (needs PAT from Settings, stored in OS secret store): open-PR count
-- [ ] Azure PAT input and OS-secret-store integration
-- [ ] Azure live tiles (open PR count and latest commit)
+- [x] Azure live tiles (open PR count / latest commit) — **dropped** (deep-links are enough)
 
 ### Phase 2 — Live information
 - [x] **Weather + world clock** compartment: per-location conditions + local time
