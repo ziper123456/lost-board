@@ -460,8 +460,11 @@ async function renderCompartmentBody(c, body) {
       .map(
         (u) =>
           `<button class="bmk-tile" data-url="${escapeHtml(u.url)}">
-             <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
-             <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
+             ${faviconHtml(u.url, u.title || u.url)}
+             <span class="bmk-text">
+               <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
+               <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
+             </span>
            </button>`
       )
       .join("");
@@ -483,6 +486,7 @@ async function renderCompartmentBody(c, body) {
         const name = r.label || r.repo;
         return `
           <div class="azure-repo">
+            ${faviconHtml("https://dev.azure.com", name)}
             <span class="azure-name">${escapeHtml(name)}</span>
             <div class="azure-links">
               <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</button>
@@ -1579,6 +1583,25 @@ function hostOf(url) {
   } catch {
     return url;
   }
+}
+// Favicon URL via DuckDuckGo's icon service (no API key). The image falls back
+// to a letter avatar (see faviconHtml) when it fails to load.
+function faviconUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : "";
+  } catch {
+    return "";
+  }
+}
+// A favicon <img> over a letter-avatar fallback. If the image fails, the letter
+// shows through (the img hides itself via onerror).
+function faviconHtml(url, label) {
+  const letter = (label || hostOf(url) || "?").trim().charAt(0).toUpperCase() || "?";
+  const src = faviconUrl(url);
+  return `<span class="favicon"><span class="favicon-letter">${escapeHtml(letter)}</span>${
+    src ? `<img class="favicon-img" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.remove()" />` : ""
+  }</span>`;
 }
 function fmtBytes(n) {
   if (!n) return "0 B";
