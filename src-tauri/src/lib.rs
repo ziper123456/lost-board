@@ -147,6 +147,65 @@ async fn fetch_rss(url: String) -> Result<FeedResult, String> {
     })
 }
 
+const FAVICON_DIR: &str = "favicons";
+
+/// Fetch a site favicon (via DuckDuckGo's keyless icon service), cache it under
+/// the app-data dir, and return it as a `data:` URI. Subsequent calls for the
+/// same host are served from the on-disk cache (no network), so the app works
+/// offline once an icon has been fetched.
+#[tauri::command]
+async fn cache_favicon(app: tauri::AppHandle, host: String) -> Result<String, String> {
+    // Sanitize the host into a safe file name.
+    let safe: String = host
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid host".into());
+    }
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(FAVICON_DIR);
+    let path = dir.join(format!("{safe}.ico"));
+
+    let bytes = if path.exists() {
+        fs::read(&path).map_err(|e| format!("Failed to read cached favicon: {e}"))?
+    } else {
+        let url = format!("https://icons.duckduckgo.com/ip3/{host}.ico");
+        let resp = reqwest::Client::new()
+            .get(&url)
+            .header("User-Agent", "lost-board/0.1")
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| format!("favicon request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("favicon HTTP {}", resp.status()));
+        }
+        let b = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("favicon read failed: {e}"))?
+            .to_vec();
+        fs::create_dir_all(&dir).map_err(|e| format!("Failed to create favicon dir: {e}"))?;
+        fs::write(&path, &b).map_err(|e| format!("Failed to cache favicon: {e}"))?;
+        b
+    };
+
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:image/x-icon;base64,{b64}"))
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
 /// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
@@ -234,6 +293,7 @@ pub fn run() {
             open_solution,
             open_url,
             fetch_rss,
+            cache_favicon,
             get_system_stats,
         ])
         .run(tauri::generate_context!())

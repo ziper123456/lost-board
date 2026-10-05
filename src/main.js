@@ -103,6 +103,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("fetch_rss", { url });
     return { feed_title: "", items: [] };
   },
+  async cacheFavicon(host) {
+    if (window.__TAURI__) return invoke("cache_favicon", { host });
+    return "";
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -360,6 +364,8 @@ function render() {
   }
 
   renderOverlays();
+  // Keep the preview panel in sync if it's open (guarded by its own signature).
+  if (previewTileId) renderPreview();
 }
 
 // Collapsed tiles that are "open" show their body as a floating overlay.
@@ -459,11 +465,12 @@ async function renderCompartmentBody(c, body) {
       body.innerHTML = `<div class="muted">No bookmarks yet — add them in Settings.</div>`;
       return;
     }
+    const favs = await Promise.all(urls.map((u) => faviconData(u.url)));
     body.innerHTML = urls
       .map(
-        (u) =>
+        (u, i) =>
           `<button class="bmk-tile" data-url="${escapeHtml(u.url)}">
-             ${faviconHtml(u.url, u.title || u.url)}
+             ${faviconHtml(favs[i], u.title || u.url)}
              <span class="bmk-text">
                <span class="bmk-name">${escapeHtml(u.title || u.url)}</span>
                <span class="bmk-host">${escapeHtml(hostOf(u.url))}</span>
@@ -483,13 +490,14 @@ async function renderCompartmentBody(c, body) {
     }
     const encOrg = encodeURIComponent(d.org);
     const encProj = encodeURIComponent(d.project);
+    const azFav = await faviconData("https://dev.azure.com");
     body.innerHTML = repos
       .map((r) => {
         const base = `https://dev.azure.com/${encOrg}/${encProj}/_git/${encodeURIComponent(r.repo)}`;
         const name = r.label || r.repo;
         return `
           <div class="azure-repo">
-            ${faviconHtml("https://dev.azure.com", name)}
+            ${faviconHtml(azFav, name)}
             <span class="azure-name">${escapeHtml(name)}</span>
             <div class="azure-links">
               <button class="btn ghost azure-pr" data-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</button>
@@ -688,12 +696,14 @@ function openPreview(id) {
   const comp = state.compartments.find((c) => c.id === id);
   if (!comp) return;
   previewTileId = id;
+  previewSig = null;
   document.getElementById("preview-title").textContent = comp.title;
   previewEl.classList.remove("hidden");
   renderPreview();
 }
 function closePreview() {
   previewTileId = null;
+  previewSig = null;
   previewEl.classList.add("hidden");
   previewBody.innerHTML = "";
   // Only clear timers bound to the preview body — not the dashboard's live
@@ -704,11 +714,17 @@ function togglePreview() {
   if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
   else closePreview();
 }
+let previewSig = null;
 function renderPreview() {
   if (!previewTileId) return;
   const comp = state.compartments.find((c) => c.id === previewTileId);
   if (!comp) return;
   document.getElementById("preview-title").textContent = comp.title;
+  // Skip if the previewed tile's content is unchanged (avoids flicker/refetch
+  // when render() is triggered by unrelated actions).
+  const sig = tileBodySig(comp);
+  if (previewSig === sig && previewBody.childElementCount) return;
+  previewSig = sig;
   // Clear any timers still bound to the preview body (e.g. a previous tile's
   // system-stats interval) so they don't keep overwriting the new content.
   clearBodyTimers(previewBody);
@@ -1587,21 +1603,31 @@ function hostOf(url) {
     return url;
   }
 }
-// Favicon URL via DuckDuckGo's icon service (no API key). The image falls back
-// to a letter avatar (see faviconHtml) when it fails to load.
-function faviconUrl(url) {
+// Favicons are fetched and cached to disk by the native cache_favicon command
+// (returns a data: URI), then memoized here so re-renders don't re-invoke it.
+const faviconCache = new Map();
+async function faviconData(url) {
+  let host = "";
   try {
-    const host = new URL(url).hostname;
-    return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : "";
+    host = new URL(url).hostname;
   } catch {
     return "";
   }
+  if (!host) return "";
+  if (faviconCache.has(host)) return faviconCache.get(host);
+  let data = "";
+  try {
+    data = (await native.cacheFavicon(host)) || "";
+  } catch {
+    data = "";
+  }
+  faviconCache.set(host, data);
+  return data;
 }
-// A favicon <img> over a letter-avatar fallback. If the image fails, the letter
-// shows through (the img hides itself via onerror).
-function faviconHtml(url, label) {
-  const letter = (label || hostOf(url) || "?").trim().charAt(0).toUpperCase() || "?";
-  const src = faviconUrl(url);
+// A favicon <img> (cached data URI) over a letter-avatar fallback. If the image
+// fails, the letter shows through (the img hides itself via onerror).
+function faviconHtml(src, label) {
+  const letter = (label || "?").trim().charAt(0).toUpperCase() || "?";
   return `<span class="favicon"><span class="favicon-letter">${escapeHtml(letter)}</span>${
     src ? `<img class="favicon-img" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.remove()" />` : ""
   }</span>`;
@@ -1636,7 +1662,19 @@ async function initialize() {
     previewWidthEl.value = state.previewWidth;
   }
   render();
+  // Re-render once the layout has settled: the very first render can measure the
+  // dashboard before the window reaches its final size, leaving tiles sized for
+  // the wrong width until the next interaction.
+  requestAnimationFrame(() => render());
 }
+
+// Re-fit the grid whenever the viewport changes (window resize, maximize, etc.).
+// Without this, tiles keep the cell width measured at first paint.
+let resizeRaf = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => render());
+});
 
 // ---------------------------------------------------------------------------
 // OS drag-and-drop: dropping a folder or .sln from the OS file explorer onto a
