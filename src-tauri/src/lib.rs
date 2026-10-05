@@ -206,6 +206,105 @@ async fn cache_favicon(app: tauri::AppHandle, host: String) -> Result<String, St
     Ok(format!("data:image/x-icon;base64,{b64}"))
 }
 
+const KEYRING_SERVICE: &str = "lost-board";
+const DEEPL_KEY_USER: &str = "deepl_api_key";
+
+/// Store the DeepL API key in the OS secret store (never in config/git).
+#[tauri::command]
+fn set_deepl_key(key: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .map_err(|e| format!("secret store error: {e}"))?;
+    entry
+        .set_password(&key)
+        .map_err(|e| format!("failed to store DeepL key: {e}"))
+}
+
+/// Whether a DeepL API key is currently stored (does not return the key).
+#[tauri::command]
+fn deepl_key_status() -> bool {
+    keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .and_then(|e| e.get_password())
+        .map(|p| !p.is_empty())
+        .unwrap_or(false)
+}
+
+/// Remove the stored DeepL API key.
+#[tauri::command]
+fn clear_deepl_key() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .map_err(|e| format!("secret store error: {e}"))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        // Deleting a non-existent entry is fine.
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("failed to clear DeepL key: {e}")),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DeepLTranslation {
+    text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DeepLResponse {
+    translations: Vec<DeepLTranslation>,
+}
+
+/// Translate text with DeepL. `source_lang` may be empty for auto-detect.
+/// Uses the free endpoint for keys ending in ":fx", otherwise the pro endpoint.
+#[tauri::command]
+async fn deepl_translate(
+    text: String,
+    source_lang: String,
+    target_lang: String,
+) -> Result<String, String> {
+    let key = keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .and_then(|e| e.get_password())
+        .map_err(|_| "No DeepL API key configured".to_string())?;
+    if key.is_empty() {
+        return Err("No DeepL API key configured".into());
+    }
+
+    let endpoint = if key.trim_end().ends_with(":fx") {
+        "https://api-free.deepl.com/v2/translate"
+    } else {
+        "https://api.deepl.com/v2/translate"
+    };
+
+    let mut form: Vec<(&str, String)> = vec![
+        ("text", text),
+        ("target_lang", target_lang.to_uppercase()),
+    ];
+    if !source_lang.is_empty() {
+        form.push(("source_lang", source_lang.to_uppercase()));
+    }
+
+    let resp = reqwest::Client::new()
+        .post(endpoint)
+        .header("Authorization", format!("DeepL-Auth-Key {key}"))
+        .form(&form)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("DeepL request failed: {e}"))?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("DeepL read failed: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("DeepL HTTP {status}: {body}"));
+    }
+
+    let parsed: DeepLResponse =
+        serde_json::from_str(&body).map_err(|e| format!("DeepL parse failed: {e}"))?;
+    parsed
+        .translations
+        .into_iter()
+        .next()
+        .map(|t| t.text)
+        .ok_or_else(|| "DeepL returned no translation".into())
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
 /// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
@@ -294,6 +393,10 @@ pub fn run() {
             open_url,
             fetch_rss,
             cache_favicon,
+            set_deepl_key,
+            deepl_key_status,
+            clear_deepl_key,
+            deepl_translate,
             get_system_stats,
         ])
         .run(tauri::generate_context!())

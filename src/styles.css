@@ -356,6 +356,28 @@ html, body {
 .news-fail { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .news-err { color: var(--red); font-size: 0.75rem; }
 
+/* Translate tile */
+.tr-grid { display: flex; flex-direction: column; gap: 10px; }
+.tr-field { display: flex; flex-direction: column; gap: 4px; }
+.tr-head { display: flex; align-items: center; justify-content: space-between; }
+.tr-lang { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; color: var(--muted); }
+.tr-go { padding: 2px 8px; font-size: 0.72rem; }
+.tr-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.tr-text:focus { outline: none; border-color: var(--accent); }
+.tr-text.tr-loading { opacity: 0.55; }
+.tr-text.tr-err { border-color: var(--red); color: var(--red); }
+
 /* Buttons */
 .btn {
   padding: 6px 12px;
