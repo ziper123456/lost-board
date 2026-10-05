@@ -19,6 +19,7 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const DEFAULT_STATE = {
   columns: 12,
   zoom: 1,
+  previewWidth: 320,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -588,7 +589,9 @@ function closePreview() {
   previewTileId = null;
   previewEl.classList.add("hidden");
   previewBody.innerHTML = "";
-  clearCompartmentTimers();
+  // Only clear timers bound to the preview body — not the dashboard's live
+  // tiles (System stats, Weather clock), which must keep updating.
+  clearBodyTimers(previewBody);
 }
 function togglePreview() {
   if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
@@ -1330,18 +1333,13 @@ function setZoom(z) {
   updateZoomUI();
   render();
 }
-function zoomFit() {
-  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
-  const avail = dashboard.clientHeight - GUTTER;
-  const z = avail > 0 && rows > 0 ? Math.min((avail / rows) / ROW_H_BASE, ZOOM_MAX) : 1;
-  zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
-  state.zoom = zoom;
-  updateZoomUI();
-  render();
+// Reset button returns the grid to 100%.
+function zoomReset() {
+  setZoom(1);
 }
 document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
 document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
-document.getElementById("zoom-fit").addEventListener("click", zoomFit);
+document.getElementById("zoom-fit").addEventListener("click", zoomReset);
 
 // ---------------------------------------------------------------------------
 // Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
