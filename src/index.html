@@ -53,6 +53,7 @@
           <button class="tab" data-tab="spotify">Spotify</button>
           <button class="tab" data-tab="weather">Weather</button>
           <button class="tab" data-tab="news">News</button>
+          <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="healthcheck">Healthcheck</button>
         </nav>
 
@@ -97,6 +98,10 @@
           <div class="tab-panel" data-panel="news">
             <p>Add RSS/Atom feed URLs. Each feed's headlines are fetched independently, so one broken feed doesn't block the others.</p>
             <div id="news-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="system">
+            <p>System tiles show live CPU / RAM. Choose a tile and its options below.</p>
+            <div id="system-list"></div>
           </div>
           <div class="tab-panel" data-panel="healthcheck"><div id="healthcheck-list"></div></div>
         </div>

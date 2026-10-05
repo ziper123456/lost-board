@@ -744,6 +744,7 @@ function activateTab(tabName) {
   if (tabName === "azure") renderAzureSettings();
   if (tabName === "weather") renderWeatherSettings();
   if (tabName === "news") renderNewsSettings();
+  if (tabName === "system") renderSystemSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -752,7 +753,7 @@ const KIND_TAB = {
   launcher: "folders",
   bookmarks: "bookmarks",
   azure: "azure",
-  system: "grid",
+  system: "system",
   weather: "weather",
   news: "news",
 };
@@ -766,6 +767,7 @@ function openTileSettings(id) {
   if (comp.kind === "azure") selectedAzureId = id;
   if (comp.kind === "weather") selectedWeatherId = id;
   if (comp.kind === "news") selectedNewsId = id;
+  if (comp.kind === "system") selectedSystemId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -809,6 +811,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "azure") renderAzureSettings();
   if (comp.kind === "weather") renderWeatherSettings();
   if (comp.kind === "news") renderNewsSettings();
+  if (comp.kind === "system") renderSystemSettings();
 }
 
 function ensureLauncher() {
@@ -1360,6 +1363,62 @@ function renderNewsSettings() {
   panel.querySelector("#add-feed").addEventListener("click", () => {
     feeds.push({ label: "", url: "" });
     commitNews(comp);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// System settings editor. System tiles have no per-tile content config, but
+// they still need the tile-selection row so their collapsible option (and
+// rename/preview via the header) is reachable.
+// ---------------------------------------------------------------------------
+let selectedSystemId = null;
+
+function ensureSystemComp() {
+  const comps = state.compartments.filter((c) => c.kind === "system");
+  if (comps.length === 0) {
+    const comp = {
+      id: "sys" + Date.now(),
+      kind: "system",
+      title: "System",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 3,
+      h: 2,
+      data: {},
+    };
+    state.compartments.push(comp);
+    selectedSystemId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedSystemId)) {
+    selectedSystemId = comps[0].id;
+  }
+  return state.compartments.find((c) => c.id === selectedSystemId);
+}
+
+function renderSystemSettings() {
+  const panel = document.getElementById("system-list");
+  if (!panel) return;
+  const comp = ensureSystemComp();
+  const comps = state.compartments.filter((c) => c.kind === "system");
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="system-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+
+  panel.querySelector("#system-select").addEventListener("change", (e) => {
+    selectedSystemId = e.target.value;
+    renderSystemSettings();
   });
 }
 
