@@ -18,6 +18,8 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 // ---------------------------------------------------------------------------
 const DEFAULT_STATE = {
   columns: 12,
+  zoom: 1,
+  previewWidth: 320,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -25,6 +27,10 @@ const DEFAULT_STATE = {
     { id: "lch", kind: "launcher", title: "Folders & Solutions", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
+
+// Set of collapsed tiles currently showing their floating body overlay.
+// Per-tile and transient (not persisted), so opening one doesn't affect others.
+const openTiles = new Set();
 
 const STORAGE_KEY = "lost-board.state.v1";
 
@@ -78,7 +84,7 @@ async openFolder(path) {
   },
   async classifyPath(path) {
     if (window.__TAURI__) return invoke("classify_path", { path });
-    return path.endsWith(".sln") ? "sln" : "dir";
+    return /\.(sln|slnx|csproj)$/i.test(path) ? "sln" : "dir";
   },
   async fetchRss(url) {
     if (window.__TAURI__) return invoke("fetch_rss", { url });
@@ -102,19 +108,40 @@ async openFolder(path) {
 // ---------------------------------------------------------------------------
 const dashboard = document.getElementById("dashboard");
 
-// Registry of interval timers owned by compartment bodies. Tracked at module
-// scope so they are cleared even for compartments that have been removed from
-// `state` (the ✕ button filters them out before render() runs).
-const compartmentTimers = new Set();
+// Registry of interval timers owned by compartment bodies, keyed by the body
+// element they render into. Tracked at module scope so they are cleared even
+// for compartments that have been removed from `state`. Keying by body lets us
+// clear a single body's timers (e.g. the preview panel) without nuking others.
+const compartmentTimers = new Map();
 
+function addTimer(body, t) {
+  if (!compartmentTimers.has(body)) compartmentTimers.set(body, []);
+  compartmentTimers.get(body).push(t);
+}
 function clearCompartmentTimers() {
-  compartmentTimers.forEach((t) => clearInterval(t));
+  compartmentTimers.forEach((arr) => arr.forEach(clearInterval));
   compartmentTimers.clear();
 }
+function clearBodyTimers(body) {
+  const arr = compartmentTimers.get(body);
+  if (arr) {
+    arr.forEach(clearInterval);
+    compartmentTimers.delete(body);
+  }
+}
 
-const ROW_H = 44;
+const ROW_H_BASE = 44;
 const GUTTER = 8;
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 3;
+
+// Current zoom (1 = 100%). ROW_H scales with zoom so the whole grid (tile
+// positions, heights, gestures, overlays) scales proportionally.
+let zoom = 1;
+function ROW_H() {
+  return ROW_H_BASE * zoom;
+}
 
 // Pixel geometry for a compartment given the current column count and the
 // dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
@@ -124,16 +151,21 @@ function cellWidth() {
 function applyBox(el, c) {
   const cw = cellWidth();
   el.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  el.style.top = `${GUTTER / 2 + c.y * ROW_H}px`;
+  el.style.top = `${GUTTER / 2 + c.y * ROW_H()}px`;
   el.style.width = `${c.w * cw - GUTTER}px`;
-  el.style.height = `${c.h * ROW_H - GUTTER}px`;
+  el.style.height = `${c.h * ROW_H() - GUTTER}px`;
 }
 function gridHeight() {
-  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
-  return GUTTER / 2 + rows * ROW_H;
+  const rows = state.compartments.reduce((m, c) => Math.max(m, c.y + tileRows(c)), 0);
+  return GUTTER / 2 + rows * ROW_H();
+}
+// A collapsed tile occupies just its header (1 row) in the grid layout, so
+// other tiles can flow into the freed space instead of being pushed down.
+function tileRows(c) {
+  return c.collapsed === true ? 1 : c.h;
 }
 function overlaps(a, b) {
-  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + tileRows(b) && b.y < a.y + tileRows(a);
 }
 // Push overlapping compartments below `anchor` until the grid is collision-free.
 function resolveCollisions(anchor) {
@@ -143,7 +175,7 @@ function resolveCollisions(anchor) {
     for (const o of state.compartments) {
       if (o.id === anchor.id) continue;
       if (overlaps(anchor, o)) {
-        o.y = anchor.y + anchor.h;
+        o.y = anchor.y + tileRows(anchor);
         moved = true;
       }
     }
@@ -157,24 +189,51 @@ function render() {
   dashboard.style.height = `${gridHeight()}px`;
 
   for (const c of state.compartments) {
+    const collapsed = c.collapsed === true;
+    const collapsible = c.collapsible !== false;
     const el = document.createElement("div");
-    el.className = "compartment";
+    el.className = "compartment" + (collapsed ? " collapsed" : "");
     el.dataset.id = c.id;
     el.style.position = "absolute";
     applyBox(el, c);
+    if (collapsed) el.style.height = `${ROW_H() - GUTTER}px`;
 
+    const toggle = collapsed ? "▸" : "▾";
     el.innerHTML = `
       <div class="compartment-header">
         <span class="comp-title">${escapeHtml(c.title)}</span>
         <div class="header-actions">
+          ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
+          <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
           <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
           <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
           <button class="btn ghost remove" data-id="${c.id}">✕</button>
         </div>
       </div>
-      <div class="compartment-body" data-id="${c.id}"></div>
+      ${collapsed ? "" : `<div class="compartment-body" data-id="${c.id}"></div>`}
       <div class="resize-handle" title="Resize"></div>
     `;
+
+    el.querySelector(".collapse")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Toggle collapse; when collapsed the button also opens (and stays
+      // open) the floating body overlay for this tile only.
+      if (!collapsed) {
+        c.collapsed = true;
+        openTiles.delete(c.id);
+        saveState();
+        render();
+      } else {
+        if (openTiles.has(c.id)) openTiles.delete(c.id);
+        else openTiles.add(c.id);
+        render();
+      }
+    });
+
+    el.querySelector(".preview-tile").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPreview(c.id);
+    });
 
     el.querySelector(".settings-tile").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -212,17 +271,40 @@ function render() {
     el.querySelector(".remove").addEventListener("click", (e) => {
       e.stopPropagation();
       state.compartments = state.compartments.filter((x) => x.id !== c.id);
+      openTiles.delete(c.id);
       saveState();
       render();
     });
 
     dashboard.appendChild(el);
-    renderCompartmentBody(c);
+    if (collapsed) {
+      if (openTiles.has(c.id)) renderCollapsedOverlay(c);
+    } else {
+      renderCompartmentBody(c);
+    }
   }
 }
 
-async function renderCompartmentBody(c) {
-  const body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+// Render a collapsed tile's body as a floating overlay that can overlap other
+// tiles (the header stays anchored and non-overlapping in the grid).
+function renderCollapsedOverlay(c) {
+  const cw = cellWidth();
+  const overlay = document.createElement("div");
+  overlay.className = "compartment-overlay";
+  overlay.dataset.id = c.id;
+  overlay.style.left = `${GUTTER / 2 + c.x * cw}px`;
+  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`; // below the header
+  overlay.style.width = `${c.w * cw - GUTTER}px`;
+  overlay.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
+  overlay.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
+  dashboard.appendChild(overlay);
+  renderCompartmentBody(c);
+}
+
+async function renderCompartmentBody(c, body) {
+  if (!body) {
+    body = dashboard.querySelector(`.compartment-body[data-id="${c.id}"]`);
+  }
   if (!body) return;
 
   if (c.kind === "system") {
@@ -235,7 +317,7 @@ async function renderCompartmentBody(c) {
     };
     await renderStats();
     const t = setInterval(renderStats, 2000);
-    compartmentTimers.add(t);
+    addTimer(body, t);
   } else if (c.kind === "weather") {
     renderWeatherBody(c, body);
   } else if (c.kind === "launcher") {
@@ -403,7 +485,7 @@ function renderWeatherBody(c, body) {
       const t = setInterval(() => {
         clockEl.textContent = clock();
       }, 1000);
-      compartmentTimers.add(t);
+      addTimer(body, t);
     }
   };
 
@@ -487,6 +569,60 @@ async function renderNewsFeeds(c, body, feeds) {
 }
 
 // ---------------------------------------------------------------------------
+// Preview panel (right side). Shows a tile's content read-only, floating above
+// the grid (no reflow). Toggled from the toolbar; the eye button on a tile
+// header opens it for that tile.
+// ---------------------------------------------------------------------------
+const previewEl = document.getElementById("preview");
+const previewBody = document.getElementById("preview-body");
+let previewTileId = null;
+
+function openPreview(id) {
+  const comp = state.compartments.find((c) => c.id === id);
+  if (!comp) return;
+  previewTileId = id;
+  document.getElementById("preview-title").textContent = comp.title;
+  previewEl.classList.remove("hidden");
+  renderPreview();
+}
+function closePreview() {
+  previewTileId = null;
+  previewEl.classList.add("hidden");
+  previewBody.innerHTML = "";
+  // Only clear timers bound to the preview body — not the dashboard's live
+  // tiles (System stats, Weather clock), which must keep updating.
+  clearBodyTimers(previewBody);
+}
+function togglePreview() {
+  if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
+  else closePreview();
+}
+function renderPreview() {
+  if (!previewTileId) return;
+  const comp = state.compartments.find((c) => c.id === previewTileId);
+  if (!comp) return;
+  document.getElementById("preview-title").textContent = comp.title;
+  // Clear any timers still bound to the preview body (e.g. a previous tile's
+  // system-stats interval) so they don't keep overwriting the new content.
+  clearBodyTimers(previewBody);
+  renderCompartmentBody(comp, previewBody);
+}
+
+document.getElementById("btn-preview").addEventListener("click", togglePreview);
+document.getElementById("preview-close").addEventListener("click", closePreview);
+
+// Preview panel width control.
+const previewWidthEl = document.getElementById("preview-width");
+function applyPreviewWidth(px) {
+  previewEl.style.width = `${px}px`;
+  state.previewWidth = px;
+  saveState();
+}
+previewWidthEl.addEventListener("change", (e) => {
+  applyPreviewWidth(clamp(Number(e.target.value) || 320, 200, 800));
+});
+
+// ---------------------------------------------------------------------------
 // Settings overlay wiring.
 // ---------------------------------------------------------------------------
 const settingsEl = document.getElementById("settings");
@@ -562,6 +698,36 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
 // ---------------------------------------------------------------------------
 let selectedLauncherId = null;
 
+// Per-tile 'collapsible' control shown in every settings tab's tile-selection
+// row. When off, the collapse button is hidden. Persisted per compartment.
+function appendCollapsibleRow(panel, comp) {
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `
+    <label>Collapsible
+      <input type="checkbox" class="collapsible" ${comp.collapsible !== false ? "checked" : ""} />
+    </label>`;
+  row.querySelector(".collapsible").addEventListener("change", (e) => {
+    comp.collapsible = e.target.checked;
+    openTiles.delete(comp.id);
+    // Turning collapsible OFF on a currently-collapsed tile would leave it as a
+    // header-only bar with no button to expand it — so force it expanded.
+    if (!comp.collapsible && comp.collapsed) comp.collapsed = false;
+    saveState();
+    render();
+    renderTabPanel(comp);
+  });
+  panel.appendChild(row);
+}
+
+function renderTabPanel(comp) {
+  if (comp.kind === "launcher") renderFoldersSettings();
+  if (comp.kind === "bookmarks") renderBookmarksSettings();
+  if (comp.kind === "azure") renderAzureSettings();
+  if (comp.kind === "weather") renderWeatherSettings();
+  if (comp.kind === "news") renderNewsSettings();
+}
+
 function ensureLauncher() {
   const launchers = state.compartments.filter((c) => c.kind === "launcher");
   if (launchers.length === 0) {
@@ -614,6 +780,7 @@ function renderFoldersSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, launcher);
 
   items.forEach((it, i) => {
     const row = document.createElement("div");
@@ -736,6 +903,7 @@ function renderBookmarksSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
 
   urls.forEach((u, i) => {
     const row = document.createElement("div");
@@ -838,6 +1006,7 @@ function renderAzureSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
 
   const orgRow = document.createElement("div");
   orgRow.className = "item-row";
@@ -961,6 +1130,7 @@ function renderWeatherSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
 
   const nameRow = document.createElement("div");
   nameRow.className = "item-row";
@@ -1065,6 +1235,7 @@ function renderNewsSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
 
   feeds.forEach((f, i) => {
     const row = document.createElement("div");
@@ -1137,6 +1308,9 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
   document.getElementById("add-title").value = "";
   saveState();
   render();
+  // New tiles are placed at the bottom of a tall grid; scroll it into view so
+  // the user actually sees what they added.
+  dashboard.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
 });
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
@@ -1144,6 +1318,28 @@ document.getElementById("set-cols").addEventListener("change", (e) => {
   saveState();
   render();
 });
+
+// ---------------------------------------------------------------------------
+// Zoom controls (topbar). Scaling ROW_H scales the whole grid, so zoom out to
+// see off-screen tiles (e.g. ones added far down) and remove them.
+// ---------------------------------------------------------------------------
+function updateZoomUI() {
+  const el = document.getElementById("zoom-level");
+  if (el) el.textContent = `${Math.round(zoom * 100)}%`;
+}
+function setZoom(z) {
+  zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
+  state.zoom = zoom;
+  updateZoomUI();
+  render();
+}
+// Reset button returns the grid to 100%.
+function zoomReset() {
+  setZoom(1);
+}
+document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
+document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
+document.getElementById("zoom-fit").addEventListener("click", zoomReset);
 
 // ---------------------------------------------------------------------------
 // Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
@@ -1173,17 +1369,17 @@ dashboard.addEventListener("mousemove", (e) => {
 
   if (gesture.mode === "drag") {
     const nx = clamp(Math.round((item.x * cw + dx) / cw), 0, state.columns - item.w);
-    const ny = Math.max(0, Math.round((item.y * ROW_H + dy) / ROW_H));
+    const ny = Math.max(0, Math.round((item.y * ROW_H() + dy) / ROW_H()));
     gesture.comp.style.left = `${GUTTER / 2 + nx * cw}px`;
-    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H}px`;
+    gesture.comp.style.top = `${GUTTER / 2 + ny * ROW_H()}px`;
     gesture._nx = nx;
     gesture._ny = ny;
     gesture.moved = nx !== item.x || ny !== item.y;
   } else {
     const nw = clamp(item.w + Math.round(dx / cw), 1, state.columns - item.x);
-    const nh = Math.max(1, item.h + Math.round(dy / ROW_H));
+    const nh = Math.max(1, item.h + Math.round(dy / ROW_H()));
     gesture.comp.style.width = `${nw * cw - GUTTER}px`;
-    gesture.comp.style.height = `${nh * ROW_H - GUTTER}px`;
+    gesture.comp.style.height = `${nh * ROW_H() - GUTTER}px`;
     gesture._nw = nw;
     gesture._nh = nh;
     gesture.moved = nw !== item.w || nh !== item.h;
@@ -1246,6 +1442,12 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
+  updateZoomUI();
+  if (state.previewWidth) {
+    previewEl.style.width = `${state.previewWidth}px`;
+    previewWidthEl.value = state.previewWidth;
+  }
   render();
 }
 
@@ -1263,7 +1465,9 @@ async function setupDragDrop() {
     const x = position ? position.x / scale : 0;
     const y = position ? position.y / scale : 0;
     const targetAt = (point) =>
-      [...dashboard.querySelectorAll(".compartment")].find((el) => {
+      // Match both normal tiles and collapsed-tile overlays; both carry the
+      // compartment id in data-id so a drop on an open overlay targets its tile.
+      [...dashboard.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
         const r = el.getBoundingClientRect();
         return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
       });
@@ -1300,6 +1504,7 @@ async function setupDragDrop() {
       if (comp.data.items.some((it) => it.path === p)) continue; // no dupes
       comp.data.items.push({ kind: kind === "dir" ? "folder" : "solution", label, path: p });
     }
+    comp.data.items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }));
     saveState();
     render();
   });

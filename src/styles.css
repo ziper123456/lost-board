@@ -32,6 +32,56 @@ html, body {
   background: var(--panel);
 }
 .logo { font-weight: 600; letter-spacing: 0.5px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px;
+  background: var(--panel-2);
+}
+.zoom-controls .btn { padding: 2px 8px; font-size: 0.9rem; }
+.zoom-level {
+  min-width: 42px;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.preview-width-label input {
+  width: 58px;
+  padding: 3px 6px;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* Right-side preview panel: fixed, above everything, does not reflow the grid */
+.preview {
+  position: fixed;
+  top: 53px;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  z-index: 90;
+}
+.preview.hidden { display: none; }
+.preview > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.preview-title { font-weight: 600; font-size: 0.9rem; }
+.preview .compartment-body { flex: 1; overflow: auto; padding: 12px; }
 
 /* Dashboard grid */
 .dashboard {
@@ -72,10 +122,33 @@ html, body {
   width: 100%;
 }
 .compartment-body { padding: 10px 12px; overflow: auto; flex: 1; }
-.compartment.drag-over {
+.compartment.drag-over,
+.compartment-overlay.drag-over {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }
+
+/* Collapsed tile: header-only bar, stays anchored/non-overlapping in the grid */
+.compartment.collapsed .compartment-body { display: none; }
+.compartment.collapsed .compartment-header {
+  height: 100%;
+  border-bottom: none;
+  border-radius: 10px;
+}
+
+/* Floating overlay for an open collapsed tile — can overlap other tiles */
+.compartment-overlay {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+}
+.compartment-overlay .compartment-body { flex: 1; overflow: auto; padding: 10px 12px; }
 
 /* Resize handle (bottom-right corner) */
 .resize-handle {
