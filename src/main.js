@@ -166,6 +166,7 @@ function render() {
 
   for (const c of state.compartments) {
     const collapsed = c.collapsed === true;
+    const collapsible = c.collapsible !== false;
     const el = document.createElement("div");
     el.className = "compartment" + (collapsed ? " collapsed" : "");
     el.dataset.id = c.id;
@@ -178,7 +179,7 @@ function render() {
       <div class="compartment-header">
         <span class="comp-title">${escapeHtml(c.title)}</span>
         <div class="header-actions">
-          <button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>
+          ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
           <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
           <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
           <button class="btn ghost remove" data-id="${c.id}">✕</button>
@@ -190,7 +191,7 @@ function render() {
 
     const expandMode = c.expandMode || "click";
 
-    el.querySelector(".collapse").addEventListener("click", (e) => {
+    el.querySelector(".collapse")?.addEventListener("click", (e) => {
       e.stopPropagation();
       if (expandMode === "hover") {
         // In hover mode the button just collapses/expands the tile.
@@ -255,7 +256,7 @@ function render() {
     });
 
     // Hover mode: hovering a collapsed tile's header opens its overlay.
-    if (collapsed && expandMode === "hover") {
+    if (collapsible && collapsed && expandMode === "hover") {
       const header = el.querySelector(".compartment-header");
       header.addEventListener("mouseenter", () => {
         if (openTileId !== c.id) {
@@ -637,30 +638,44 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
 // ---------------------------------------------------------------------------
 let selectedLauncherId = null;
 
-// Shared per-tile 'expand mode' control shown in every settings tab's
-// tile-selection row. Persisted per compartment (not global).
+// Shared per-tile 'collapsible' + 'expand mode' controls shown in every
+// settings tab's tile-selection row. Persisted per compartment (not global).
 function appendExpandModeRow(panel, comp) {
   const row = document.createElement("div");
   row.className = "item-row";
   row.innerHTML = `
-    <label>Open collapsed on</label>
-    <select class="expandmode">
-      <option value="click" ${(comp.expandMode || "click") === "click" ? "selected" : ""}>Click</option>
-      <option value="hover" ${comp.expandMode === "hover" ? "selected" : ""}>Hover</option>
-    </select>`;
+    <label>Collapsible
+      <input type="checkbox" class="collapsible" ${comp.collapsible !== false ? "checked" : ""} />
+    </label>
+    <label>Open collapsed on
+      <select class="expandmode">
+        <option value="click" ${(comp.expandMode || "click") === "click" ? "selected" : ""}>Click</option>
+        <option value="hover" ${comp.expandMode === "hover" ? "selected" : ""}>Hover</option>
+      </select>
+    </label>`;
+  row.querySelector(".collapsible").addEventListener("change", (e) => {
+    comp.collapsible = e.target.checked;
+    openTileId = null;
+    saveState();
+    render();
+    renderTabPanel(comp);
+  });
   row.querySelector("select").addEventListener("change", (e) => {
     comp.expandMode = e.target.value;
     openTileId = null;
     saveState();
     render();
-    // Re-render the panel so the control reflects the saved value.
-    if (comp.kind === "launcher") renderFoldersSettings();
-    if (comp.kind === "bookmarks") renderBookmarksSettings();
-    if (comp.kind === "azure") renderAzureSettings();
-    if (comp.kind === "weather") renderWeatherSettings();
-    if (comp.kind === "news") renderNewsSettings();
+    renderTabPanel(comp);
   });
   panel.appendChild(row);
+}
+
+function renderTabPanel(comp) {
+  if (comp.kind === "launcher") renderFoldersSettings();
+  if (comp.kind === "bookmarks") renderBookmarksSettings();
+  if (comp.kind === "azure") renderAzureSettings();
+  if (comp.kind === "weather") renderWeatherSettings();
+  if (comp.kind === "news") renderNewsSettings();
 }
 
 function ensureLauncher() {
