@@ -1504,6 +1504,7 @@ async function setupDragDrop() {
       if (comp.data.items.some((it) => it.path === p)) continue; // no dupes
       comp.data.items.push({ kind: kind === "dir" ? "folder" : "solution", label, path: p });
     }
+    comp.data.items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }));
     saveState();
     render();
   });
