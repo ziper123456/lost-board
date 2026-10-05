@@ -50,6 +50,12 @@ html, body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.preview-width-label input {
+  width: 58px;
+  padding: 3px 6px;
+  font-size: 0.78rem;
+  text-align: center;
+}
 
 /* Right-side preview panel: fixed, above everything, does not reflow the grid */
 .preview {

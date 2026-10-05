@@ -107,14 +107,26 @@ async openFolder(path) {
 // ---------------------------------------------------------------------------
 const dashboard = document.getElementById("dashboard");
 
-// Registry of interval timers owned by compartment bodies. Tracked at module
-// scope so they are cleared even for compartments that have been removed from
-// `state` (the ✕ button filters them out before render() runs).
-const compartmentTimers = new Set();
+// Registry of interval timers owned by compartment bodies, keyed by the body
+// element they render into. Tracked at module scope so they are cleared even
+// for compartments that have been removed from `state`. Keying by body lets us
+// clear a single body's timers (e.g. the preview panel) without nuking others.
+const compartmentTimers = new Map();
 
+function addTimer(body, t) {
+  if (!compartmentTimers.has(body)) compartmentTimers.set(body, []);
+  compartmentTimers.get(body).push(t);
+}
 function clearCompartmentTimers() {
-  compartmentTimers.forEach((t) => clearInterval(t));
+  compartmentTimers.forEach((arr) => arr.forEach(clearInterval));
   compartmentTimers.clear();
+}
+function clearBodyTimers(body) {
+  const arr = compartmentTimers.get(body);
+  if (arr) {
+    arr.forEach(clearInterval);
+    compartmentTimers.delete(body);
+  }
 }
 
 const ROW_H_BASE = 44;
@@ -304,7 +316,7 @@ async function renderCompartmentBody(c, body) {
     };
     await renderStats();
     const t = setInterval(renderStats, 2000);
-    compartmentTimers.add(t);
+    addTimer(body, t);
   } else if (c.kind === "weather") {
     renderWeatherBody(c, body);
   } else if (c.kind === "launcher") {
@@ -472,7 +484,7 @@ function renderWeatherBody(c, body) {
       const t = setInterval(() => {
         clockEl.textContent = clock();
       }, 1000);
-      compartmentTimers.add(t);
+      addTimer(body, t);
     }
   };
 
@@ -587,11 +599,25 @@ function renderPreview() {
   const comp = state.compartments.find((c) => c.id === previewTileId);
   if (!comp) return;
   document.getElementById("preview-title").textContent = comp.title;
+  // Clear any timers still bound to the preview body (e.g. a previous tile's
+  // system-stats interval) so they don't keep overwriting the new content.
+  clearBodyTimers(previewBody);
   renderCompartmentBody(comp, previewBody);
 }
 
 document.getElementById("btn-preview").addEventListener("click", togglePreview);
 document.getElementById("preview-close").addEventListener("click", closePreview);
+
+// Preview panel width control.
+const previewWidthEl = document.getElementById("preview-width");
+function applyPreviewWidth(px) {
+  previewEl.style.width = `${px}px`;
+  state.previewWidth = px;
+  saveState();
+}
+previewWidthEl.addEventListener("change", (e) => {
+  applyPreviewWidth(clamp(Number(e.target.value) || 320, 200, 800));
+});
 
 // ---------------------------------------------------------------------------
 // Settings overlay wiring.
@@ -1420,6 +1446,10 @@ async function initialize() {
   }
   zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
   updateZoomUI();
+  if (state.previewWidth) {
+    previewEl.style.width = `${state.previewWidth}px`;
+    previewWidthEl.value = state.previewWidth;
+  }
   render();
 }
 
