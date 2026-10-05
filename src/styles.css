@@ -122,7 +122,8 @@ html, body {
   width: 100%;
 }
 .compartment-body { padding: 10px 12px; overflow: auto; flex: 1; }
-.compartment.drag-over {
+.compartment.drag-over,
+.compartment-overlay.drag-over {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }

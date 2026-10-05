@@ -1465,7 +1465,9 @@ async function setupDragDrop() {
     const x = position ? position.x / scale : 0;
     const y = position ? position.y / scale : 0;
     const targetAt = (point) =>
-      [...dashboard.querySelectorAll(".compartment")].find((el) => {
+      // Match both normal tiles and collapsed-tile overlays; both carry the
+      // compartment id in data-id so a drop on an open overlay targets its tile.
+      [...dashboard.querySelectorAll(".compartment, .compartment-overlay")].find((el) => {
         const r = el.getBoundingClientRect();
         return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
       });
