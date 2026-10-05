@@ -26,8 +26,9 @@ const DEFAULT_STATE = {
   ],
 };
 
-// Id of the currently-open collapsed tile overlay (transient, not persisted).
-let openTileId = null;
+// Set of collapsed tiles currently showing their floating body overlay.
+// Per-tile and transient (not persisted), so opening one doesn't affect others.
+const openTiles = new Set();
 
 const STORAGE_KEY = "lost-board.state.v1";
 
@@ -192,14 +193,15 @@ function render() {
     el.querySelector(".collapse")?.addEventListener("click", (e) => {
       e.stopPropagation();
       // Toggle collapse; when collapsed the button also opens (and stays
-      // open) the floating body overlay.
+      // open) the floating body overlay for this tile only.
       if (!collapsed) {
         c.collapsed = true;
-        openTileId = null;
+        openTiles.delete(c.id);
         saveState();
         render();
       } else {
-        openTileId = openTileId === c.id ? null : c.id;
+        if (openTiles.has(c.id)) openTiles.delete(c.id);
+        else openTiles.add(c.id);
         render();
       }
     });
@@ -240,14 +242,14 @@ function render() {
     el.querySelector(".remove").addEventListener("click", (e) => {
       e.stopPropagation();
       state.compartments = state.compartments.filter((x) => x.id !== c.id);
-      if (openTileId === c.id) openTileId = null;
+      openTiles.delete(c.id);
       saveState();
       render();
     });
 
     dashboard.appendChild(el);
     if (collapsed) {
-      if (openTileId === c.id) renderCollapsedOverlay(c);
+      if (openTiles.has(c.id)) renderCollapsedOverlay(c);
     } else {
       renderCompartmentBody(c);
     }
@@ -622,7 +624,7 @@ function appendCollapsibleRow(panel, comp) {
     </label>`;
   row.querySelector(".collapsible").addEventListener("change", (e) => {
     comp.collapsible = e.target.checked;
-    openTileId = null;
+    openTiles.delete(comp.id);
     saveState();
     render();
     renderTabPanel(comp);
