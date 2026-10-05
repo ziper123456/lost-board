@@ -118,10 +118,6 @@ function addTimer(body, t) {
   if (!compartmentTimers.has(body)) compartmentTimers.set(body, []);
   compartmentTimers.get(body).push(t);
 }
-function clearCompartmentTimers() {
-  compartmentTimers.forEach((arr) => arr.forEach(clearInterval));
-  compartmentTimers.clear();
-}
 function clearBodyTimers(body) {
   const arr = compartmentTimers.get(body);
   if (arr) {
@@ -183,122 +179,209 @@ function resolveCollisions(anchor) {
   }
 }
 
-function render() {
-  clearCompartmentTimers();
-  dashboard.innerHTML = "";
-  dashboard.style.height = `${gridHeight()}px`;
-
-  for (const c of state.compartments) {
-    const collapsed = c.collapsed === true;
-    const collapsible = c.collapsible !== false;
-    const el = document.createElement("div");
-    el.className = "compartment" + (collapsed ? " collapsed" : "");
-    el.dataset.id = c.id;
-    el.style.position = "absolute";
-    applyBox(el, c);
-    if (collapsed) el.style.height = `${ROW_H() - GUTTER}px`;
-
-    const toggle = collapsed ? "▸" : "▾";
-    el.innerHTML = `
-      <div class="compartment-header">
-        <span class="comp-title">${escapeHtml(c.title)}</span>
-        <div class="header-actions">
-          ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
-          <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
-          <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
-          <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
-          <button class="btn ghost remove" data-id="${c.id}">✕</button>
-        </div>
+// Signatures used to decide what actually needs rebuilding. A tile's header is
+// rebuilt only when its title/collapse state changes; its body only when its
+// kind/data changes. Positions/sizes are always updated cheaply. This avoids
+// tearing down every tile (and re-fetching System stats / news / weather) on
+// unrelated actions like editing a bookmark.
+function tileHeaderSig(c) {
+  return JSON.stringify({ t: c.title, c: c.collapsed === true, col: c.collapsible !== false });
+}
+function tileBodySig(c) {
+  return JSON.stringify({ k: c.kind, d: c.data || {} });
+}
+function buildHeaderHtml(c) {
+  const collapsed = c.collapsed === true;
+  const collapsible = c.collapsible !== false;
+  const toggle = collapsed ? "▸" : "▾";
+  return `
+    <div class="compartment-header">
+      <span class="comp-title">${escapeHtml(c.title)}</span>
+      <div class="header-actions">
+        ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
+        <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
+        <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
+        <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
+        <button class="btn ghost remove" data-id="${c.id}">✕</button>
       </div>
-      ${collapsed ? "" : `<div class="compartment-body" data-id="${c.id}"></div>`}
-      <div class="resize-handle" title="Resize"></div>
-    `;
-
-    el.querySelector(".collapse")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      // Toggle collapse; when collapsed the button also opens (and stays
-      // open) the floating body overlay for this tile only.
-      if (!collapsed) {
-        c.collapsed = true;
-        openTiles.delete(c.id);
-        saveState();
-        render();
-      } else {
-        if (openTiles.has(c.id)) openTiles.delete(c.id);
-        else openTiles.add(c.id);
-        render();
-      }
-    });
-
-    el.querySelector(".preview-tile").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openPreview(c.id);
-    });
-
-    el.querySelector(".settings-tile").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openTileSettings(c.id);
-    });
-
-    el.querySelector(".rename").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const span = el.querySelector(".comp-title");
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "comp-title-input";
-      input.value = c.title;
-      span.replaceWith(input);
-      input.focus();
-      input.select();
-
-      const commit = () => {
-        const val = input.value.trim();
-        if (val && val !== c.title) {
-          c.title = val;
-          saveState();
-          render();
-        } else {
-          render();
-        }
-      };
-      input.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") commit();
-        if (ev.key === "Escape") render();
-      });
-      input.addEventListener("blur", commit);
-    });
-
-    el.querySelector(".remove").addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.compartments = state.compartments.filter((x) => x.id !== c.id);
+    </div>
+    <div class="compartment-body" data-id="${c.id}"></div>
+    <div class="resize-handle" title="Resize"></div>
+  `;
+}
+function wireHeader(rec, c) {
+  const el = rec.el;
+  el.querySelector(".collapse")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (c.collapsed === true) {
+      if (openTiles.has(c.id)) openTiles.delete(c.id);
+      else openTiles.add(c.id);
+      render();
+    } else {
+      c.collapsed = true;
       openTiles.delete(c.id);
       saveState();
       render();
-    });
-
-    dashboard.appendChild(el);
-    if (collapsed) {
-      if (openTiles.has(c.id)) renderCollapsedOverlay(c);
-    } else {
-      renderCompartmentBody(c);
     }
-  }
+  });
+  el.querySelector(".preview-tile").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openPreview(c.id);
+  });
+  el.querySelector(".settings-tile").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openTileSettings(c.id);
+  });
+  el.querySelector(".rename").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const span = el.querySelector(".comp-title");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "comp-title-input";
+    input.value = c.title;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const restore = (title) => {
+      const s = document.createElement("span");
+      s.className = "comp-title";
+      s.textContent = title;
+      input.replaceWith(s);
+    };
+    const commit = () => {
+      const val = input.value.trim();
+      if (val && val !== c.title) {
+        c.title = val;
+        saveState();
+      }
+      // Restore the span locally (header won't be rebuilt if title is unchanged).
+      if (input.isConnected) restore(c.title);
+      render();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") commit();
+      if (ev.key === "Escape") {
+        if (input.isConnected) restore(c.title);
+        render();
+      }
+    });
+    input.addEventListener("blur", commit);
+  });
+  el.querySelector(".remove").addEventListener("click", (e) => {
+    e.stopPropagation();
+    state.compartments = state.compartments.filter((x) => x.id !== c.id);
+    openTiles.delete(c.id);
+    saveState();
+    render();
+  });
 }
 
-// Render a collapsed tile's body as a floating overlay that can overlap other
-// tiles (the header stays anchored and non-overlapping in the grid).
-function renderCollapsedOverlay(c) {
-  const cw = cellWidth();
-  const overlay = document.createElement("div");
-  overlay.className = "compartment-overlay";
-  overlay.dataset.id = c.id;
-  overlay.style.left = `${GUTTER / 2 + c.x * cw}px`;
-  overlay.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`; // below the header
-  overlay.style.width = `${c.w * cw - GUTTER}px`;
-  overlay.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
-  overlay.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
-  dashboard.appendChild(overlay);
-  renderCompartmentBody(c);
+// Live tile elements by compartment id, so re-renders reuse them instead of
+// rebuilding the whole board.
+const tileEls = new Map();
+const overlayEls = new Map();
+
+function render() {
+  dashboard.style.height = `${gridHeight()}px`;
+
+  // Drop tiles for compartments that no longer exist.
+  for (const [id, rec] of tileEls) {
+    if (!state.compartments.some((c) => c.id === id)) {
+      clearBodyTimers(rec.bodyEl);
+      rec.el.remove();
+      tileEls.delete(id);
+    }
+  }
+
+  for (const c of state.compartments) {
+    const collapsed = c.collapsed === true;
+    let rec = tileEls.get(c.id);
+    if (!rec) {
+      const el = document.createElement("div");
+      el.className = "compartment";
+      el.dataset.id = c.id;
+      el.style.position = "absolute";
+      dashboard.appendChild(el);
+      rec = { el, headerSig: null, bodySig: null, bodyEl: null };
+      tileEls.set(c.id, rec);
+    }
+
+    // Cheap, always-updated geometry.
+    applyBox(rec.el, c);
+    rec.el.classList.toggle("collapsed", collapsed);
+    if (collapsed) rec.el.style.height = `${ROW_H() - GUTTER}px`;
+
+    // Header — rebuild only when title / collapse / collapsible changed.
+    const hs = tileHeaderSig(c);
+    if (rec.headerSig !== hs) {
+      if (rec.bodyEl) clearBodyTimers(rec.bodyEl);
+      rec.el.innerHTML = buildHeaderHtml(c);
+      rec.bodyEl = rec.el.querySelector(".compartment-body");
+      rec.headerSig = hs;
+      rec.bodySig = null;
+      wireHeader(rec, c);
+    }
+
+    // Body — render only when collapsed state or body data changed.
+    if (collapsed) {
+      if (rec.bodyEl) {
+        clearBodyTimers(rec.bodyEl);
+        rec.bodyEl.innerHTML = "";
+        rec.bodySig = null;
+      }
+    } else {
+      const bs = tileBodySig(c);
+      if (rec.bodySig !== bs) {
+        clearBodyTimers(rec.bodyEl);
+        rec.bodySig = bs;
+        renderCompartmentBody(c, rec.bodyEl);
+      }
+    }
+  }
+
+  renderOverlays();
+}
+
+// Collapsed tiles that are "open" show their body as a floating overlay.
+function renderOverlays() {
+  const desired = new Set(
+    state.compartments.filter((c) => c.collapsed === true && openTiles.has(c.id)).map((c) => c.id)
+  );
+
+  for (const [id, rec] of overlayEls) {
+    if (!desired.has(id)) {
+      clearBodyTimers(rec.bodyEl);
+      rec.el.remove();
+      overlayEls.delete(id);
+    }
+  }
+
+  for (const c of state.compartments) {
+    if (!desired.has(c.id)) continue;
+    let rec = overlayEls.get(c.id);
+    if (!rec) {
+      const el = document.createElement("div");
+      el.className = "compartment-overlay";
+      el.dataset.id = c.id;
+      el.innerHTML = `<div class="compartment-body" data-id="${c.id}"></div>`;
+      dashboard.appendChild(el);
+      rec = { el, bodyEl: el.querySelector(".compartment-body"), bodySig: null };
+      overlayEls.set(c.id, rec);
+    }
+    const cw = cellWidth();
+    rec.el.style.left = `${GUTTER / 2 + c.x * cw}px`;
+    rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H() + ROW_H()}px`;
+    rec.el.style.width = `${c.w * cw - GUTTER}px`;
+    rec.el.style.height = `${(c.h - 1) * ROW_H() - GUTTER}px`;
+
+    const bs = tileBodySig(c);
+    if (rec.bodySig !== bs) {
+      clearBodyTimers(rec.bodyEl);
+      rec.bodySig = bs;
+      renderCompartmentBody(c, rec.bodyEl);
+    }
+  }
 }
 
 async function renderCompartmentBody(c, body) {
