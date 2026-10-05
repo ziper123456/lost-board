@@ -326,6 +326,20 @@ html, body {
 .btn.ghost { background: transparent; }
 .btn.danger { background: transparent; border-color: var(--red); color: var(--red); }
 
+/* Icon buttons: square-ish, center the inline SVG, subtle hover */
+.btn.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  line-height: 1;
+  color: var(--muted);
+}
+.btn.icon-btn:hover { color: var(--text); background: var(--border); }
+.btn.icon-btn svg { display: block; }
+.compartment-header .header-actions .btn.icon-btn { padding: 3px 5px; }
+.compartment-header .header-actions .btn.icon-btn:hover { color: var(--accent); }
+
 /* Settings overlay (floating, draggable window over a light backdrop) */
 .settings {
   position: fixed;

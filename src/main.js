@@ -13,6 +13,17 @@
 
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 
+// Inline SVG icons (stroke-based, inherit currentColor) used by the tile header
+// and toolbar buttons instead of emoji glyphs.
+const ICON = {
+  collapse: (collapsed) =>
+    `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${collapsed ? '<path d="M6 4l4 4-4 4"/>' : '<path d="M4 6l4 4 4-4"/>'}</svg>`,
+  preview: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="1.8"/></svg>`,
+  settings: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`,
+  rename: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z"/><path d="M10 4l2 2"/></svg>`,
+  remove: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
+};
+
 // ---------------------------------------------------------------------------
 // State (persisted to localStorage). Each compartment has a `kind` and `data`.
 // ---------------------------------------------------------------------------
@@ -192,16 +203,15 @@ function tileBodySig(c) {
 function buildHeaderHtml(c) {
   const collapsed = c.collapsed === true;
   const collapsible = c.collapsible !== false;
-  const toggle = collapsed ? "▸" : "▾";
   return `
     <div class="compartment-header">
       <span class="comp-title">${escapeHtml(c.title)}</span>
       <div class="header-actions">
-        ${collapsible ? `<button class="btn ghost collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${toggle}</button>` : ""}
-        <button class="btn ghost preview-tile" data-id="${c.id}" title="Preview">👁</button>
-        <button class="btn ghost settings-tile" data-id="${c.id}" title="Settings">⚙</button>
-        <button class="btn ghost rename" data-id="${c.id}" title="Rename">✎</button>
-        <button class="btn ghost remove" data-id="${c.id}">✕</button>
+        ${collapsible ? `<button class="btn ghost icon-btn collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${ICON.collapse(collapsed)}</button>` : ""}
+        <button class="btn ghost icon-btn preview-tile" data-id="${c.id}" title="Preview">${ICON.preview}</button>
+        <button class="btn ghost icon-btn settings-tile" data-id="${c.id}" title="Settings">${ICON.settings}</button>
+        <button class="btn ghost icon-btn rename" data-id="${c.id}" title="Rename">${ICON.rename}</button>
+        <button class="btn ghost icon-btn remove" data-id="${c.id}" title="Remove">${ICON.remove}</button>
       </div>
     </div>
     <div class="compartment-body" data-id="${c.id}"></div>
@@ -886,7 +896,7 @@ function renderFoldersSettings() {
       <input class="it-label" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(it.label || "")}" />
       <input class="it-path" data-i="${i}" type="text" placeholder="Path" value="${escapeHtml(it.path || "")}" readonly />
       <button class="btn ghost it-browse" data-i="${i}">Browse</button>
-      <button class="btn ghost danger it-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn it-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1004,7 +1014,7 @@ function renderBookmarksSettings() {
     row.innerHTML = `
       <input class="bmk-title" data-i="${i}" type="text" placeholder="Label" value="${escapeHtml(u.title || "")}" />
       <input class="bmk-url" data-i="${i}" type="text" placeholder="https://…" value="${escapeHtml(u.url || "")}" />
-      <button class="btn ghost danger bmk-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn bmk-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1112,7 +1122,7 @@ function renderAzureSettings() {
     row.innerHTML = `
       <input class="az-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(r.label || "")}" />
       <input class="az-repo" data-i="${i}" type="text" placeholder="Repo name" value="${escapeHtml(r.repo || "")}" />
-      <button class="btn ghost danger az-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn az-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
@@ -1336,7 +1346,7 @@ function renderNewsSettings() {
     row.innerHTML = `
       <input class="news-label" data-i="${i}" type="text" placeholder="Label (optional)" value="${escapeHtml(f.label || "")}" />
       <input class="news-url" data-i="${i}" type="text" placeholder="https://…/feed.xml" value="${escapeHtml(f.url || "")}" />
-      <button class="btn ghost danger news-remove" data-i="${i}">✕</button>`;
+      <button class="btn ghost danger icon-btn news-remove" data-i="${i}" title="Remove">${ICON.remove}</button>`;
     panel.appendChild(row);
   });
 
