@@ -69,13 +69,18 @@ async fn pick_solution() -> Result<Option<String>, String> {
 }
 
 /// Classify a dropped path so the frontend can add it as a folder or a solution:
-/// returns `"dir"`, `"sln"` (a `.sln` file), or `"file"` (any other file).
+/// returns `"dir"`, `"sln"` (a solution/project file), or `"file"` (any other file).
 #[tauri::command]
 fn classify_path(path: String) -> String {
     let p = Path::new(&path);
     if p.is_dir() {
         "dir".into()
-    } else if p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("sln") {
+    } else if p.is_file()
+        && matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("sln" | "slnx" | "csproj")
+        )
+    {
         "sln".into()
     } else if p.is_file() {
         "file".into()

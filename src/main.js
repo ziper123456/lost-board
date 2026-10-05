@@ -84,7 +84,7 @@ async openFolder(path) {
   },
   async classifyPath(path) {
     if (window.__TAURI__) return invoke("classify_path", { path });
-    return path.endsWith(".sln") ? "sln" : "dir";
+    return /\.(sln|slnx|csproj)$/i.test(path) ? "sln" : "dir";
   },
   async fetchRss(url) {
     if (window.__TAURI__) return invoke("fetch_rss", { url });
