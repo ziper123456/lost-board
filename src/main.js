@@ -189,20 +189,10 @@ function render() {
       <div class="resize-handle" title="Resize"></div>
     `;
 
-    const expandMode = c.expandMode || "click";
-
     el.querySelector(".collapse")?.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (expandMode === "hover") {
-        // In hover mode the button just collapses/expands the tile.
-        c.collapsed = !collapsed;
-        openTileId = null;
-        saveState();
-        render();
-        return;
-      }
-      // Click mode: toggle collapse, and when collapsed the button also
-      // opens (and stays open) the floating body overlay.
+      // Toggle collapse; when collapsed the button also opens (and stays
+      // open) the floating body overlay.
       if (!collapsed) {
         c.collapsed = true;
         openTileId = null;
@@ -254,23 +244,6 @@ function render() {
       saveState();
       render();
     });
-
-    // Hover mode: hovering a collapsed tile's header opens its overlay.
-    if (collapsible && collapsed && expandMode === "hover") {
-      const header = el.querySelector(".compartment-header");
-      header.addEventListener("mouseenter", () => {
-        if (openTileId !== c.id) {
-          openTileId = c.id;
-          render();
-        }
-      });
-      header.addEventListener("mouseleave", () => {
-        if (openTileId === c.id) {
-          openTileId = null;
-          render();
-        }
-      });
-    }
 
     dashboard.appendChild(el);
     if (collapsed) {
@@ -638,30 +611,17 @@ document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
 // ---------------------------------------------------------------------------
 let selectedLauncherId = null;
 
-// Shared per-tile 'collapsible' + 'expand mode' controls shown in every
-// settings tab's tile-selection row. Persisted per compartment (not global).
-function appendExpandModeRow(panel, comp) {
+// Per-tile 'collapsible' control shown in every settings tab's tile-selection
+// row. When off, the collapse button is hidden. Persisted per compartment.
+function appendCollapsibleRow(panel, comp) {
   const row = document.createElement("div");
   row.className = "item-row";
   row.innerHTML = `
     <label>Collapsible
       <input type="checkbox" class="collapsible" ${comp.collapsible !== false ? "checked" : ""} />
-    </label>
-    <label>Open collapsed on
-      <select class="expandmode">
-        <option value="click" ${(comp.expandMode || "click") === "click" ? "selected" : ""}>Click</option>
-        <option value="hover" ${comp.expandMode === "hover" ? "selected" : ""}>Hover</option>
-      </select>
     </label>`;
   row.querySelector(".collapsible").addEventListener("change", (e) => {
     comp.collapsible = e.target.checked;
-    openTileId = null;
-    saveState();
-    render();
-    renderTabPanel(comp);
-  });
-  row.querySelector("select").addEventListener("change", (e) => {
-    comp.expandMode = e.target.value;
     openTileId = null;
     saveState();
     render();
@@ -730,7 +690,7 @@ function renderFoldersSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
-  appendExpandModeRow(panel, launcher);
+  appendCollapsibleRow(panel, launcher);
 
   items.forEach((it, i) => {
     const row = document.createElement("div");
@@ -853,7 +813,7 @@ function renderBookmarksSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
-  appendExpandModeRow(panel, comp);
+  appendCollapsibleRow(panel, comp);
 
   urls.forEach((u, i) => {
     const row = document.createElement("div");
@@ -956,7 +916,7 @@ function renderAzureSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
-  appendExpandModeRow(panel, comp);
+  appendCollapsibleRow(panel, comp);
 
   const orgRow = document.createElement("div");
   orgRow.className = "item-row";
@@ -1080,7 +1040,7 @@ function renderWeatherSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
-  appendExpandModeRow(panel, comp);
+  appendCollapsibleRow(panel, comp);
 
   const nameRow = document.createElement("div");
   nameRow.className = "item-row";
@@ -1185,7 +1145,7 @@ function renderNewsSettings() {
         .join("")}
     </select>`;
   panel.appendChild(selectorRow);
-  appendExpandModeRow(panel, comp);
+  appendCollapsibleRow(panel, comp);
 
   feeds.forEach((f, i) => {
     const row = document.createElement("div");
