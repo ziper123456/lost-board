@@ -625,6 +625,9 @@ function appendCollapsibleRow(panel, comp) {
   row.querySelector(".collapsible").addEventListener("change", (e) => {
     comp.collapsible = e.target.checked;
     openTiles.delete(comp.id);
+    // Turning collapsible OFF on a currently-collapsed tile would leave it as a
+    // header-only bar with no button to expand it — so force it expanded.
+    if (!comp.collapsible && comp.collapsed) comp.collapsed = false;
     saveState();
     render();
     renderTabPanel(comp);
@@ -1220,6 +1223,9 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
   document.getElementById("add-title").value = "";
   saveState();
   render();
+  // New tiles are placed at the bottom of a tall grid; scroll it into view so
+  // the user actually sees what they added.
+  dashboard.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
 });
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
