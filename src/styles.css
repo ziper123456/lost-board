@@ -183,6 +183,15 @@ html, body {
 }
 .launcher-tile.folder { border-left: 3px solid var(--amber); }
 .launcher-tile.solution { border-left: 3px solid var(--accent); }
+.launcher-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.launcher-tile.folder .launcher-icon { color: var(--amber); }
+.launcher-tile.solution .launcher-icon { color: var(--accent); }
 .launcher-open {
   flex: 0 0 auto;
   background: transparent;
