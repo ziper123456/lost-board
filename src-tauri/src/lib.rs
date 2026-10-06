@@ -383,6 +383,7 @@ async fn deepl_translate(
 const SPOTIFY_CLIENT_ID: &str = "spotify_client_id";
 const SPOTIFY_ACCESS: &str = "spotify_access_token";
 const SPOTIFY_REFRESH: &str = "spotify_refresh_token";
+const SPOTIFY_EXPIRES: &str = "spotify_token_expires_at";
 
 // PKCE verifier is kept in memory between the authorize step and the callback.
 use std::sync::Mutex as StdMutex; // avoid clash with tauri::Manager
@@ -496,14 +497,34 @@ async fn spotify_capture() -> Result<(), String> {
     }
     spot_set(SPOTIFY_ACCESS, &access)?;
     spot_set(SPOTIFY_REFRESH, &refresh)?;
+    // Store when the access token expires (refresh proactively after that).
+    let expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(3600).min(3600);
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() + expires_in)
+        .unwrap_or(0);
+    spot_set(SPOTIFY_EXPIRES, &expires_at.to_string())?;
     Ok(())
 }
 
-/// Get a valid access token, refreshing via refresh_token when needed.
+/// Get a valid access token, refreshing via refresh_token when expired/missing.
 async fn spotify_access_token() -> Result<String, String> {
-    if let Ok(t) = spot_get(SPOTIFY_ACCESS) {
-        return Ok(t);
+    // Valid (unexpired) token already stored? Use it.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let valid = spot_get(SPOTIFY_EXPIRES)
+        .ok()
+        .and_then(|e| e.parse::<u64>().ok())
+        .map(|exp| now + 60 < exp) // leave a 60s safety margin
+        .unwrap_or(false);
+    if valid {
+        if let Ok(t) = spot_get(SPOTIFY_ACCESS) {
+            return Ok(t);
+        }
     }
+
     let refresh = spot_get(SPOTIFY_REFRESH).map_err(|_| "not connected".to_string())?;
     let client_id = spot_get(SPOTIFY_CLIENT_ID).map_err(|_| "no client id".to_string())?;
     let params = [
@@ -526,43 +547,13 @@ async fn spotify_access_token() -> Result<String, String> {
         .ok_or_else(|| format!("refresh failed: {body}"))?
         .to_string();
     spot_set(SPOTIFY_ACCESS, &access)?;
+    let expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(3600).min(3600);
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() + expires_in)
+        .unwrap_or(0);
+    spot_set(SPOTIFY_EXPIRES, &expires_at.to_string())?;
     Ok(access)
-}
-
-#[derive(serde::Serialize)]
-struct SpotifyDevice {
-    id: String,
-    name: String,
-    is_active: bool,
-    is_restricted: bool,
-}
-
-/// List devices the user can play on (Spotify Connect targets).
-#[tauri::command]
-async fn spotify_devices() -> Result<Vec<SpotifyDevice>, String> {
-    let token = spotify_access_token().await?;
-    let resp = reqwest::Client::new()
-        .get("https://api.spotify.com/v1/me/player/devices")
-        .bearer_auth(&token)
-        .send()
-        .await
-        .map_err(|e| format!("devices request: {e}"))?;
-    let body = resp.text().await.map_err(|e| format!("devices read: {e}"))?;
-    let v: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("devices parse: {e}, body: {body}"))?;
-    Ok(v.get("devices")
-        .and_then(|d| d.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|d| SpotifyDevice {
-                    id: d.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    name: d.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                    is_active: d.get("is_active").and_then(|x| x.as_bool()).unwrap_or(false),
-                    is_restricted: d.get("is_restricted").and_then(|x| x.as_bool()).unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default())
 }
 
 #[derive(serde::Serialize)]
@@ -825,7 +816,6 @@ pub fn run() {
             spotify_connected,
             spotify_begin,
             spotify_capture,
-            spotify_devices,
             spotify_now_playing,
             spotify_play,
             spotify_skip,

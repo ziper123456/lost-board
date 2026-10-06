@@ -177,10 +177,6 @@ async openFolder(path) {
   async spotifyCapture() {
     if (window.__TAURI__) return invoke("spotify_capture");
   },
-  async spotifyDevices() {
-    if (window.__TAURI__) return invoke("spotify_devices");
-    return [];
-  },
   async spotifyNowPlaying() {
     if (window.__TAURI__) return invoke("spotify_now_playing");
     return null;
@@ -814,6 +810,7 @@ async function renderSpotifyBody(c, body) {
   const bgEl = body.querySelector(".spot-bg");
   const titleEl = body.querySelector(".spot-title");
   let playing = false;
+  let lastTitle = null;
   const refresh = async (forceQueue) => {
     let track = null;
     try {
