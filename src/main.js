@@ -556,6 +556,9 @@ function getTranslateValues(id, n) {
 function renderTranslateBody(c, body) {
   const langs = c.data?.langs?.length ? c.data.langs : ["EN", "DE", "ES"];
   const vals = getTranslateValues(c.id, langs.length);
+  // Mark the body so CSS can make the grid fill the tile's full height and the
+  // 3 fields stretch proportionally when the tile is resized.
+  body.classList.add("tr-body");
   body.innerHTML = `
     <div class="tr-grid">
       ${langs

@@ -357,15 +357,27 @@ html, body {
 .news-err { color: var(--red); font-size: 0.75rem; }
 
 /* Translate tile */
-.tr-grid { display: flex; flex-direction: column; gap: 10px; }
-.tr-field { display: flex; flex-direction: column; gap: 4px; }
+.compartment-body.tr-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tr-grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.tr-field { flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
 .tr-head { display: flex; align-items: center; justify-content: space-between; }
 .tr-lang { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; color: var(--muted); }
 .tr-go { padding: 2px 8px; font-size: 0.72rem; }
 .tr-text {
+  flex: 1;
   width: 100%;
-  resize: vertical;
-  min-height: 52px;
+  resize: none;
+  min-height: 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
