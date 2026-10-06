@@ -2101,7 +2101,7 @@ document.getElementById("set-wall").addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Zoom controls (topbar). Scaling ROW_H scales the whole grid, so zoom out to
+// Zoom controls (Settings > Grid). Scaling ROW_H scales the whole grid, so zoom out to
 // see off-screen tiles (e.g. ones added far down) and remove them.
 // ---------------------------------------------------------------------------
 function updateZoomUI() {
