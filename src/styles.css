@@ -90,18 +90,13 @@ html, body {
   position: relative;
   background: var(--bg);
 }
-/* Optional "tool wall" background: a pegboard-like dot grid behind the tiles. */
-body.wall .dashboard {
-  background-image: radial-gradient(var(--border) 1.4px, transparent 1.5px);
-  background-size: 24px 24px;
-  background-position: 0 0;
-}
 /* Scaler sizes the scrollable area to the scaled grid; the grid itself is
    CSS-transform-scaled so tiles/text/buttons all zoom uniformly. */
 .grid-scaler { position: relative; }
 .grid {
   position: relative;
   transform-origin: top left;
+  background-repeat: repeat;
 }
 
 /* Compartment tiles */
@@ -126,6 +121,17 @@ body.wall .dashboard {
 .comp-title-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .tile-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .tile-icon img { width: 16px; height: 16px; object-fit: contain; }
+.tile-icon-mask {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
 .icon-preview {
   display: inline-flex;
   align-items: center;
@@ -135,6 +141,8 @@ body.wall .dashboard {
   color: var(--text);
 }
 .icon-preview img { width: 18px; height: 18px; object-fit: contain; }
+.icon-preview .tile-icon-mask { width: 18px; height: 18px; }
+.icon-color-label { display: inline-flex; align-items: center; gap: 4px; }
 .compartment-header .header-actions {
   display: flex;
   gap: 2px;
@@ -142,8 +150,7 @@ body.wall .dashboard {
   transition: opacity 0.12s ease;
 }
 .compartment:hover .header-actions,
-.compartment:focus-within .header-actions,
-.compartment.collapsed .header-actions {
+.compartment:focus-within .header-actions {
   opacity: 1;
 }
 .compartment-header .header-actions .btn { padding: 2px 6px; font-size: 0.8rem; }

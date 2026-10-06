@@ -65,7 +65,6 @@ function applyAppearance() {
   root.setProperty("--muted", t.muted);
   root.setProperty("--accent", t.accent);
   root.setProperty("--radius", `${state.cornerRadius != null ? state.cornerRadius : 10}px`);
-  document.body.classList.toggle("wall", state.wall === true);
 }
 
 // Set of collapsed tiles currently showing their floating body overlay.
@@ -255,6 +254,7 @@ function tileHeaderSig(c) {
     c: c.collapsed === true,
     col: c.collapsible !== false,
     icon: c.icon ? `${c.icon.type}:${c.icon.value}` : "",
+    ic: c.iconColor || "",
     hc: c.headerColor || "",
     cc: c.contentColor || "",
   });
@@ -267,7 +267,9 @@ function buildHeaderHtml(c) {
   const collapsible = c.collapsible !== false;
   const icon = c.icon
     ? c.icon.type === "file" && c.icon.value
-      ? `<span class="tile-icon"><img src="${escapeHtml(c.icon.value)}" alt="" /></span>`
+      ? c.iconColor
+        ? `<span class="tile-icon"><span class="tile-icon-mask" style="background-color:${escapeHtml(c.iconColor)};-webkit-mask-image:url('${escapeHtml(c.icon.value)}');mask-image:url('${escapeHtml(c.icon.value)}')"></span></span>`
+        : `<span class="tile-icon"><img src="${escapeHtml(c.icon.value)}" alt="" /></span>`
       : c.icon.type === "text" && c.icon.value
         ? `<span class="tile-icon">${escapeHtml(c.icon.value)}</span>`
         : ""
@@ -370,6 +372,13 @@ function render() {
   gridEl.style.transform = `scale(${zoom})`;
   scalerEl.style.width = `${w * zoom}px`;
   scalerEl.style.height = `${h * zoom}px`;
+  // Tool-wall dots sized to the actual grid cell so they line up with tiles.
+  if (state.wall) {
+    gridEl.style.backgroundImage = `radial-gradient(var(--border) 1.6px, transparent 1.7px)`;
+    gridEl.style.backgroundSize = `${cellWidth()}px ${ROW_H}px`;
+  } else {
+    gridEl.style.backgroundImage = "";
+  }
 
   // Drop tiles for compartments that no longer exist.
   for (const [id, rec] of tileEls) {
@@ -1026,9 +1035,15 @@ function appendAppearanceRow(panel, comp) {
     </select>
     <input class="icon-text" type="text" maxlength="3" placeholder="e.g. ★" value="${escapeHtml(comp.icon.type === "text" ? comp.icon.value : "")}" ${comp.icon.type === "text" ? "" : "hidden"} />
     <button class="btn ghost icon-browse" ${comp.icon.type === "file" ? "" : "hidden"}>Browse…</button>
+    <label class="icon-color-label" ${comp.icon.type === "file" ? "" : "hidden"}>SVG color
+      <input class="icon-color" type="color" value="${comp.iconColor || "#e6e6ea"}" />
+    </label>
+    <button class="btn ghost icon-color-reset" ${comp.iconColor ? "" : "hidden"} title="Reset color">✕</button>
     <span class="icon-preview">${
       comp.icon.type === "file" && comp.icon.value
-        ? `<img src="${escapeHtml(comp.icon.value)}" alt="" />`
+        ? comp.iconColor
+          ? `<span class="tile-icon-mask" style="background-color:${escapeHtml(comp.iconColor)};-webkit-mask-image:url('${escapeHtml(comp.icon.value)}');mask-image:url('${escapeHtml(comp.icon.value)}')"></span>`
+          : `<img src="${escapeHtml(comp.icon.value)}" alt="" />`
         : comp.icon.type === "text" && comp.icon.value
           ? escapeHtml(comp.icon.value)
           : ""
@@ -1055,6 +1070,23 @@ function appendAppearanceRow(panel, comp) {
   const textInput = iconRow.querySelector(".icon-text");
   const browseBtn = iconRow.querySelector(".icon-browse");
   const preview = iconRow.querySelector(".icon-preview");
+  const iconColorLabel = iconRow.querySelector(".icon-color-label");
+  const iconColorInput = iconRow.querySelector(".icon-color");
+  const iconColorReset = iconRow.querySelector(".icon-color-reset");
+
+  const paintPreview = () => {
+    if (comp.icon.type === "file" && comp.icon.value) {
+      preview.innerHTML = comp.iconColor
+        ? `<span class="tile-icon-mask" style="background-color:${escapeHtml(comp.iconColor)};-webkit-mask-image:url('${escapeHtml(comp.icon.value)}');mask-image:url('${escapeHtml(comp.icon.value)}')"></span>`
+        : `<img src="${escapeHtml(comp.icon.value)}" alt="" />`;
+    } else if (comp.icon.type === "text" && comp.icon.value) {
+      preview.textContent = comp.icon.value;
+    } else {
+      preview.innerHTML = "";
+    }
+    iconColorLabel.hidden = comp.icon.type !== "file";
+    iconColorReset.hidden = !comp.iconColor;
+  };
 
   typeSel.addEventListener("change", (e) => {
     comp.icon.type = e.target.value;
@@ -1062,12 +1094,7 @@ function appendAppearanceRow(panel, comp) {
     textInput.hidden = comp.icon.type !== "text";
     browseBtn.hidden = comp.icon.type !== "file";
     if (comp.icon.type === "text" && !comp.icon.value) comp.icon.value = "★";
-    preview.innerHTML =
-      comp.icon.type === "file" && comp.icon.value
-        ? `<img src="${escapeHtml(comp.icon.value)}" alt="" />`
-        : comp.icon.type === "text" && comp.icon.value
-          ? escapeHtml(comp.icon.value)
-          : "";
+    paintPreview();
     commit();
     renderTabPanel(comp);
   });
@@ -1081,14 +1108,25 @@ function appendAppearanceRow(panel, comp) {
     if (!p) return;
     try {
       comp.icon.value = await native.loadTileIcon(p);
-      preview.innerHTML = `<img src="${escapeHtml(comp.icon.value)}" alt="" />`;
+      paintPreview();
       commit();
       renderTabPanel(comp);
     } catch (err) {
       alert(`Could not load icon: ${err.message || err}`);
     }
   });
-  colorRow.querySelector(".col-header").addEventListener("input", (e) => {
+  iconColorInput.addEventListener("change", (e) => {
+    comp.iconColor = e.target.value;
+    paintPreview();
+    commit();
+  });
+  iconColorReset.addEventListener("click", () => {
+    comp.iconColor = "";
+    paintPreview();
+    commit();
+    renderTabPanel(comp);
+  });
+  colorRow.querySelector(".col-header").addEventListener("change", (e) => {
     comp.headerColor = e.target.value;
     commit();
   });
@@ -1097,7 +1135,7 @@ function appendAppearanceRow(panel, comp) {
     commit();
     renderTabPanel(comp);
   });
-  colorRow.querySelector(".col-content").addEventListener("input", (e) => {
+  colorRow.querySelector(".col-content").addEventListener("change", (e) => {
     comp.contentColor = e.target.value;
     commit();
   });
@@ -1913,6 +1951,7 @@ document.getElementById("set-wall").addEventListener("change", (e) => {
   state.wall = e.target.checked;
   saveState();
   applyAppearance();
+  render();
 });
 
 // ---------------------------------------------------------------------------
