@@ -22,15 +22,25 @@ html, body {
   overflow: hidden;
 }
 
-/* Top bar */
-#topbar {
+/* Floating settings button (bottom-left). */
+.settings-fab {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 120;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  justify-content: center;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
+.settings-fab:hover { color: var(--accent); background: var(--border); }
 .logo { font-weight: 600; letter-spacing: 0.5px; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
 .zoom-controls {
@@ -60,7 +70,7 @@ html, body {
 /* Right-side preview panel: fixed, above everything, does not reflow the grid */
 .preview {
   position: fixed;
-  top: 53px;
+  top: 0;
   right: 0;
   bottom: 0;
   width: 320px;
@@ -85,7 +95,7 @@ html, body {
 
 /* Dashboard grid */
 .dashboard {
-  height: calc(100% - 52px);
+  height: 100%;
   overflow: auto;
   position: relative;
   background: var(--bg);
@@ -118,7 +128,19 @@ html, body {
   font-weight: 600;
   font-size: 0.9rem;
 }
-.comp-title-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.comp-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.comp-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tile-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .tile-icon img { width: 16px; height: 16px; object-fit: contain; }
 .tile-icon-mask {
@@ -146,6 +168,7 @@ html, body {
 .compartment-header .header-actions {
   display: flex;
   gap: 2px;
+  flex: 0 0 auto;
   opacity: 0;
   transition: opacity 0.12s ease;
 }
@@ -162,7 +185,8 @@ html, body {
   color: var(--text);
   border-radius: 4px;
   padding: 2px 6px;
-  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); }
 .compartment.drag-over,

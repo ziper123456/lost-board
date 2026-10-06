@@ -911,6 +911,7 @@ function openPreview(id) {
   previewSig = null;
   document.getElementById("preview-title").textContent = comp.title;
   previewEl.classList.remove("hidden");
+  syncPreviewCheckbox();
   renderPreview();
 }
 function closePreview() {
@@ -921,10 +922,6 @@ function closePreview() {
   // Only clear timers bound to the preview body — not the dashboard's live
   // tiles (System stats, Weather clock), which must keep updating.
   clearBodyTimers(previewBody);
-}
-function togglePreview() {
-  if (previewEl.classList.contains("hidden")) openPreview(previewTileId || state.compartments[0]?.id);
-  else closePreview();
 }
 let previewSig = null;
 function renderPreview() {
@@ -943,8 +940,18 @@ function renderPreview() {
   renderCompartmentBody(comp, previewBody);
 }
 
-document.getElementById("btn-preview").addEventListener("click", togglePreview);
-document.getElementById("preview-close").addEventListener("click", closePreview);
+const setPreviewCheckbox = document.getElementById("set-preview");
+function syncPreviewCheckbox() {
+  if (setPreviewCheckbox) setPreviewCheckbox.checked = !previewEl.classList.contains("hidden");
+}
+document.getElementById("set-preview").addEventListener("change", (e) => {
+  if (e.target.checked) openPreview(previewTileId || state.compartments[0]?.id);
+  else closePreview();
+});
+document.getElementById("preview-close").addEventListener("click", () => {
+  closePreview();
+  syncPreviewCheckbox();
+});
 
 // Preview panel width control.
 const previewWidthEl = document.getElementById("preview-width");
@@ -965,6 +972,21 @@ const settingsPanel = document.querySelector(".settings-panel");
 
 document.getElementById("btn-settings").addEventListener("click", () => settingsEl.classList.remove("hidden"));
 document.getElementById("btn-settings-close").addEventListener("click", () => settingsEl.classList.add("hidden"));
+
+// Fullscreen toggle (button + F11). Uses the window API when in Tauri.
+async function toggleFullscreen() {
+  if (!window.__TAURI__) return;
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const fs = await win.isFullscreen();
+  await win.setFullscreen(!fs);
+}
+document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F11") {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+});
 
 // Drag the settings window by its header so it can be moved aside to see the
 // dashboard behind it. The panel is centered via transform; we switch to
@@ -2079,7 +2101,7 @@ document.getElementById("set-wall").addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Zoom controls (topbar). Scaling ROW_H scales the whole grid, so zoom out to
+// Zoom controls (Settings > Grid). Scaling ROW_H scales the whole grid, so zoom out to
 // see off-screen tiles (e.g. ones added far down) and remove them.
 // ---------------------------------------------------------------------------
 function updateZoomUI() {
