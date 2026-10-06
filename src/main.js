@@ -966,6 +966,21 @@ const settingsPanel = document.querySelector(".settings-panel");
 document.getElementById("btn-settings").addEventListener("click", () => settingsEl.classList.remove("hidden"));
 document.getElementById("btn-settings-close").addEventListener("click", () => settingsEl.classList.add("hidden"));
 
+// Fullscreen toggle (button + F11). Uses the window API when in Tauri.
+async function toggleFullscreen() {
+  if (!window.__TAURI__) return;
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const fs = await win.isFullscreen();
+  await win.setFullscreen(!fs);
+}
+document.getElementById("btn-fullscreen").addEventListener("click", toggleFullscreen);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "F11") {
+    e.preventDefault();
+    toggleFullscreen();
+  }
+});
+
 // Drag the settings window by its header so it can be moved aside to see the
 // dashboard behind it. The panel is centered via transform; we switch to
 // explicit left/top once the user starts dragging so it stays where they drop it.
