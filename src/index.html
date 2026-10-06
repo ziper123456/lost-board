@@ -82,6 +82,19 @@
           <div class="tab-panel active" data-panel="grid">
             <p>Drag compartments to rearrange. Resize via the bottom-right handle. Layout is saved automatically.</p>
             <label>Columns <input id="set-cols" type="number" min="4" max="24" value="12" /></label>
+            <label>Theme
+              <select id="set-theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="midnight">Midnight</option>
+                <option value="emerald">Emerald</option>
+                <option value="amber">Amber</option>
+              </select>
+            </label>
+            <label>Corner radius <input id="set-radius" type="number" min="0" max="24" value="10" /></label>
+            <label>Tool-wall background
+              <input id="set-wall" type="checkbox" />
+            </label>
             <div class="add-tile">
               <h3>Add a tile</h3>
               <div class="item-row">

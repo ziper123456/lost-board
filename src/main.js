@@ -33,6 +33,9 @@ const DEFAULT_STATE = {
   columns: 12,
   zoom: 1,
   previewWidth: 320,
+  theme: "dark",
+  cornerRadius: 10,
+  wall: false,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -40,6 +43,29 @@ const DEFAULT_STATE = {
     { id: "lch", kind: "launcher", title: "Folders & Solutions", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
+
+// Built-in themes: CSS variable palettes applied to :root.
+const THEMES = {
+  dark: { bg: "#101014", panel: "#1a1a20", panel2: "#23232b", border: "#2c2c36", text: "#e6e6ea", muted: "#9a9aa6", accent: "#7c3aed" },
+  light: { bg: "#f4f4f7", panel: "#ffffff", panel2: "#eceef2", border: "#d7d9e0", text: "#1c1c22", muted: "#6b6b76", accent: "#7c3aed" },
+  midnight: { bg: "#0a0e14", panel: "#111722", panel2: "#18202e", border: "#243044", text: "#dbe4f0", muted: "#7d8ca3", accent: "#38bdf8" },
+  emerald: { bg: "#0b1512", panel: "#0f1c18", panel2: "#15251f", border: "#1f3a30", text: "#e0f0e8", muted: "#7fa593", accent: "#10b981" },
+  amber: { bg: "#16120a", panel: "#1f180d", panel2: "#2a2113", border: "#3a2f1c", text: "#f2ead9", muted: "#a89570", accent: "#f59e0b" },
+};
+
+// Apply theme palette, corner radius and wall pattern to the document.
+function applyAppearance() {
+  const t = THEMES[state.theme] || THEMES.dark;
+  const root = document.documentElement.style;
+  root.setProperty("--bg", t.bg);
+  root.setProperty("--panel", t.panel);
+  root.setProperty("--panel-2", t.panel2);
+  root.setProperty("--border", t.border);
+  root.setProperty("--text", t.text);
+  root.setProperty("--muted", t.muted);
+  root.setProperty("--accent", t.accent);
+  root.setProperty("--radius", `${state.cornerRadius != null ? state.cornerRadius : 10}px`);
+}
 
 // Set of collapsed tiles currently showing their floating body overlay.
 // Per-tile and transient (not persisted), so opening one doesn't affect others.
@@ -120,6 +146,14 @@ async openFolder(path) {
   async deeplTranslate(text, sourceLang, targetLang) {
     if (window.__TAURI__) return invoke("deepl_translate", { text, sourceLang, targetLang });
     return "";
+  },
+  async loadTileIcon(path) {
+    if (window.__TAURI__) return invoke("load_tile_icon", { path });
+    return "";
+  },
+  async pickIcon() {
+    if (window.__TAURI__) return invoke("pick_icon");
+    return null;
   },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
@@ -215,7 +249,15 @@ function resolveCollisions(anchor) {
 // tearing down every tile (and re-fetching System stats / news / weather) on
 // unrelated actions like editing a bookmark.
 function tileHeaderSig(c) {
-  return JSON.stringify({ t: c.title, c: c.collapsed === true, col: c.collapsible !== false });
+  return JSON.stringify({
+    t: c.title,
+    c: c.collapsed === true,
+    col: c.collapsible !== false,
+    icon: c.icon ? `${c.icon.type}:${c.icon.value}` : "",
+    ic: c.iconColor || "",
+    hc: c.headerColor || "",
+    cc: c.contentColor || "",
+  });
 }
 function tileBodySig(c) {
   return JSON.stringify({ k: c.kind, d: c.data || {} });
@@ -223,9 +265,18 @@ function tileBodySig(c) {
 function buildHeaderHtml(c) {
   const collapsed = c.collapsed === true;
   const collapsible = c.collapsible !== false;
+  const icon = c.icon
+    ? c.icon.type === "file" && c.icon.value
+      ? c.iconColor
+        ? `<span class="tile-icon"><span class="tile-icon-mask" style="background-color:${escapeHtml(c.iconColor)};-webkit-mask-image:url('${escapeHtml(c.icon.value)}');mask-image:url('${escapeHtml(c.icon.value)}')"></span></span>`
+        : `<span class="tile-icon"><img src="${escapeHtml(c.icon.value)}" alt="" /></span>`
+      : c.icon.type === "text" && c.icon.value
+        ? `<span class="tile-icon">${escapeHtml(c.icon.value)}</span>`
+        : ""
+    : "";
   return `
     <div class="compartment-header">
-      <span class="comp-title">${escapeHtml(c.title)}</span>
+      <span class="comp-title-wrap">${icon}<span class="comp-title">${escapeHtml(c.title)}</span></span>
       <div class="header-actions">
         ${collapsible ? `<button class="btn ghost icon-btn collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${ICON.collapse(collapsed)}</button>` : ""}
         <button class="btn ghost icon-btn preview-tile" data-id="${c.id}" title="Preview">${ICON.preview}</button>
@@ -321,6 +372,13 @@ function render() {
   gridEl.style.transform = `scale(${zoom})`;
   scalerEl.style.width = `${w * zoom}px`;
   scalerEl.style.height = `${h * zoom}px`;
+  // Tool-wall dots sized to the actual grid cell so they line up with tiles.
+  if (state.wall) {
+    gridEl.style.backgroundImage = `radial-gradient(var(--border) 1.6px, transparent 1.7px)`;
+    gridEl.style.backgroundSize = `${cellWidth()}px ${ROW_H}px`;
+  } else {
+    gridEl.style.backgroundImage = "";
+  }
 
   // Drop tiles for compartments that no longer exist.
   for (const [id, rec] of tileEls) {
@@ -348,6 +406,9 @@ function render() {
     applyBox(rec.el, c);
     rec.el.classList.toggle("collapsed", collapsed);
     if (collapsed) rec.el.style.height = `${ROW_H - GUTTER}px`;
+    // Per-tile colors (CSS variables consumed by the header/body).
+    rec.el.style.setProperty("--tile-header", c.headerColor || "transparent");
+    rec.el.style.setProperty("--tile-content", c.contentColor || "transparent");
 
     // Header — rebuild only when title / collapse / collapsible changed.
     const hs = tileHeaderSig(c);
@@ -958,6 +1019,133 @@ function appendCollapsibleRow(panel, comp) {
   panel.appendChild(row);
 }
 
+// Per-tile appearance controls shown in every settings tab: a header icon
+// (text character or image file), and header/content background colors.
+function appendAppearanceRow(panel, comp) {
+  comp.icon = comp.icon || { type: "", value: "" };
+
+  const iconRow = document.createElement("div");
+  iconRow.className = "item-row";
+  iconRow.innerHTML = `
+    <label>Icon</label>
+    <select class="icon-type">
+      <option value="" ${!comp.icon.type ? "selected" : ""}>None</option>
+      <option value="text" ${comp.icon.type === "text" ? "selected" : ""}>Text</option>
+      <option value="file" ${comp.icon.type === "file" ? "selected" : ""}>Image</option>
+    </select>
+    <input class="icon-text" type="text" maxlength="3" placeholder="e.g. ★" value="${escapeHtml(comp.icon.type === "text" ? comp.icon.value : "")}" ${comp.icon.type === "text" ? "" : "hidden"} />
+    <button class="btn ghost icon-browse" ${comp.icon.type === "file" ? "" : "hidden"}>Browse…</button>
+    <label class="icon-color-label" ${comp.icon.type === "file" ? "" : "hidden"}>SVG color
+      <input class="icon-color" type="color" value="${comp.iconColor || "#e6e6ea"}" />
+    </label>
+    <button class="btn ghost icon-color-reset" ${comp.iconColor ? "" : "hidden"} title="Reset color">✕</button>
+    <span class="icon-preview">${
+      comp.icon.type === "file" && comp.icon.value
+        ? comp.iconColor
+          ? `<span class="tile-icon-mask" style="background-color:${escapeHtml(comp.iconColor)};-webkit-mask-image:url('${escapeHtml(comp.icon.value)}');mask-image:url('${escapeHtml(comp.icon.value)}')"></span>`
+          : `<img src="${escapeHtml(comp.icon.value)}" alt="" />`
+        : comp.icon.type === "text" && comp.icon.value
+          ? escapeHtml(comp.icon.value)
+          : ""
+    }</span>`;
+  panel.appendChild(iconRow);
+
+  const colorRow = document.createElement("div");
+  colorRow.className = "item-row";
+  colorRow.innerHTML = `
+    <label>Header color</label>
+    <input class="col-header" type="color" value="${comp.headerColor || "#23232b"}" />
+    <button class="btn ghost col-header-reset" title="Reset">✕</button>
+    <label>Content color</label>
+    <input class="col-content" type="color" value="${comp.contentColor || "#1a1a20"}" />
+    <button class="btn ghost col-content-reset" title="Reset">✕</button>`;
+  panel.appendChild(colorRow);
+
+  const commit = () => {
+    saveState();
+    render();
+  };
+
+  const typeSel = iconRow.querySelector(".icon-type");
+  const textInput = iconRow.querySelector(".icon-text");
+  const browseBtn = iconRow.querySelector(".icon-browse");
+  const preview = iconRow.querySelector(".icon-preview");
+  const iconColorLabel = iconRow.querySelector(".icon-color-label");
+  const iconColorInput = iconRow.querySelector(".icon-color");
+  const iconColorReset = iconRow.querySelector(".icon-color-reset");
+
+  const paintPreview = () => {
+    if (comp.icon.type === "file" && comp.icon.value) {
+      preview.innerHTML = comp.iconColor
+        ? `<span class="tile-icon-mask" style="background-color:${escapeHtml(comp.iconColor)};-webkit-mask-image:url('${escapeHtml(comp.icon.value)}');mask-image:url('${escapeHtml(comp.icon.value)}')"></span>`
+        : `<img src="${escapeHtml(comp.icon.value)}" alt="" />`;
+    } else if (comp.icon.type === "text" && comp.icon.value) {
+      preview.textContent = comp.icon.value;
+    } else {
+      preview.innerHTML = "";
+    }
+    iconColorLabel.hidden = comp.icon.type !== "file";
+    iconColorReset.hidden = !comp.iconColor;
+  };
+
+  typeSel.addEventListener("change", (e) => {
+    comp.icon.type = e.target.value;
+    if (comp.icon.type !== "text") comp.icon.value = comp.icon.type === "file" ? comp.icon.value : "";
+    textInput.hidden = comp.icon.type !== "text";
+    browseBtn.hidden = comp.icon.type !== "file";
+    if (comp.icon.type === "text" && !comp.icon.value) comp.icon.value = "★";
+    paintPreview();
+    commit();
+    renderTabPanel(comp);
+  });
+  textInput.addEventListener("input", (e) => {
+    comp.icon.value = e.target.value;
+    preview.textContent = e.target.value;
+    commit();
+  });
+  browseBtn.addEventListener("click", async () => {
+    const p = await native.pickIcon();
+    if (!p) return;
+    try {
+      comp.icon.value = await native.loadTileIcon(p);
+      paintPreview();
+      commit();
+      renderTabPanel(comp);
+    } catch (err) {
+      alert(`Could not load icon: ${err.message || err}`);
+    }
+  });
+  iconColorInput.addEventListener("change", (e) => {
+    comp.iconColor = e.target.value;
+    paintPreview();
+    commit();
+  });
+  iconColorReset.addEventListener("click", () => {
+    comp.iconColor = "";
+    paintPreview();
+    commit();
+    renderTabPanel(comp);
+  });
+  colorRow.querySelector(".col-header").addEventListener("change", (e) => {
+    comp.headerColor = e.target.value;
+    commit();
+  });
+  colorRow.querySelector(".col-header-reset").addEventListener("click", () => {
+    comp.headerColor = "";
+    commit();
+    renderTabPanel(comp);
+  });
+  colorRow.querySelector(".col-content").addEventListener("change", (e) => {
+    comp.contentColor = e.target.value;
+    commit();
+  });
+  colorRow.querySelector(".col-content-reset").addEventListener("click", () => {
+    comp.contentColor = "";
+    commit();
+    renderTabPanel(comp);
+  });
+}
+
 function renderTabPanel(comp) {
   if (comp.kind === "launcher") renderFoldersSettings();
   if (comp.kind === "bookmarks") renderBookmarksSettings();
@@ -1021,6 +1209,7 @@ function renderFoldersSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, launcher);
+  appendAppearanceRow(panel, launcher);
 
   items.forEach((it, i) => {
     const row = document.createElement("div");
@@ -1144,6 +1333,7 @@ function renderBookmarksSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   urls.forEach((u, i) => {
     const row = document.createElement("div");
@@ -1247,6 +1437,7 @@ function renderAzureSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   const orgRow = document.createElement("div");
   orgRow.className = "item-row";
@@ -1371,6 +1562,7 @@ function renderWeatherSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   const nameRow = document.createElement("div");
   nameRow.className = "item-row";
@@ -1476,6 +1668,7 @@ function renderNewsSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   feeds.forEach((f, i) => {
     const row = document.createElement("div");
@@ -1569,6 +1762,7 @@ function renderSystemSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   panel.querySelector("#system-select").addEventListener("change", (e) => {
     selectedSystemId = e.target.value;
@@ -1644,6 +1838,7 @@ async function renderTranslateSettings() {
     </select>`;
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
 
   const langsRow = document.createElement("div");
   langsRow.className = "item-row";
@@ -1739,6 +1934,23 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
 document.getElementById("set-cols").addEventListener("change", (e) => {
   state.columns = Math.min(24, Math.max(4, Number(e.target.value) || 12));
   saveState();
+  render();
+});
+
+document.getElementById("set-theme").addEventListener("change", (e) => {
+  state.theme = THEMES[e.target.value] ? e.target.value : "dark";
+  saveState();
+  applyAppearance();
+});
+document.getElementById("set-radius").addEventListener("change", (e) => {
+  state.cornerRadius = Math.min(24, Math.max(0, Number(e.target.value) || 0));
+  saveState();
+  applyAppearance();
+});
+document.getElementById("set-wall").addEventListener("change", (e) => {
+  state.wall = e.target.checked;
+  saveState();
+  applyAppearance();
   render();
 });
 
@@ -1898,6 +2110,11 @@ async function initialize() {
   }
   zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
   updateZoomUI();
+  applyAppearance();
+  // Sync the Grid-tab appearance controls with the loaded state.
+  document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
+  document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
+  document.getElementById("set-wall").checked = state.wall === true;
   if (state.previewWidth) {
     previewEl.style.width = `${state.previewWidth}px`;
     previewWidthEl.value = state.previewWidth;

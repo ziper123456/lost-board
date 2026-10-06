@@ -88,6 +88,7 @@ html, body {
   height: calc(100% - 52px);
   overflow: auto;
   position: relative;
+  background: var(--bg);
 }
 /* Scaler sizes the scrollable area to the scaled grid; the grid itself is
    CSS-transform-scaled so tiles/text/buttons all zoom uniformly. */
@@ -95,13 +96,14 @@ html, body {
 .grid {
   position: relative;
   transform-origin: top left;
+  background-repeat: repeat;
 }
 
 /* Compartment tiles */
 .compartment {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius, 10px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -111,12 +113,46 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: var(--panel-2);
+  background: var(--tile-header, var(--panel-2));
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   font-size: 0.9rem;
 }
-.compartment-header .header-actions { display: flex; gap: 4px; }
+.comp-title-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.tile-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.tile-icon img { width: 16px; height: 16px; object-fit: contain; }
+.tile-icon-mask {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.icon-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  color: var(--text);
+}
+.icon-preview img { width: 18px; height: 18px; object-fit: contain; }
+.icon-preview .tile-icon-mask { width: 18px; height: 18px; }
+.icon-color-label { display: inline-flex; align-items: center; gap: 4px; }
+.compartment-header .header-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.compartment:hover .header-actions,
+.compartment:focus-within .header-actions {
+  opacity: 1;
+}
 .compartment-header .header-actions .btn { padding: 2px 6px; font-size: 0.8rem; }
 .comp-title-input {
   font: inherit;
@@ -128,7 +164,7 @@ html, body {
   padding: 2px 6px;
   width: 100%;
 }
-.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; }
+.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); }
 .compartment.drag-over,
 .compartment-overlay.drag-over {
   border-color: var(--accent);
@@ -140,7 +176,7 @@ html, body {
 .compartment.collapsed .compartment-header {
   height: 100%;
   border-bottom: none;
-  border-radius: 10px;
+  border-radius: var(--radius, 10px);
 }
 
 /* Floating overlay for an open collapsed tile — can overlap other tiles */
@@ -148,7 +184,7 @@ html, body {
   position: absolute;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 0 0 10px 10px;
+  border-radius: 0 0 var(--radius, 10px) var(--radius, 10px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
   overflow: hidden;
   display: flex;
