@@ -128,7 +128,19 @@ html, body {
   font-weight: 600;
   font-size: 0.9rem;
 }
-.comp-title-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.comp-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.comp-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tile-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .tile-icon img { width: 16px; height: 16px; object-fit: contain; }
 .tile-icon-mask {
@@ -156,6 +168,7 @@ html, body {
 .compartment-header .header-actions {
   display: flex;
   gap: 2px;
+  flex: 0 0 auto;
   opacity: 0;
   transition: opacity 0.12s ease;
 }
@@ -172,7 +185,8 @@ html, body {
   color: var(--text);
   border-radius: 4px;
   padding: 2px 6px;
-  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); }
 .compartment.drag-over,
