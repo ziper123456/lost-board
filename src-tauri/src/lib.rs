@@ -631,15 +631,17 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
 async fn spotify_play(play: bool) -> Result<(), String> {
     let token = spotify_access_token().await?;
     let url = if play { "https://api.spotify.com/v1/me/player/play" } else { "https://api.spotify.com/v1/me/player/pause" };
-    let method = if play { reqwest::Method::PUT } else { reqwest::Method::PUT };
     let resp = reqwest::Client::new()
-        .request(method, url)
+        .put(url)
         .bearer_auth(&token)
+        .header("Content-Length", "0") // 411 without it (body-less PUT/POST)
         .send()
         .await
         .map_err(|e| format!("play request: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("Spotify HTTP {}", resp.status()));
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
     }
     Ok(())
 }
@@ -652,11 +654,14 @@ async fn spotify_skip(next: bool) -> Result<(), String> {
     let resp = reqwest::Client::new()
         .post(url)
         .bearer_auth(&token)
+        .header("Content-Length", "0")
         .send()
         .await
         .map_err(|e| format!("skip request: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("Spotify HTTP {}", resp.status()));
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
     }
     Ok(())
 }
@@ -670,11 +675,14 @@ async fn spotify_volume(percent: u8) -> Result<(), String> {
     let resp = reqwest::Client::new()
         .put(&url)
         .bearer_auth(&token)
+        .header("Content-Length", "0")
         .send()
         .await
         .map_err(|e| format!("volume request: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("Spotify HTTP {}", resp.status()));
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
     }
     Ok(())
 }

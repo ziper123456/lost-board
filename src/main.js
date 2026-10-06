@@ -782,7 +782,33 @@ async function renderSpotifyBody(c, body) {
     body.innerHTML = `<div class="muted">Spotify not connected — connect in Settings.</div>`;
     return;
   }
-  const paint = async () => {
+  // Build the stable layout once; then refresh now-playing + progress in place
+  // so the queue isn't re-fetched and sliders aren't rebuilt every poll tick.
+  body.innerHTML = `
+    <div class="spot-track">
+      <span class="spot-art"></span>
+      <div class="spot-meta">
+        <div class="spot-title"></div>
+        <div class="spot-artist"></div>
+        <div class="spot-album"></div>
+        <div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="spot-controls">
+      <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
+      <button class="btn ghost icon-btn spot-play" title="Play/Pause">${PLAY_ICON}</button>
+      <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
+    </div>
+    <div class="spot-volume">
+      <span class="spot-vol-label">Vol</span>
+      <input type="range" class="spot-vol" min="0" max="100" value="50" />
+    </div>
+    <div class="spot-queue"></div>
+  `;
+
+  let lastTitle = null;
+  let playing = false;
+  const refresh = async (forceQueue) => {
     let track = null;
     try {
       track = await native.spotifyNowPlaying();
@@ -790,68 +816,62 @@ async function renderSpotifyBody(c, body) {
       track = null;
     }
     if (!body.isConnected) return;
-    if (!track) {
-      body.innerHTML = `<div class="muted">Nothing playing.</div>`;
+    if (!track || !track.title) {
+      body.querySelector(".spot-title").textContent = "Nothing playing";
+      body.querySelector(".spot-artist").textContent = "";
+      body.querySelector(".spot-album").textContent = "";
       return;
     }
-    body.innerHTML = `
-      <div class="spot-track">
-        ${track.art ? `<img class="spot-art" src="${escapeHtml(track.art)}" alt="" />` : ""}
-        <div class="spot-meta">
-          <div class="spot-title">${escapeHtml(track.title)}</div>
-          <div class="spot-artist">${escapeHtml(track.artist)}</div>
-          <div class="spot-album">${escapeHtml(track.album)}</div>
-          <div class="spot-progress"><div class="spot-fill" style="width:${track.duration_ms ? (track.progress_ms / track.duration_ms) * 100 : 0}%"></div></div>
-        </div>
-      </div>
-      <div class="spot-controls">
-        <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
-        <button class="btn ghost icon-btn spot-play" title="Play/Pause">${track.playing ? PAUSE_ICON : PLAY_ICON}</button>
-        <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
-      </div>
-      <div class="spot-volume">
-        <span class="spot-vol-label">Vol</span>
-        <input type="range" class="spot-vol" min="0" max="100" value="50" />
-      </div>
-      <div class="spot-queue"></div>
-    `;
-
-    body.querySelector(".spot-play").addEventListener("click", async () => {
-      try {
-        await native.spotifyPlay(!track.playing);
-        await paint();
-      } catch (e) {
-        alert(`Spotify: ${e.message || e}`);
-      }
-    });
-    body.querySelector(".spot-next").addEventListener("click", async () => {
-      try {
-        await native.spotifySkip(true);
-        await paint();
-      } catch (e) {
-        alert(`Spotify: ${e.message || e}`);
-      }
-    });
-    body.querySelector(".spot-prev").addEventListener("click", async () => {
-      try {
-        await native.spotifySkip(false);
-        await paint();
-      } catch (e) {
-        alert(`Spotify: ${e.message || e}`);
-      }
-    });
-    body.querySelector(".spot-vol").addEventListener("change", async (e) => {
-      try {
-        await native.spotifyVolume(Number(e.target.value));
-      } catch (err) {
-        alert(`Spotify: ${err.message || err}`);
-      }
-    });
-    loadSpotifyQueue(body);
+    body.querySelector(".spot-art").innerHTML = track.art ? `<img src="${escapeHtml(track.art)}" alt="" />` : "";
+    body.querySelector(".spot-title").textContent = track.title;
+    body.querySelector(".spot-artist").textContent = track.artist;
+    body.querySelector(".spot-album").textContent = track.album;
+    body.querySelector(".spot-fill").style.width = track.duration_ms ? `${(track.progress_ms / track.duration_ms) * 100}%` : "0%";
+    playing = track.playing;
+    body.querySelector(".spot-play").innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+    // Re-fetch the queue only when the track (or explicit request) changed.
+    if (forceQueue || track.title !== lastTitle) {
+      lastTitle = track.title;
+      await loadSpotifyQueue(body);
+    }
   };
-  await paint();
-  // Poll now-playing every 3s so the tile stays in sync.
-  const t = setInterval(paint, 3000);
+
+  body.querySelector(".spot-play").addEventListener("click", async () => {
+    try {
+      await native.spotifyPlay(!playing);
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-next").addEventListener("click", async () => {
+    try {
+      await native.spotifySkip(true);
+      lastTitle = null; // track will change -> force queue refresh
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-prev").addEventListener("click", async () => {
+    try {
+      await native.spotifySkip(false);
+      lastTitle = null;
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-vol").addEventListener("change", async (e) => {
+    try {
+      await native.spotifyVolume(Number(e.target.value));
+    } catch (err) {
+      alert(`Spotify: ${err.message || err}`);
+    }
+  });
+
+  await refresh(true);
+  const t = setInterval(() => refresh(false), 3000);
   addTimer(body, t);
 }
 
@@ -869,7 +889,7 @@ async function loadSpotifyQueue(body) {
     return;
   }
   box.innerHTML = `<div class="spot-queue-title">Up next</div>` + queue
-    .slice(0, 6)
+    .slice(0, 20)
     .map((q) => `<div class="spot-queue-item" title="${escapeHtml(q.title)}">${escapeHtml(q.title)} <span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
     .join("");
 }
