@@ -107,6 +107,20 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("cache_favicon", { host });
     return "";
   },
+  async setDeeplKey(key) {
+    if (window.__TAURI__) return invoke("set_deepl_key", { key });
+  },
+  async deeplKeyStatus() {
+    if (window.__TAURI__) return invoke("deepl_key_status");
+    return false;
+  },
+  async clearDeeplKey() {
+    if (window.__TAURI__) return invoke("clear_deepl_key");
+  },
+  async deeplTranslate(text, sourceLang, targetLang) {
+    if (window.__TAURI__) return invoke("deepl_translate", { text, sourceLang, targetLang });
+    return "";
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -517,8 +531,104 @@ async function renderCompartmentBody(c, body) {
     }
     body.innerHTML = `<div class="muted">Loading news…</div>`;
     renderNewsFeeds(c, body, feeds);
+  } else if (c.kind === "translate") {
+    renderTranslateBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Translate compartment. N language fields (default EN/DE/ES); typing/pasting
+// into one and clicking its Translate button fills the other fields via DeepL.
+// Field values are transient (not persisted), keyed by compartment id.
+// ---------------------------------------------------------------------------
+const translateValues = new Map();
+function getTranslateValues(id, n) {
+  let v = translateValues.get(id);
+  if (!Array.isArray(v) || v.length !== n) {
+    v = new Array(n).fill("");
+    translateValues.set(id, v);
+  }
+  return v;
+}
+
+function renderTranslateBody(c, body) {
+  const langs = c.data?.langs?.length ? c.data.langs : ["EN", "DE", "ES"];
+  const vals = getTranslateValues(c.id, langs.length);
+  // Mark the body so CSS can make the grid fill the tile's full height and the
+  // 3 fields stretch proportionally when the tile is resized.
+  body.classList.add("tr-body");
+  body.innerHTML = `
+    <div class="tr-grid">
+      ${langs
+        .map(
+          (lang, i) => `
+        <div class="tr-field">
+          <div class="tr-head">
+            <span class="tr-lang">${escapeHtml(lang)}</span>
+            <button class="btn ghost tr-go" data-i="${i}">Translate</button>
+          </div>
+          <textarea class="tr-text" data-i="${i}" rows="3" placeholder="Type or paste ${escapeHtml(lang)}…">${escapeHtml(vals[i] || "")}</textarea>
+        </div>`
+        )
+        .join("")}
+    </div>`;
+  body.querySelectorAll(".tr-text").forEach((ta) =>
+    ta.addEventListener("input", (e) => {
+      vals[Number(e.target.dataset.i)] = e.target.value;
+    })
+  );
+  body.querySelectorAll(".tr-go").forEach((btn) =>
+    btn.addEventListener("click", () => translateFrom(c, body, Number(btn.dataset.i)))
+  );
+}
+
+async function translateFrom(c, body, i) {
+  const langs = c.data?.langs?.length ? c.data.langs : ["EN", "DE", "ES"];
+  const vals = getTranslateValues(c.id, langs.length);
+  const text = (vals[i] || "").trim();
+  if (!text) return;
+  const source = langs[i];
+  const targets = langs.map((_, j) => j).filter((j) => j !== i);
+  const fieldAt = (j) => body.querySelector(`.tr-text[data-i="${j}"]`);
+  const btn = body.querySelector(`.tr-go[data-i="${i}"]`);
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "…";
+  }
+  targets.forEach((j) => {
+    const ta = fieldAt(j);
+    if (ta) ta.classList.add("tr-loading");
+  });
+  try {
+    const results = await Promise.all(targets.map((j) => native.deeplTranslate(text, source, langs[j])));
+    if (!body.isConnected) return;
+    targets.forEach((j, k) => {
+      vals[j] = results[k];
+      const ta = fieldAt(j);
+      if (ta) {
+        ta.value = results[k];
+        ta.classList.remove("tr-loading");
+      }
+    });
+  } catch (e) {
+    if (body.isConnected) {
+      targets.forEach((j) => {
+        const ta = fieldAt(j);
+        if (ta) {
+          ta.value = `⚠ ${e.message || e}`;
+          ta.classList.remove("tr-loading");
+          ta.classList.add("tr-err");
+        }
+      });
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Translate";
+    }
   }
 }
 
@@ -785,6 +895,7 @@ function activateTab(tabName) {
   if (tabName === "weather") renderWeatherSettings();
   if (tabName === "news") renderNewsSettings();
   if (tabName === "system") renderSystemSettings();
+  if (tabName === "translate") renderTranslateSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -796,6 +907,7 @@ const KIND_TAB = {
   system: "system",
   weather: "weather",
   news: "news",
+  translate: "translate",
 };
 
 function openTileSettings(id) {
@@ -808,6 +920,7 @@ function openTileSettings(id) {
   if (comp.kind === "weather") selectedWeatherId = id;
   if (comp.kind === "news") selectedNewsId = id;
   if (comp.kind === "system") selectedSystemId = id;
+  if (comp.kind === "translate") selectedTranslateId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -852,6 +965,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "weather") renderWeatherSettings();
   if (comp.kind === "news") renderNewsSettings();
   if (comp.kind === "system") renderSystemSettings();
+  if (comp.kind === "translate") renderTranslateSettings();
 }
 
 function ensureLauncher() {
@@ -1462,6 +1576,132 @@ function renderSystemSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Translate settings editor. Per-tile language selection + a global DeepL API
+// key (stored in the OS secret store, never in config).
+// ---------------------------------------------------------------------------
+const DEEPL_LANGS = [
+  "EN", "DE", "ES", "FR", "IT", "PT", "NL", "PL", "RU", "JA", "ZH", "KO",
+  "TR", "SV", "DA", "FI", "CS", "EL", "HU", "RO", "UK", "NB", "ID", "SK",
+  "BG", "ET", "LT", "LV", "SL",
+];
+let selectedTranslateId = null;
+
+function ensureTranslateComp() {
+  const comps = state.compartments.filter((c) => c.kind === "translate");
+  if (comps.length === 0) {
+    const comp = {
+      id: "tr" + Date.now(),
+      kind: "translate",
+      title: "Translate",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 4,
+      data: { langs: ["EN", "DE", "ES"] },
+    };
+    state.compartments.push(comp);
+    selectedTranslateId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedTranslateId)) {
+    selectedTranslateId = comps[0].id;
+  }
+  const comp = state.compartments.find((c) => c.id === selectedTranslateId);
+  comp.data = comp.data || {};
+  if (!Array.isArray(comp.data.langs) || comp.data.langs.length !== 3) comp.data.langs = ["EN", "DE", "ES"];
+  return comp;
+}
+
+function commitTranslate(comp) {
+  saveState();
+  render();
+  renderTranslateSettings();
+}
+
+function langSelect(comp, i) {
+  return `<select class="tr-langsel" data-i="${i}">${DEEPL_LANGS.map(
+    (l) => `<option value="${l}" ${comp.data.langs[i] === l ? "selected" : ""}>${l}</option>`
+  ).join("")}</select>`;
+}
+
+async function renderTranslateSettings() {
+  const panel = document.getElementById("translate-list");
+  if (!panel) return;
+  const comp = ensureTranslateComp();
+  const comps = state.compartments.filter((c) => c.kind === "translate");
+
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="translate-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+
+  const langsRow = document.createElement("div");
+  langsRow.className = "item-row";
+  langsRow.innerHTML = `<label>Languages</label>${langSelect(comp, 0)}${langSelect(comp, 1)}${langSelect(comp, 2)}`;
+  panel.appendChild(langsRow);
+
+  const keyRow = document.createElement("div");
+  keyRow.className = "item-row";
+  keyRow.innerHTML = `
+    <label>DeepL API key</label>
+    <input id="deepl-key" type="password" placeholder="DeepL-Auth-Key (stored in OS secret store)" />
+    <button class="btn primary" id="deepl-save">Save</button>
+    <button class="btn ghost danger" id="deepl-clear">Clear</button>
+    <span id="deepl-status" class="muted"></span>`;
+  panel.appendChild(keyRow);
+
+  const statusEl = keyRow.querySelector("#deepl-status");
+  const refreshStatus = async () => {
+    try {
+      statusEl.textContent = (await native.deeplKeyStatus()) ? "key set" : "no key";
+    } catch {
+      statusEl.textContent = "";
+    }
+  };
+  refreshStatus();
+
+  panel.querySelector("#translate-select").addEventListener("change", (e) => {
+    selectedTranslateId = e.target.value;
+    renderTranslateSettings();
+  });
+  panel.querySelectorAll(".tr-langsel").forEach((sel) =>
+    sel.addEventListener("change", (e) => {
+      comp.data.langs[Number(e.target.dataset.i)] = e.target.value;
+      translateValues.delete(comp.id);
+      commitTranslate(comp);
+    })
+  );
+  panel.querySelector("#deepl-save").addEventListener("click", async () => {
+    const val = panel.querySelector("#deepl-key").value.trim();
+    if (!val) return;
+    try {
+      await native.setDeeplKey(val);
+      panel.querySelector("#deepl-key").value = "";
+      await refreshStatus();
+    } catch (err) {
+      statusEl.textContent = `error: ${err.message || err}`;
+    }
+  });
+  panel.querySelector("#deepl-clear").addEventListener("click", async () => {
+    try {
+      await native.clearDeeplKey();
+      await refreshStatus();
+    } catch (err) {
+      statusEl.textContent = `error: ${err.message || err}`;
+    }
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -1469,6 +1709,7 @@ const KIND_DEFAULTS = {
   system: { title: "System", data: {} },
   weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
   news: { title: "News", data: { feeds: [] } },
+  translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
