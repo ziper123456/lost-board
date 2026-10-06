@@ -471,8 +471,21 @@ html, body {
 .spot-progress { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
 .spot-fill { height: 100%; background: var(--accent); border-radius: 2px; }
 .spot-controls { display: flex; gap: 6px; justify-content: center; margin: 10px 0 6px; }
-.spot-controls .btn.icon-btn { width: 34px; height: 34px; font-size: 0.8rem; }
-.spot-devices select { width: 100%; }
+.spot-controls .btn.icon-btn { width: 32px; height: 32px; }
+.spot-volume { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.spot-vol-label { font-size: 0.72rem; color: var(--muted); width: 24px; }
+.spot-vol { flex: 1; accent-color: var(--accent); }
+.spot-queue { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
+.spot-queue-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+.spot-queue-item {
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 0;
+  color: var(--text);
+}
+.spot-queue-artist { color: var(--muted); }
 
 /* Buttons */
 .btn {

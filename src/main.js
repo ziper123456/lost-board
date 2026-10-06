@@ -194,6 +194,10 @@ async openFolder(path) {
   async spotifyVolume(percent) {
     if (window.__TAURI__) return invoke("spotify_volume", { percent });
   },
+  async spotifyQueue() {
+    if (window.__TAURI__) return invoke("spotify_queue");
+    return [];
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -801,15 +805,16 @@ async function renderSpotifyBody(c, body) {
         </div>
       </div>
       <div class="spot-controls">
-        <button class="btn ghost icon-btn spot-prev" title="Previous"></button>
-        <button class="btn ghost icon-btn spot-play" title="Play/Pause"></button>
-        <button class="btn ghost icon-btn spot-next" title="Next"></button>
+        <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
+        <button class="btn ghost icon-btn spot-play" title="Play/Pause">${track.playing ? PAUSE_ICON : PLAY_ICON}</button>
+        <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
       </div>
-      <div class="spot-devices"><select class="spot-device"></select></div>
+      <div class="spot-volume">
+        <span class="spot-vol-label">Vol</span>
+        <input type="range" class="spot-vol" min="0" max="100" value="50" />
+      </div>
+      <div class="spot-queue"></div>
     `;
-    body.querySelector(".spot-play").innerHTML = track.playing ? PAUSE_ICON : PLAY_ICON;
-    body.querySelector(".spot-prev").innerHTML = PREV_ICON;
-    body.querySelector(".spot-next").innerHTML = NEXT_ICON;
 
     body.querySelector(".spot-play").addEventListener("click", async () => {
       try {
@@ -835,7 +840,14 @@ async function renderSpotifyBody(c, body) {
         alert(`Spotify: ${e.message || e}`);
       }
     });
-    loadSpotifyDevices(body);
+    body.querySelector(".spot-vol").addEventListener("change", async (e) => {
+      try {
+        await native.spotifyVolume(Number(e.target.value));
+      } catch (err) {
+        alert(`Spotify: ${err.message || err}`);
+      }
+    });
+    loadSpotifyQueue(body);
   };
   await paint();
   // Poll now-playing every 3s so the tile stays in sync.
@@ -843,28 +855,31 @@ async function renderSpotifyBody(c, body) {
   addTimer(body, t);
 }
 
-async function loadSpotifyDevices(body) {
-  let devices = [];
+async function loadSpotifyQueue(body) {
+  let queue = [];
   try {
-    devices = await native.spotifyDevices();
+    queue = await native.spotifyQueue();
   } catch (e) {
-    devices = [];
+    queue = [];
   }
-  const sel = body.querySelector(".spot-device");
-  if (!sel) return;
-  sel.innerHTML = devices
-    .map((d) => `<option value="${escapeHtml(d.id)}" ${d.is_active ? "selected" : ""}>${escapeHtml(d.name)}${d.is_active ? " ✓" : ""}</option>`)
-    .join("") || `<option value="">No devices</option>`;
-  sel.addEventListener("change", () => {
-    // Selecting a device just records intent; play controls target the active
-    // device. (A full transfer could be added later.)
-  });
+  const box = body.querySelector(".spot-queue");
+  if (!box) return;
+  if (!queue.length) {
+    box.innerHTML = `<div class="muted">Queue is empty.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="spot-queue-title">Up next</div>` + queue
+    .slice(0, 6)
+    .map((q) => `<div class="spot-queue-item" title="${escapeHtml(q.title)}">${escapeHtml(q.title)} <span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
+    .join("");
 }
 
-const PLAY_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
-const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>`;
-const PREV_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 5h2v14H6zm3 7l9-7v14z"/></svg>`;
-const NEXT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 5h2v14h-2zM6 12l9-7v14z"/></svg>`;
+const PLAY_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>`;
+// Previous: triangle pointing left + a vertical bar on the right.
+const PREV_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 7h2v10H6zM20 5v14L9 12z"/></svg>`;
+// Next: a vertical bar on the left + triangle pointing right.
+const NEXT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 7h2v10h-2zM4 5v14l11-7z"/></svg>`;
 
 // ---------------------------------------------------------------------------
 // Weather + world clock. Open-Meteo (no API key). Each weather compartment

@@ -679,6 +679,45 @@ async fn spotify_volume(percent: u8) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct SpotifyQueueItem {
+    title: String,
+    artist: String,
+}
+
+/// Fetch the current playback queue (the next-up tracks).
+#[tauri::command]
+async fn spotify_queue() -> Result<Vec<SpotifyQueueItem>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/player/queue")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("queue request: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("queue read: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("queue parse: {e}, body: {body}"))?;
+    Ok(v.get("queue")
+        .and_then(|q| q.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|it| SpotifyQueueItem {
+                    title: it.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    artist: it
+                        .get("artists")
+                        .and_then(|a| a.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
 /// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()` is an *empty* set and yields 0 for both used and total RAM.
@@ -783,6 +822,7 @@ pub fn run() {
             spotify_play,
             spotify_skip,
             spotify_volume,
+            spotify_queue,
             get_system_stats,
         ])
         .run(tauri::generate_context!())
