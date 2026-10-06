@@ -461,22 +461,47 @@ html, body {
   display: block;
 }
 
-/* Spotify tile */
+/* Spotify tile — full-tile album art background, content overlaid */
+.spot-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.spot-overlay {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(rgba(10, 10, 14, 0.25), rgba(10, 10, 14, 0.85));
+  overflow: auto;
+}
 .spot-track { display: flex; gap: 10px; align-items: flex-start; }
-.spot-art { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; flex: 0 0 auto; }
 .spot-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.spot-title { font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spot-artist { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+.spot-artist { font-size: 0.8rem; color: var(--text); opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spot-album { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spot-progress { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.spot-progress { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
 .spot-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-.spot-controls { display: flex; gap: 6px; justify-content: center; margin: 10px 0 6px; }
-.spot-controls .btn.icon-btn { width: 32px; height: 32px; }
-.spot-volume { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
-.spot-vol-label { font-size: 0.72rem; color: var(--muted); width: 24px; }
-.spot-vol { flex: 1; accent-color: var(--accent); }
-.spot-queue { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
-.spot-queue-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+/* Controls: transport buttons left, volume slider right */
+.spot-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spot-controls-left { display: flex; gap: 6px; }
+.spot-controls .btn.icon-btn {
+  width: 32px;
+  height: 32px;
+  background: rgba(20, 20, 26, 0.55);
+  border-color: rgba(255,255,255,0.15);
+  color: #fff;
+}
+.spot-controls .btn.icon-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+.spot-volume { display: flex; align-items: center; }
+.spot-vol { width: 130px; accent-color: var(--accent); }
+.spot-queue { margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 6px; }
+.spot-queue-title { font-size: 0.72rem; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
 .spot-queue-item {
   font-size: 0.75rem;
   white-space: nowrap;

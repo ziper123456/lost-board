@@ -784,29 +784,35 @@ async function renderSpotifyBody(c, body) {
   }
   // Build the stable layout once; then refresh now-playing + progress in place
   // so the queue isn't re-fetched and sliders aren't rebuilt every poll tick.
+  const blur = c.data?.blur ?? 8;
+  const bright = c.data?.brightness ?? 0.55;
   body.innerHTML = `
-    <div class="spot-track">
-      <span class="spot-art"></span>
-      <div class="spot-meta">
-        <div class="spot-title"></div>
-        <div class="spot-artist"></div>
-        <div class="spot-album"></div>
-        <div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div>
+    <div class="spot-bg" style="filter:blur(${blur}px) brightness(${bright})"></div>
+    <div class="spot-overlay">
+      <div class="spot-track">
+        <div class="spot-meta">
+          <div class="spot-title"></div>
+          <div class="spot-artist"></div>
+          <div class="spot-album"></div>
+          <div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div>
+        </div>
       </div>
+      <div class="spot-controls">
+        <div class="spot-controls-left">
+          <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
+          <button class="btn ghost icon-btn spot-play" title="Play/Pause">${PLAY_ICON}</button>
+          <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
+        </div>
+        <div class="spot-volume">
+          <input type="range" class="spot-vol" min="0" max="100" value="50" title="Volume" />
+        </div>
+      </div>
+      <div class="spot-queue"></div>
     </div>
-    <div class="spot-controls">
-      <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
-      <button class="btn ghost icon-btn spot-play" title="Play/Pause">${PLAY_ICON}</button>
-      <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
-    </div>
-    <div class="spot-volume">
-      <span class="spot-vol-label">Vol</span>
-      <input type="range" class="spot-vol" min="0" max="100" value="50" />
-    </div>
-    <div class="spot-queue"></div>
   `;
 
-  let lastTitle = null;
+  const bgEl = body.querySelector(".spot-bg");
+  const titleEl = body.querySelector(".spot-title");
   let playing = false;
   const refresh = async (forceQueue) => {
     let track = null;
@@ -817,13 +823,13 @@ async function renderSpotifyBody(c, body) {
     }
     if (!body.isConnected) return;
     if (!track || !track.title) {
-      body.querySelector(".spot-title").textContent = "Nothing playing";
+      titleEl.textContent = "Nothing playing";
       body.querySelector(".spot-artist").textContent = "";
       body.querySelector(".spot-album").textContent = "";
       return;
     }
-    body.querySelector(".spot-art").innerHTML = track.art ? `<img src="${escapeHtml(track.art)}" alt="" />` : "";
-    body.querySelector(".spot-title").textContent = track.title;
+    bgEl.style.backgroundImage = track.art ? `url("${track.art}")` : "";
+    titleEl.textContent = track.title;
     body.querySelector(".spot-artist").textContent = track.artist;
     body.querySelector(".spot-album").textContent = track.album;
     body.querySelector(".spot-fill").style.width = track.duration_ms ? `${(track.progress_ms / track.duration_ms) * 100}%` : "0%";
@@ -2273,6 +2279,17 @@ function renderSpotifySettings() {
     <span id="spotify-status" class="muted"></span>`;
   panel.appendChild(connectRow);
 
+  const bgRow = document.createElement("div");
+  bgRow.className = "item-row";
+  bgRow.innerHTML = `
+    <label>BG blur</label>
+    <input type="range" class="spot-blur" min="0" max="25" value="${comp.data.blur ?? 8}" />
+    <span class="spot-blur-val">${comp.data.blur ?? 8}px</span>
+    <label>BG brightness</label>
+    <input type="range" class="spot-bright" min="0.1" max="1.4" step="0.05" value="${comp.data.brightness ?? 0.55}" />
+  `;
+  panel.appendChild(bgRow);
+
   const statusEl = connectRow.querySelector("#spotify-status");
   const refreshStatus = async () => {
     try {
@@ -2282,6 +2299,23 @@ function renderSpotifySettings() {
     }
   };
   refreshStatus();
+
+  const blurInput = panel.querySelector(".spot-blur");
+  const blurVal = panel.querySelector(".spot-blur-val");
+  const brightInput = panel.querySelector(".spot-bright");
+  const commitBg = () => {
+    saveState();
+    render();
+  };
+  blurInput.addEventListener("change", (e) => {
+    comp.data.blur = Number(e.target.value);
+    blurVal.textContent = `${e.target.value}px`;
+    commitBg();
+  });
+  brightInput.addEventListener("change", (e) => {
+    comp.data.brightness = Number(e.target.value);
+    commitBg();
+  });
 
   panel.querySelector("#spotify-select").addEventListener("change", (e) => {
     selectedSpotifyId = e.target.value;
