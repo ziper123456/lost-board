@@ -36,6 +36,7 @@ const DEFAULT_STATE = {
   theme: "dark",
   cornerRadius: 10,
   wall: false,
+  bongoGlobalInput: false,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -705,13 +706,17 @@ const BONGO_SVG = `
   <g class="cat">
     <path class="tail" d="M60 150 q-26 12 -30 -20 q-3 -24 14 -30 q10 -4 12 6 q3 10 -8 16 q-8 5 -4 12" />
     <ellipse class="body" cx="110" cy="120" rx="52" ry="55" />
-    <ellipse class="belly" cx="110" cy="130" rx="34" ry="40" />
+    <ellipse class="belly" cx="110" cy="132" rx="34" ry="38" />
     <path class="ear" d="M78 42 L64 8 L98 26 Z" />
+    <path class="ear-inner" d="M76 38 L68 18 L90 27 Z" />
     <path class="ear" d="M142 42 L156 8 L122 26 Z" />
+    <path class="ear-inner" d="M144 38 L152 18 L130 27 Z" />
     <circle class="head" cx="110" cy="58" r="42" />
     <circle class="eye" cx="92" cy="56" r="4.5" />
     <circle class="eye" cx="128" cy="56" r="4.5" />
+    <ellipse class="muzzle" cx="110" cy="72" rx="13" ry="10" />
     <path class="nose" d="M110 68 l-4 4 h8 z" />
+    <path class="mouth" d="M104 73 q6 5 12 0" />
   </g>
   <rect class="paw paw-left" x="74" y="168" width="24" height="16" rx="8" />
   <rect class="paw paw-right" x="122" y="168" width="24" height="16" rx="8" />
@@ -725,8 +730,7 @@ function renderBongoBody(c, body) {
 // Global input listeners: animate every bongo cat tile. Keystrokes alternate
 // left/right paw; mouse clicks make the cat hop.
 let bongoLeft = true;
-window.addEventListener("keydown", (e) => {
-  if (e.repeat) return;
+function bongoKey() {
   document.querySelectorAll(".compartment-body[data-cat]").forEach((body) => {
     const paw = body.querySelector(bongoLeft ? ".paw-left" : ".paw-right");
     if (!paw) return;
@@ -734,15 +738,30 @@ window.addEventListener("keydown", (e) => {
     setTimeout(() => paw.classList.remove("hit"), 90);
   });
   bongoLeft = !bongoLeft;
-});
-window.addEventListener("pointerdown", () => {
+}
+function bongoHop() {
   document.querySelectorAll(".compartment-body[data-cat]").forEach((body) => {
     const cat = body.querySelector(".bongo-cat");
     if (!cat) return;
     cat.classList.add("hop");
     setTimeout(() => cat.classList.remove("hop"), 320);
   });
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  if (state.bongoGlobalInput !== true) bongoKey();
 });
+window.addEventListener("pointerdown", bongoHop);
+// Global (whole-machine) input arrives via native hooks when enabled.
+if (window.__TAURI__) {
+  window.__TAURI__.event.listen("global-in-key", () => {
+    if (state.bongoGlobalInput === true) bongoKey();
+  });
+  window.__TAURI__.event.listen("global-in-mouse", () => {
+    if (state.bongoGlobalInput === true) bongoHop();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Weather + world clock. Open-Meteo (no API key). Each weather compartment
@@ -1991,6 +2010,20 @@ function renderBongoSettings() {
   panel.appendChild(selectorRow);
   appendCollapsibleRow(panel, comp);
   appendAppearanceRow(panel, comp);
+
+  const modeRow = document.createElement("div");
+  modeRow.className = "item-row";
+  modeRow.innerHTML = `
+    <label>React to input across the whole machine
+      <input type="checkbox" class="bongo-global" ${state.bongoGlobalInput === true ? "checked" : ""} />
+    </label>
+    <span class="muted">(on: any key/click anywhere; off: only while this window is focused)</span>`;
+  panel.appendChild(modeRow);
+  modeRow.querySelector(".bongo-global").addEventListener("change", (e) => {
+    state.bongoGlobalInput = e.target.checked;
+    saveState();
+  });
+
   panel.querySelector("#bongo-select").addEventListener("change", (e) => {
     selectedBongoId = e.target.value;
     renderBongoSettings();

@@ -10,6 +10,7 @@
 use serde::Serialize;
 use std::{fs, path::{Path, PathBuf}};
 use tauri::Manager;
+use tauri::Emitter;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[derive(Serialize)]
@@ -414,6 +415,23 @@ fn open_path(path: &str) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Global input listener for the bongo-cat tile: emits a "global-input"
+            // event on any key or mouse-button press anywhere on the machine.
+            // The frontend decides whether to animate (per its bongo setting).
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let _ = rdev::listen(move |ev| {
+                    use rdev::EventType::{ButtonPress, KeyPress};
+                    if matches!(ev.event_type, KeyPress(_)) {
+                        let _ = handle.emit("global-in-key", ());
+                    } else if matches!(ev.event_type, ButtonPress(_)) {
+                        let _ = handle.emit("global-in-mouse", ());
+                    }
+                });
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
