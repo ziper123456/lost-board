@@ -73,6 +73,7 @@
           <button class="tab" data-tab="weather">Weather</button>
           <button class="tab" data-tab="news">News</button>
           <button class="tab" data-tab="translate">Translate</button>
+          <button class="tab" data-tab="bongo">Bongo</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="healthcheck">Healthcheck</button>
         </nav>
@@ -106,6 +107,7 @@
                   <option value="weather">Weather</option>
                   <option value="news">News</option>
                   <option value="translate">Translate</option>
+                  <option value="bongo">Bongo Cat</option>
                   <option value="system">System</option>
                 </select>
                 <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
@@ -140,6 +142,10 @@
           <div class="tab-panel" data-panel="translate">
             <p>Each Translate tile has up to 3 language fields. Type in one and click its Translate button to fill the others (via DeepL).</p>
             <div id="translate-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="bongo">
+            <p>Bongo Cat reacts to your keyboard and mouse. Choose a tile and its options below.</p>
+            <div id="bongo-list"></div>
           </div>
           <div class="tab-panel" data-panel="healthcheck"><div id="healthcheck-list"></div></div>
         </div>

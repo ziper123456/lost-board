@@ -594,6 +594,8 @@ async function renderCompartmentBody(c, body) {
     renderNewsFeeds(c, body, feeds);
   } else if (c.kind === "translate") {
     renderTranslateBody(c, body);
+  } else if (c.kind === "bongo") {
+    renderBongoBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -692,6 +694,55 @@ async function translateFrom(c, body, i) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Bongo cat. A decorative tile that reacts to global keyboard/mouse input like
+// the OBS bongo-cat visualizer: keystrokes alternate the two paws, mouse clicks
+// make the cat hop. The SVG scales to the tile.
+// ---------------------------------------------------------------------------
+const BONGO_SVG = `
+<svg class="bongo-cat" viewBox="0 0 220 180">
+  <g class="cat">
+    <path class="tail" d="M60 150 q-26 12 -30 -20 q-3 -24 14 -30 q10 -4 12 6 q3 10 -8 16 q-8 5 -4 12" />
+    <ellipse class="body" cx="110" cy="120" rx="52" ry="55" />
+    <ellipse class="belly" cx="110" cy="130" rx="34" ry="40" />
+    <path class="ear" d="M78 42 L64 8 L98 26 Z" />
+    <path class="ear" d="M142 42 L156 8 L122 26 Z" />
+    <circle class="head" cx="110" cy="58" r="42" />
+    <circle class="eye" cx="92" cy="56" r="4.5" />
+    <circle class="eye" cx="128" cy="56" r="4.5" />
+    <path class="nose" d="M110 68 l-4 4 h8 z" />
+  </g>
+  <rect class="paw paw-left" x="74" y="168" width="24" height="16" rx="8" />
+  <rect class="paw paw-right" x="122" y="168" width="24" height="16" rx="8" />
+</svg>`;
+
+function renderBongoBody(c, body) {
+  body.dataset.cat = c.id;
+  body.innerHTML = BONGO_SVG;
+}
+
+// Global input listeners: animate every bongo cat tile. Keystrokes alternate
+// left/right paw; mouse clicks make the cat hop.
+let bongoLeft = true;
+window.addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  document.querySelectorAll(".compartment-body[data-cat]").forEach((body) => {
+    const paw = body.querySelector(bongoLeft ? ".paw-left" : ".paw-right");
+    if (!paw) return;
+    paw.classList.add("hit");
+    setTimeout(() => paw.classList.remove("hit"), 90);
+  });
+  bongoLeft = !bongoLeft;
+});
+window.addEventListener("pointerdown", () => {
+  document.querySelectorAll(".compartment-body[data-cat]").forEach((body) => {
+    const cat = body.querySelector(".bongo-cat");
+    if (!cat) return;
+    cat.classList.add("hop");
+    setTimeout(() => cat.classList.remove("hop"), 320);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Weather + world clock. Open-Meteo (no API key). Each weather compartment
@@ -957,6 +1008,7 @@ function activateTab(tabName) {
   if (tabName === "news") renderNewsSettings();
   if (tabName === "system") renderSystemSettings();
   if (tabName === "translate") renderTranslateSettings();
+  if (tabName === "bongo") renderBongoSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -969,6 +1021,7 @@ const KIND_TAB = {
   weather: "weather",
   news: "news",
   translate: "translate",
+  bongo: "grid",
 };
 
 function openTileSettings(id) {
@@ -982,6 +1035,7 @@ function openTileSettings(id) {
   if (comp.kind === "news") selectedNewsId = id;
   if (comp.kind === "system") selectedSystemId = id;
   if (comp.kind === "translate") selectedTranslateId = id;
+  if (comp.kind === "bongo") selectedBongoId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1154,6 +1208,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "news") renderNewsSettings();
   if (comp.kind === "system") renderSystemSettings();
   if (comp.kind === "translate") renderTranslateSettings();
+  if (comp.kind === "bongo") renderBongoSettings();
 }
 
 function ensureLauncher() {
@@ -1897,6 +1952,51 @@ async function renderTranslateSettings() {
   });
 }
 
+let selectedBongoId = null;
+function ensureBongoComp() {
+  const comps = state.compartments.filter((c) => c.kind === "bongo");
+  if (comps.length === 0) {
+    const comp = {
+      id: "bon" + Date.now(),
+      kind: "bongo",
+      title: "Bongo Cat",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 3,
+      h: 3,
+      data: {},
+    };
+    state.compartments.push(comp);
+    selectedBongoId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedBongoId)) selectedBongoId = comps[0].id;
+  return state.compartments.find((c) => c.id === selectedBongoId);
+}
+function renderBongoSettings() {
+  const panel = document.getElementById("bongo-list");
+  if (!panel) return;
+  const comp = ensureBongoComp();
+  const comps = state.compartments.filter((c) => c.kind === "bongo");
+  panel.innerHTML = "";
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="bongo-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+  panel.querySelector("#bongo-select").addEventListener("change", (e) => {
+    selectedBongoId = e.target.value;
+    renderBongoSettings();
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -1905,6 +2005,7 @@ const KIND_DEFAULTS = {
   weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
   news: { title: "News", data: { feeds: [] } },
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
+  bongo: { title: "Bongo Cat", data: {} },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
