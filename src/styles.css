@@ -188,7 +188,7 @@ html, body {
   min-width: 0;
   flex: 1 1 auto;
 }
-.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); }
+.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); position: relative; }
 .compartment.drag-over,
 .compartment-overlay.drag-over {
   border-color: var(--accent);
