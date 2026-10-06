@@ -155,6 +155,14 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("pick_icon");
     return null;
   },
+  async pickImage() {
+    if (window.__TAURI__) return invoke("pick_image");
+    return null;
+  },
+  async loadFrameImage(path) {
+    if (window.__TAURI__) return invoke("load_frame_image", { path });
+    return "";
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -594,6 +602,8 @@ async function renderCompartmentBody(c, body) {
     renderNewsFeeds(c, body, feeds);
   } else if (c.kind === "translate") {
     renderTranslateBody(c, body);
+  } else if (c.kind === "frame") {
+    renderFrameBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -691,6 +701,37 @@ async function translateFrom(c, body, i) {
       btn.textContent = "Translate";
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Frame tile (photo frame). Shows a local image/GIF stretched to fill the tile
+// body, like a picture hanging on the board. Stores the file path; loads to a
+// data URI lazily (large GIFs shouldn't bloat the persisted state).
+// ---------------------------------------------------------------------------
+const frameImageCache = new Map();
+async function frameImageData(c) {
+  const path = c.data?.path;
+  if (!path) return "";
+  if (frameImageCache.has(path)) return frameImageCache.get(path);
+  let data = "";
+  try {
+    data = (await native.loadFrameImage(path)) || "";
+  } catch {
+    data = "";
+  }
+  frameImageCache.set(path, data);
+  return data;
+}
+
+async function renderFrameBody(c, body) {
+  body.classList.add("frame-body");
+  const fit = c.data?.fit || "cover";
+  const src = await frameImageData(c);
+  if (!src) {
+    body.innerHTML = `<div class="muted">No image set — pick one in Settings.</div>`;
+    return;
+  }
+  body.innerHTML = `<img class="frame-img" style="object-fit:${escapeHtml(fit)}" src="${escapeHtml(src)}" alt="" />`;
 }
 
 // ---------------------------------------------------------------------------
@@ -957,6 +998,7 @@ function activateTab(tabName) {
   if (tabName === "news") renderNewsSettings();
   if (tabName === "system") renderSystemSettings();
   if (tabName === "translate") renderTranslateSettings();
+  if (tabName === "frame") renderFrameSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -969,6 +1011,7 @@ const KIND_TAB = {
   weather: "weather",
   news: "news",
   translate: "translate",
+  frame: "frame",
 };
 
 function openTileSettings(id) {
@@ -982,6 +1025,7 @@ function openTileSettings(id) {
   if (comp.kind === "news") selectedNewsId = id;
   if (comp.kind === "system") selectedSystemId = id;
   if (comp.kind === "translate") selectedTranslateId = id;
+  if (comp.kind === "frame") selectedFrameId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1154,6 +1198,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "news") renderNewsSettings();
   if (comp.kind === "system") renderSystemSettings();
   if (comp.kind === "translate") renderTranslateSettings();
+  if (comp.kind === "frame") renderFrameSettings();
 }
 
 function ensureLauncher() {
@@ -1897,6 +1942,84 @@ async function renderTranslateSettings() {
   });
 }
 
+let selectedFrameId = null;
+function ensureFrameComp() {
+  const comps = state.compartments.filter((c) => c.kind === "frame");
+  if (comps.length === 0) {
+    const comp = {
+      id: "fr" + Date.now(),
+      kind: "frame",
+      title: "Frame",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 3,
+      h: 3,
+      data: { path: "", fit: "cover" },
+    };
+    state.compartments.push(comp);
+    selectedFrameId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedFrameId)) selectedFrameId = comps[0].id;
+  const comp = state.compartments.find((c) => c.id === selectedFrameId);
+  comp.data = comp.data || {};
+  comp.data.fit = comp.data.fit || "cover";
+  return comp;
+}
+function commitFrame(comp) {
+  saveState();
+  render();
+  renderFrameSettings();
+}
+function renderFrameSettings() {
+  const panel = document.getElementById("frame-list");
+  if (!panel) return;
+  const comp = ensureFrameComp();
+  const comps = state.compartments.filter((c) => c.kind === "frame");
+  panel.innerHTML = "";
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="frame-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const pickRow = document.createElement("div");
+  pickRow.className = "item-row";
+  pickRow.innerHTML = `
+    <label>Image / GIF</label>
+    <button class="btn ghost" id="frame-browse">Browse…</button>
+    <select class="frame-fit">
+      <option value="cover" ${comp.data.fit === "cover" ? "selected" : ""}>Cover (fill)</option>
+      <option value="contain" ${comp.data.fit === "contain" ? "selected" : ""}>Contain (fit)</option>
+      <option value="stretch" ${comp.data.fit === "stretch" ? "selected" : ""}>Stretch</option>
+    </select>
+    <span class="muted">${comp.data.path ? escapeHtml(comp.data.path) : "no image set"}</span>`;
+  panel.appendChild(pickRow);
+
+  panel.querySelector("#frame-select").addEventListener("change", (e) => {
+    selectedFrameId = e.target.value;
+    renderFrameSettings();
+  });
+  panel.querySelector("#frame-browse").addEventListener("click", async () => {
+    const p = await native.pickImage();
+    if (!p) return;
+    comp.data.path = p;
+    commitFrame(comp);
+  });
+  pickRow.querySelector(".frame-fit").addEventListener("change", (e) => {
+    comp.data.fit = e.target.value;
+    commitFrame(comp);
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -1905,6 +2028,7 @@ const KIND_DEFAULTS = {
   weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
   news: { title: "News", data: { feeds: [] } },
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
+  frame: { title: "Frame", data: { path: "", fit: "cover" } },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {

@@ -123,6 +123,40 @@ fn load_tile_icon(path: String) -> Result<String, String> {
     Ok(format!("data:{mime};base64,{b64}"))
 }
 
+/// Open a native image picker for a frame tile (image/GIF); returns path or None.
+#[tauri::command]
+async fn pick_image() -> Result<Option<String>, String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Choose an image or GIF")
+        .add_filter("Image", &["png", "jpg", "jpeg", "gif", "webp", "svg"])
+        .pick_file()
+        .await;
+    Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
+}
+
+/// Read an image/GIF file for a photo-frame tile and return it as a data URI.
+#[tauri::command]
+fn load_frame_image(path: String) -> Result<String, String> {
+    let p = Path::new(&path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => return Err("unsupported image file type".into()),
+    };
+    let bytes = fs::read(p).map_err(|e| format!("Failed to read image: {e}"))?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
 #[derive(Serialize)]
 struct FeedItem {
     title: String,
@@ -433,6 +467,8 @@ pub fn run() {
             clear_deepl_key,
             deepl_translate,
             load_tile_icon,
+            pick_image,
+            load_frame_image,
             get_system_stats,
         ])
         .run(tauri::generate_context!())
