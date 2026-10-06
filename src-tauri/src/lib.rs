@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::{fs, path::{Path, PathBuf}};
 use tauri::Manager;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use base64::Engine;
 
 #[derive(Serialize)]
 struct SystemStats {
@@ -373,10 +374,352 @@ async fn deepl_translate(
         .ok_or_else(|| "DeepL returned no translation".into())
 }
 
+// ---------------------------------------------------------------------------
+// Spotify. OAuth 2.0 Authorization Code + PKCE via a localhost callback server.
+// Client id, access token, and refresh token are stored in the OS secret store.
+// The tile acts as a remote control for the installed Spotify app / a Connect
+// device (the API does not stream audio).
+// ---------------------------------------------------------------------------
+const SPOTIFY_CLIENT_ID: &str = "spotify_client_id";
+const SPOTIFY_ACCESS: &str = "spotify_access_token";
+const SPOTIFY_REFRESH: &str = "spotify_refresh_token";
+const SPOTIFY_EXPIRES: &str = "spotify_token_expires_at";
+
+// PKCE verifier is kept in memory between the authorize step and the callback.
+use std::sync::Mutex as StdMutex; // avoid clash with tauri::Manager
+static SPOTIFY_VERIFIER: StdMutex<Option<String>> = StdMutex::new(None);
+
+fn spot_key(user: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, user).map_err(|e| format!("secret store error: {e}"))
+}
+fn spot_get(user: &str) -> Result<String, String> {
+    spot_key(user)
+        .and_then(|e| e.get_password().map_err(|er| format!("{er}")))
+        .map(|s| s.to_string())
+}
+fn spot_set(user: &str, val: &str) -> Result<(), String> {
+    let e = spot_key(user)?;
+    e.set_password(val).map_err(|er| format!("failed to store: {er}"))
+}
+fn base64url_encode(data: &[u8]) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+fn random_verifier() -> String {
+    use rand::Rng;
+    let bytes: Vec<u8> = (0..64).map(|_| rand::thread_rng().r#gen()).collect();
+    base64url_encode(&bytes)
+}
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+    base64url_encode(&Sha256::digest(verifier.as_bytes()))
+}
+
+/// Store the Spotify client id in the secret store.
+#[tauri::command]
+fn set_spotify_client_id(id: String) -> Result<(), String> {
+    spot_set(SPOTIFY_CLIENT_ID, id.trim())
+}
+
+/// Whether a Spotify client id is stored and a refresh token exists.
+#[tauri::command]
+fn spotify_connected() -> bool {
+    spot_get(SPOTIFY_CLIENT_ID).is_ok() && spot_get(SPOTIFY_REFRESH).is_ok()
+}
+
+/// Begin Spotify authorization: open the browser to the PKCE authorize URL and
+/// start a localhost callback server. Returns a URL to open.
+#[tauri::command]
+async fn spotify_begin() -> Result<String, String> {
+    let client_id = spot_get(SPOTIFY_CLIENT_ID).map_err(|_| "No Spotify client id set".to_string())?;
+    let verifier = random_verifier();
+    *SPOTIFY_VERIFIER.lock().unwrap() = Some(verifier.clone());
+    let challenge = pkce_challenge(&verifier);
+    let redirect = "http://127.0.0.1:3937/callback";
+    let scope = "user-read-playback-state user-modify-playback-state user-read-currently-playing";
+    let url = format!(
+        "https://accounts.spotify.com/authorize?client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256",
+        client_id, redirect, scope, challenge
+    );
+    Ok(url)
+}
+
+/// Exchange the authorization code (captured on the localhost callback) for
+/// tokens and store them. Call after the user returns from the browser.
+#[tauri::command]
+async fn spotify_capture() -> Result<(), String> {
+    let verifier = SPOTIFY_VERIFIER.lock().unwrap().take();
+    if verifier.is_none() {
+        return Err("no pending authorization".into());
+    }
+    let verifier = verifier.unwrap();
+    let client_id = spot_get(SPOTIFY_CLIENT_ID).map_err(|_| "No Spotify client id set".to_string())?;
+    let redirect = "http://127.0.0.1:3937/callback";
+    let server = tiny_http::Server::http("127.0.0.1:3937")
+        .map_err(|e| format!("callback server: {e}"))?;
+    let request = server
+        .recv_timeout(std::time::Duration::from_secs(120))
+        .map_err(|_| "timed out waiting for Spotify callback".to_string())?
+        .ok_or("timed out waiting for Spotify callback".to_string())?;
+    let code = {
+        let url = request.url().to_string();
+        let _ = request.respond(tiny_http::Response::from_string("You can close this window."));
+        url.split("code=").nth(1).and_then(|s| s.split('&').next()).map(|s| s.to_string())
+            .ok_or("no code in callback".to_string())?
+    };
+    let params = [
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", redirect),
+        ("client_id", &client_id),
+        ("code_verifier", &verifier),
+    ];
+    let resp = reqwest::Client::new()
+        .post("https://accounts.spotify.com/api/token")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("token request: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("token read: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("token parse: {e}, body: {body}"))?;
+    let access = v
+        .get("access_token")
+        .and_then(|x| x.as_str())
+        .ok_or("no access_token in response")?
+        .to_string();
+    let refresh = v
+        .get("refresh_token")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if refresh.is_empty() {
+        return Err("no refresh_token returned (PKCE should provide one)".into());
+    }
+    spot_set(SPOTIFY_ACCESS, &access)?;
+    spot_set(SPOTIFY_REFRESH, &refresh)?;
+    // Store when the access token expires (refresh proactively after that).
+    let expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(3600).min(3600);
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() + expires_in)
+        .unwrap_or(0);
+    spot_set(SPOTIFY_EXPIRES, &expires_at.to_string())?;
+    Ok(())
+}
+
+/// Get a valid access token, refreshing via refresh_token when expired/missing.
+async fn spotify_access_token() -> Result<String, String> {
+    // Valid (unexpired) token already stored? Use it.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let valid = spot_get(SPOTIFY_EXPIRES)
+        .ok()
+        .and_then(|e| e.parse::<u64>().ok())
+        .map(|exp| now + 60 < exp) // leave a 60s safety margin
+        .unwrap_or(false);
+    if valid {
+        if let Ok(t) = spot_get(SPOTIFY_ACCESS) {
+            return Ok(t);
+        }
+    }
+
+    let refresh = spot_get(SPOTIFY_REFRESH).map_err(|_| "not connected".to_string())?;
+    let client_id = spot_get(SPOTIFY_CLIENT_ID).map_err(|_| "no client id".to_string())?;
+    let params = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", &refresh),
+        ("client_id", &client_id),
+    ];
+    let resp = reqwest::Client::new()
+        .post("https://accounts.spotify.com/api/token")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("refresh request: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("refresh read: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("refresh parse: {e}, body: {body}"))?;
+    let access = v
+        .get("access_token")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("refresh failed: {body}"))?
+        .to_string();
+    spot_set(SPOTIFY_ACCESS, &access)?;
+    let expires_in = v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(3600).min(3600);
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() + expires_in)
+        .unwrap_or(0);
+    spot_set(SPOTIFY_EXPIRES, &expires_at.to_string())?;
+    Ok(access)
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyTrack {
+    title: String,
+    artist: String,
+    album: String,
+    art: String,
+    playing: bool,
+    progress_ms: u64,
+    duration_ms: u64,
+}
+
+/// Fetch the currently playing track.
+#[tauri::command]
+async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/player/currently-playing")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("now-playing request: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    let body = resp.text().await.map_err(|e| format!("read: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("parse: {e}, body: {body}"))?;
+    let item = v.get("item").ok_or("no item")?;
+    let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let artist = item
+        .get("artists")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let album = item.get("album").and_then(|x| x.get("name")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let art = item
+        .get("album")
+        .and_then(|x| x.get("images"))
+        .and_then(|x| x.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("url"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let playing = v.get("is_playing").and_then(|x| x.as_bool()).unwrap_or(false);
+    let progress_ms = v.get("progress_ms").and_then(|x| x.as_u64()).unwrap_or(0);
+    let duration_ms = item.get("duration_ms").and_then(|x| x.as_u64()).unwrap_or(0);
+    Ok(Some(SpotifyTrack {
+        title,
+        artist,
+        album,
+        art,
+        playing,
+        progress_ms,
+        duration_ms,
+    }))
+}
+
+/// Play (or pause) on the active device.
+#[tauri::command]
+async fn spotify_play(play: bool) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let url = if play { "https://api.spotify.com/v1/me/player/play" } else { "https://api.spotify.com/v1/me/player/pause" };
+    let resp = reqwest::Client::new()
+        .put(url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0") // 411 without it (body-less PUT/POST)
+        .send()
+        .await
+        .map_err(|e| format!("play request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+/// Skip to next / previous.
+#[tauri::command]
+async fn spotify_skip(next: bool) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let url = if next { "https://api.spotify.com/v1/me/player/next" } else { "https://api.spotify.com/v1/me/player/previous" };
+    let resp = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("skip request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+/// Set volume on the active device (0-100).
+#[tauri::command]
+async fn spotify_volume(percent: u8) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let p = percent.min(100);
+    let url = format!("https://api.spotify.com/v1/me/player/volume?volume_percent={p}");
+    let resp = reqwest::Client::new()
+        .put(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("volume request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyQueueItem {
+    title: String,
+    artist: String,
+}
+
+/// Fetch the current playback queue (the next-up tracks).
+#[tauri::command]
+async fn spotify_queue() -> Result<Vec<SpotifyQueueItem>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/player/queue")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("queue request: {e}"))?;
+    let body = resp.text().await.map_err(|e| format!("queue read: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("queue parse: {e}, body: {body}"))?;
+    Ok(v.get("queue")
+        .and_then(|q| q.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|it| SpotifyQueueItem {
+                    title: it.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    artist: it
+                        .get("artists")
+                        .and_then(|a| a.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// A process-wide `System` kept alive so CPU usage (a delta between samples)
 /// accumulates across calls instead of resetting to 0 on every fresh instance.
-/// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()`
-/// is an *empty* set and yields 0 for both used and total RAM.
+/// Memory is only measured if `.with_ram()` is set — a bare `MemoryRefreshKind::new()` is an *empty* set and yields 0 for both used and total RAM.
 fn system_handle() -> &'static std::sync::Mutex<System> {
     use std::sync::{Mutex, OnceLock};
     static SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
@@ -469,6 +812,15 @@ pub fn run() {
             load_tile_icon,
             pick_image,
             load_frame_image,
+            set_spotify_client_id,
+            spotify_connected,
+            spotify_begin,
+            spotify_capture,
+            spotify_now_playing,
+            spotify_play,
+            spotify_skip,
+            spotify_volume,
+            spotify_queue,
             get_system_stats,
         ])
         .run(tauri::generate_context!())

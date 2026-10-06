@@ -163,6 +163,37 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("load_frame_image", { path });
     return "";
   },
+  async setSpotifyClientId(id) {
+    if (window.__TAURI__) return invoke("set_spotify_client_id", { id });
+  },
+  async spotifyConnected() {
+    if (window.__TAURI__) return invoke("spotify_connected");
+    return false;
+  },
+  async spotifyBegin() {
+    if (window.__TAURI__) return invoke("spotify_begin");
+    return "";
+  },
+  async spotifyCapture() {
+    if (window.__TAURI__) return invoke("spotify_capture");
+  },
+  async spotifyNowPlaying() {
+    if (window.__TAURI__) return invoke("spotify_now_playing");
+    return null;
+  },
+  async spotifyPlay(play) {
+    if (window.__TAURI__) return invoke("spotify_play", { play });
+  },
+  async spotifySkip(next) {
+    if (window.__TAURI__) return invoke("spotify_skip", { next });
+  },
+  async spotifyVolume(percent) {
+    if (window.__TAURI__) return invoke("spotify_volume", { percent });
+  },
+  async spotifyQueue() {
+    if (window.__TAURI__) return invoke("spotify_queue");
+    return [];
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
@@ -604,6 +635,8 @@ async function renderCompartmentBody(c, body) {
     renderTranslateBody(c, body);
   } else if (c.kind === "frame") {
     renderFrameBody(c, body);
+  } else if (c.kind === "spotify") {
+    renderSpotifyBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -733,6 +766,143 @@ async function renderFrameBody(c, body) {
   }
   body.innerHTML = `<img class="frame-img" style="object-fit:${escapeHtml(fit)}" src="${escapeHtml(src)}" alt="" />`;
 }
+
+// ---------------------------------------------------------------------------
+// Spotify tile. Remote control for the installed Spotify app / a Connect
+// device (the API does not stream audio). Shows now-playing + transport
+// controls + a device picker. Requires OAuth via Settings > Spotify.
+// ---------------------------------------------------------------------------
+async function renderSpotifyBody(c, body) {
+  const connected = await native.spotifyConnected();
+  if (!connected) {
+    body.innerHTML = `<div class="muted">Spotify not connected — connect in Settings.</div>`;
+    return;
+  }
+  // Build the stable layout once; then refresh now-playing + progress in place
+  // so the queue isn't re-fetched and sliders aren't rebuilt every poll tick.
+  const blur = c.data?.blur ?? 8;
+  const bright = c.data?.brightness ?? 0.55;
+  body.innerHTML = `
+    <div class="spot-bg" style="filter:blur(${blur}px) brightness(${bright})"></div>
+    <div class="spot-overlay">
+      <div class="spot-track">
+        <div class="spot-meta">
+          <div class="spot-title"></div>
+          <div class="spot-artist"></div>
+          <div class="spot-album"></div>
+          <div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div>
+        </div>
+      </div>
+      <div class="spot-controls">
+        <div class="spot-controls-left">
+          <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
+          <button class="btn ghost icon-btn spot-play" title="Play/Pause">${PLAY_ICON}</button>
+          <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
+        </div>
+        <div class="spot-volume">
+          <input type="range" class="spot-vol" min="0" max="100" value="50" title="Volume" />
+        </div>
+      </div>
+      <div class="spot-queue"></div>
+    </div>
+  `;
+
+  const bgEl = body.querySelector(".spot-bg");
+  const titleEl = body.querySelector(".spot-title");
+  let playing = false;
+  let lastTitle = null;
+  const refresh = async (forceQueue) => {
+    let track = null;
+    try {
+      track = await native.spotifyNowPlaying();
+    } catch (e) {
+      track = null;
+    }
+    if (!body.isConnected) return;
+    if (!track || !track.title) {
+      titleEl.textContent = "Nothing playing";
+      body.querySelector(".spot-artist").textContent = "";
+      body.querySelector(".spot-album").textContent = "";
+      return;
+    }
+    bgEl.style.backgroundImage = track.art ? `url("${track.art}")` : "";
+    titleEl.textContent = track.title;
+    body.querySelector(".spot-artist").textContent = track.artist;
+    body.querySelector(".spot-album").textContent = track.album;
+    body.querySelector(".spot-fill").style.width = track.duration_ms ? `${(track.progress_ms / track.duration_ms) * 100}%` : "0%";
+    playing = track.playing;
+    body.querySelector(".spot-play").innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+    // Re-fetch the queue only when the track (or explicit request) changed.
+    if (forceQueue || track.title !== lastTitle) {
+      lastTitle = track.title;
+      await loadSpotifyQueue(body);
+    }
+  };
+
+  body.querySelector(".spot-play").addEventListener("click", async () => {
+    try {
+      await native.spotifyPlay(!playing);
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-next").addEventListener("click", async () => {
+    try {
+      await native.spotifySkip(true);
+      lastTitle = null; // track will change -> force queue refresh
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-prev").addEventListener("click", async () => {
+    try {
+      await native.spotifySkip(false);
+      lastTitle = null;
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-vol").addEventListener("change", async (e) => {
+    try {
+      await native.spotifyVolume(Number(e.target.value));
+    } catch (err) {
+      alert(`Spotify: ${err.message || err}`);
+    }
+  });
+
+  await refresh(true);
+  const t = setInterval(() => refresh(false), 3000);
+  addTimer(body, t);
+}
+
+async function loadSpotifyQueue(body) {
+  let queue = [];
+  try {
+    queue = await native.spotifyQueue();
+  } catch (e) {
+    queue = [];
+  }
+  const box = body.querySelector(".spot-queue");
+  if (!box) return;
+  if (!queue.length) {
+    box.innerHTML = `<div class="muted">Queue is empty.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="spot-queue-title">Up next</div>` + queue
+    .slice(0, 20)
+    .map((q) => `<div class="spot-queue-item" title="${escapeHtml(q.title)}">${escapeHtml(q.title)} <span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
+    .join("");
+}
+
+const PLAY_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>`;
+// Previous: triangle pointing left + a vertical bar on the right.
+const PREV_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 7h2v10H6zM20 5v14L9 12z"/></svg>`;
+// Next: a vertical bar on the left + triangle pointing right.
+const NEXT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 7h2v10h-2zM4 5v14l11-7z"/></svg>`;
 
 // ---------------------------------------------------------------------------
 // Weather + world clock. Open-Meteo (no API key). Each weather compartment
@@ -1021,6 +1191,7 @@ function activateTab(tabName) {
   if (tabName === "system") renderSystemSettings();
   if (tabName === "translate") renderTranslateSettings();
   if (tabName === "frame") renderFrameSettings();
+  if (tabName === "spotify") renderSpotifySettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -1034,6 +1205,7 @@ const KIND_TAB = {
   news: "news",
   translate: "translate",
   frame: "frame",
+  spotify: "spotify",
 };
 
 function openTileSettings(id) {
@@ -1048,6 +1220,7 @@ function openTileSettings(id) {
   if (comp.kind === "system") selectedSystemId = id;
   if (comp.kind === "translate") selectedTranslateId = id;
   if (comp.kind === "frame") selectedFrameId = id;
+  if (comp.kind === "spotify") selectedSpotifyId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1221,6 +1394,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "system") renderSystemSettings();
   if (comp.kind === "translate") renderTranslateSettings();
   if (comp.kind === "frame") renderFrameSettings();
+  if (comp.kind === "spotify") renderSpotifySettings();
 }
 
 function ensureLauncher() {
@@ -2042,6 +2216,136 @@ function renderFrameSettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Spotify settings editor. Enter the client id, then Connect (PKCE via a local
+// callback). Per-tile name/icon/colors handled by the shared rows.
+// ---------------------------------------------------------------------------
+let selectedSpotifyId = null;
+function ensureSpotifyComp() {
+  const comps = state.compartments.filter((c) => c.kind === "spotify");
+  if (comps.length === 0) {
+    const comp = {
+      id: "sp" + Date.now(),
+      kind: "spotify",
+      title: "Spotify",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 4,
+      h: 4,
+      data: {},
+    };
+    state.compartments.push(comp);
+    selectedSpotifyId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedSpotifyId)) selectedSpotifyId = comps[0].id;
+  return state.compartments.find((c) => c.id === selectedSpotifyId);
+}
+function renderSpotifySettings() {
+  const panel = document.getElementById("spotify-list");
+  if (!panel) return;
+  const comp = ensureSpotifyComp();
+  const comps = state.compartments.filter((c) => c.kind === "spotify");
+
+  panel.innerHTML = "";
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="spotify-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const idRow = document.createElement("div");
+  idRow.className = "item-row";
+  idRow.innerHTML = `
+    <label>Client ID</label>
+    <input type="password" id="spotify-client" placeholder="Spotify developer client id" />
+    <button class="btn primary" id="spotify-save-id">Save</button>`;
+  panel.appendChild(idRow);
+
+  const connectRow = document.createElement("div");
+  connectRow.className = "item-row";
+  connectRow.innerHTML = `
+    <button class="btn primary" id="spotify-connect">Connect</button>
+    <span id="spotify-status" class="muted"></span>`;
+  panel.appendChild(connectRow);
+
+  const bgRow = document.createElement("div");
+  bgRow.className = "item-row";
+  bgRow.innerHTML = `
+    <label>BG blur</label>
+    <input type="range" class="spot-blur" min="0" max="25" value="${comp.data.blur ?? 8}" />
+    <span class="spot-blur-val">${comp.data.blur ?? 8}px</span>
+    <label>BG brightness</label>
+    <input type="range" class="spot-bright" min="0.1" max="1.4" step="0.05" value="${comp.data.brightness ?? 0.55}" />
+  `;
+  panel.appendChild(bgRow);
+
+  const statusEl = connectRow.querySelector("#spotify-status");
+  const refreshStatus = async () => {
+    try {
+      statusEl.textContent = (await native.spotifyConnected()) ? "connected" : "not connected";
+    } catch {
+      statusEl.textContent = "";
+    }
+  };
+  refreshStatus();
+
+  const blurInput = panel.querySelector(".spot-blur");
+  const blurVal = panel.querySelector(".spot-blur-val");
+  const brightInput = panel.querySelector(".spot-bright");
+  const commitBg = () => {
+    saveState();
+    render();
+  };
+  blurInput.addEventListener("change", (e) => {
+    comp.data.blur = Number(e.target.value);
+    blurVal.textContent = `${e.target.value}px`;
+    commitBg();
+  });
+  brightInput.addEventListener("change", (e) => {
+    comp.data.brightness = Number(e.target.value);
+    commitBg();
+  });
+
+  panel.querySelector("#spotify-select").addEventListener("change", (e) => {
+    selectedSpotifyId = e.target.value;
+    renderSpotifySettings();
+  });
+  panel.querySelector("#spotify-save-id").addEventListener("click", async () => {
+    const v = panel.querySelector("#spotify-client").value.trim();
+    if (!v) return;
+    try {
+      await native.setSpotifyClientId(v);
+      panel.querySelector("#spotify-client").value = "";
+      await refreshStatus();
+    } catch (e) {
+      statusEl.textContent = `error: ${e.message || e}`;
+    }
+  });
+  panel.querySelector("#spotify-connect").addEventListener("click", async () => {
+    statusEl.textContent = "opening Spotify…";
+    try {
+      const url = await native.spotifyBegin();
+      await native.openUrl(url);
+      statusEl.textContent = "waiting for login…";
+      await native.spotifyCapture();
+      statusEl.textContent = "connected";
+      saveState();
+      render();
+      renderSpotifySettings();
+    } catch (e) {
+      statusEl.textContent = `error: ${e.message || e}`;
+    }
+  });
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Solutions", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -2051,6 +2355,7 @@ const KIND_DEFAULTS = {
   news: { title: "News", data: { feeds: [] } },
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
+  spotify: { title: "Spotify", data: {} },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
