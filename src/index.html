@@ -108,6 +108,7 @@
                   <option value="news">News</option>
                   <option value="translate">Translate</option>
                   <option value="frame">Frame</option>
+                  <option value="spotify">Spotify</option>
                   <option value="system">System</option>
                 </select>
                 <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
@@ -126,7 +127,10 @@
             <p>Set your org + project once, then list repos. Each repo gets a PR and Files deep-link.</p>
             <div id="azure-list"></div>
           </div>
-          <div class="tab-panel" data-panel="spotify"><p>Spotify auth + controls scaffold (see TODO).</p></div>
+          <div class="tab-panel" data-panel="spotify">
+            <p>Enter your Spotify developer client id, then Connect. The tile controls the Spotify app / a Connect device (it does not stream audio itself).</p>
+            <div id="spotify-list"></div>
+          </div>
           <div class="tab-panel" data-panel="weather">
             <p>Each Weather tile has its own location. Type a city and Look up, or enter lat/lon.</p>
             <div id="weather-list"></div>

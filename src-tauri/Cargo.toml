@@ -24,6 +24,9 @@ feed-rs = "1.5"
 base64 = "0.22"
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 tokio = { version = "1", features = ["full"] }
+sha2 = "0.10"
+rand = "0.8"
+tiny_http = "0.12"
 url = "2"
 
 [profile.release]

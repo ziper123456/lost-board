@@ -461,6 +461,19 @@ html, body {
   display: block;
 }
 
+/* Spotify tile */
+.spot-track { display: flex; gap: 10px; align-items: flex-start; }
+.spot-art { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; flex: 0 0 auto; }
+.spot-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.spot-title { font-weight: 600; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot-artist { font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot-album { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot-progress { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.spot-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.spot-controls { display: flex; gap: 6px; justify-content: center; margin: 10px 0 6px; }
+.spot-controls .btn.icon-btn { width: 34px; height: 34px; font-size: 0.8rem; }
+.spot-devices select { width: 100%; }
+
 /* Buttons */
 .btn {
   padding: 6px 12px;
