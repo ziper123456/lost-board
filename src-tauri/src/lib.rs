@@ -68,6 +68,17 @@ async fn pick_solution() -> Result<Option<String>, String> {
     Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
 }
 
+/// Open a native image picker for a custom tile-head icon; returns path or None.
+#[tauri::command]
+async fn pick_icon() -> Result<Option<String>, String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Choose an icon (.ico, .png, .jpg, .svg)")
+        .add_filter("Icon", &["ico", "png", "jpg", "jpeg", "svg"])
+        .pick_file()
+        .await;
+    Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
+}
+
 /// Classify a dropped path so the frontend can add it as a folder or a solution:
 /// returns `"dir"`, `"sln"` (a solution/project file), or `"file"` (any other file).
 #[tauri::command]
@@ -87,6 +98,29 @@ fn classify_path(path: String) -> String {
     } else {
         "missing".into()
     }
+}
+
+/// Read an image file (e.g. a custom tile-head icon) and return it as a data URI.
+/// Validates that it's an image extension; reuses the base64 helpers.
+#[tauri::command]
+fn load_tile_icon(path: String) -> Result<String, String> {
+    let p = Path::new(&path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "ico" => "image/x-icon",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        _ => return Err("unsupported icon file type".into()),
+    };
+    let bytes = fs::read(p).map_err(|e| format!("Failed to read icon: {e}"))?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
 }
 
 #[derive(Serialize)]
@@ -387,6 +421,7 @@ pub fn run() {
             save_state,
             pick_folder,
             pick_solution,
+            pick_icon,
             classify_path,
             open_folder,
             open_solution,
@@ -397,6 +432,7 @@ pub fn run() {
             deepl_key_status,
             clear_deepl_key,
             deepl_translate,
+            load_tile_icon,
             get_system_stats,
         ])
         .run(tauri::generate_context!())
