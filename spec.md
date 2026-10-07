@@ -17,6 +17,7 @@ decisions:
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   window: background mode — tray + autostart + always-on-bottom (specced §2.12, not yet built)
   vocab: flashcard tile (passive rotation) + drill popup (active recall) (specced §2.13, not yet built; supersedes Practice-tile discussion)
+  meme: rotation tile (top-100 + curated) + local captioning + expanded view (specced §2.14, not yet built)
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -204,6 +205,37 @@ shuffle independently (different words in each is variety, not a bug).
   popups (no second popup while one is open); a quiet-hours window and a master enable/disable
   switch shall be configurable.
 
+### 2.14 Meme tile: rotation + local captioning + expanded view (next up — not yet built)
+
+Design: a compact tile for ambient rotation plus an expanded view (larger than Settings)
+for doing things — browsing the collection, captioning, adding sources. The expanded
+pattern is designed reusable for other crowded tiles later, but specified here for the
+meme tile only. No third-party accounts anywhere: imgflip's public `get_memes` needs no
+auth, custom images are user-supplied, captioning is fully local.
+
+**Sources & rotation:**
+
+- **FR-MEM-001** The tile shall show a random meme from a combined pool — imgflip top-100
+  (auto-fetched, refetched ~daily) plus the user's curated collection — and auto-rotate on
+  a per-tile interval, with a manual "new meme" action.
+- **FR-MEM-002** The curated collection shall accept pasted image URLs (fetched natively to
+  data-URI + disk cache, same pattern as favicons — no CORS/hotlink/rot issues) and dropped
+  image files via OS drag-drop. Browser-tab drags are best-effort (verify at build).
+- **FR-MEM-003** The curated collection shall be shared across meme tiles (one stash);
+  rotation per tile stays independent.
+
+**Captioning (local, any image):**
+
+- **FR-MEM-004** The tile shall offer top/bottom text inputs rendered as live meme-style
+  overlay (white Impact-style with black outline) on any image — no API, no account.
+- **FR-MEM-005** The system shall export the captioned meme to PNG (canvas → save).
+
+**Expanded view (hot launch):**
+
+- **FR-MEM-006** The tile shall offer an Expand action opening an expanded view larger than
+  the Settings panel (fullscreen in-app overlay): large preview, collection browser grid,
+  add-URL box, drop zone, and the caption editor — all operable without scrolling a tiny tile.
+
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
 ~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).
@@ -358,6 +390,36 @@ Given an open drill popup,
 When the user clicks Snooze-30min (or while any popup is open),
 Then no new popup appears for 30 minutes (and never a second popup while one is open).
 
+### AC-027: Meme rotation pool
+Given top-100 fetched plus two curated images,
+When the tile rotates (or "new meme" is clicked),
+Then shown images come from the combined pool.
+
+### AC-028: Paste URL adds image
+Given a Pinterest image URL pasted into the add box,
+When the fetch completes,
+Then the image is cached and joins the rotation.
+
+### AC-029: Drop file adds image
+Given an image file dropped onto the meme tile,
+When the drop completes,
+Then the image joins the curated collection.
+
+### AC-030: Live caption overlay
+Given a displayed meme,
+When the user types top/bottom text,
+Then meme-style overlay text renders live on the image.
+
+### AC-031: Expanded view
+Given a meme tile,
+When the user clicks Expand,
+Then a larger-than-Settings view opens with big preview, collection grid, add box, drop zone, and caption editor.
+
+### AC-032: Export PNG
+Given a captioned meme in the expanded view,
+When the user clicks Export,
+Then a PNG file is saved.
+
 ### AC-016: Unhealthy service
 Given a configured service whose health endpoint returns 500 (or is unreachable),
 When the dashboard probes it,
@@ -454,6 +516,11 @@ Then the health endpoint URL opens in the browser.
   - [ ] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
   - [ ] Drill popup page + scheduler + placement + annoyance controls.
   - [ ] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
+- [ ] Meme tile implementation (FR-MEM-001..006, AC-027..032):
+  - [ ] Rotation from top-100 + shared curated collection (image fetch/cache command).
+  - [ ] Add via URL paste + file drop (browser-tab drop best-effort).
+  - [ ] Local caption overlay + PNG export.
+  - [ ] Expanded view (fullscreen overlay, reusable pattern).
 - [ ] (Optional) macOS/Linux build; multi-screen/status-bar support.
 
 ---
