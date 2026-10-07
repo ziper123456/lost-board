@@ -13,12 +13,11 @@ build a separate drill tile; one passive surface + one active surface only.
 
 ## 2. Key design decisions (do not re-derive)
 
-- **Single data source:** shared `cards.csv` (`id,categories,studyCount,en_US,es_ES,de_DE`,
-  ~10k rows, in vault at `Projects/vocab-app/cards.csv` — but the app must read it from
-  a **stable runtime path**, not the vault). Decide at implementation: either
-  (a) copy/snapshot `cards.csv` into the repo (e.g. `src-tauri/resources/`) and bundle it
-  via Tauri resources, or (b) configure an absolute path in Settings. (a) is recommended:
-  versioned, offline, no cross-repo path coupling. Re-snapshot when vocab-app updates the CSV.
+- **Single data source:** `src-tauri/resources/cards.csv` — **decided and snapshotted
+  2026-10-07** (672 KB, 10,263 rows: `id,categories,studyCount,en_US,es_ES,de_DE`;
+  copied from the vault's `Projects/vocab-app/cards.csv`, wired via
+  `bundle.resources` in `tauri.conf.json`). Versioned, offline, no cross-repo path
+  coupling. Re-snapshot (copy over + commit) when vocab-app updates the CSV.
 - **Independent shuffles:** tile rotation and popup drill draw independently (different
   words in each = variety, not a bug).
 - **One word per popup** (FR-VOC-005): fast in-and-out keeps high frequency tolerable.
