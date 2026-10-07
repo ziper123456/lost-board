@@ -938,10 +938,10 @@ function renderProjectsBody(c, body) {
           .map(
             (pr, i) => `
             <div class="prj-row">
-              <span class="prj-name">${escapeHtml(pr.folder.split(/[\\/]/).pop() || pr.folder)}</span>
+              <span class="prj-name">${escapeHtml((pr.folder || "").split(/[\\/]/).pop() || pr.folder || "?")}</span>
               <div class="prj-actions">
-                ${folderBtn(pr.folder)}
-                ${solBtn(pr.solution)}
+                ${folderBtn(pr.folder || "")}
+                ${solBtn(pr.solution || "")}
               </div>
             </div>`
           )
@@ -2446,8 +2446,12 @@ function ensureProjectComp() {
 }
 function commitProject(comp) {
   saveState();
-  render();
   renderProjectsSettings();
+  try {
+    render();
+  } catch (e) {
+    console.error("Failed to render grid:", e);
+  }
 }
 function renderProjectsSettings() {
   const panel = document.getElementById("project-list");
