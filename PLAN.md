@@ -82,12 +82,13 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] ~~**Service Healthcheck** compartment~~ — **dropped** (tab removal pending implementation)
 - [x] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume, shuffle/repeat, queue + click-to-jump
 
-### Next — Background mode (specced, not yet built)
-- [ ] Tray icon + menu (Show/Hide, Autostart, Quit) — FR-WIN-001
-- [ ] Autostart toggle in Settings — FR-WIN-002
-- [ ] Always-on-bottom + fullscreen + skip taskbar — FR-WIN-003/004
-- [ ] Remove dead Healthcheck tab from UI
+### Next — Background mode (specced + planned, not yet built)
+- [ ] Tray icon + menu (Show/Hide, Autostart, Quit) — FR-WIN-001 → `plans/background-mode.md` §4c
+- [ ] Autostart toggle in Settings — FR-WIN-002 → `plans/background-mode.md` §4c–e
+- [ ] Always-on-bottom + fullscreen + skip taskbar — FR-WIN-003/004 → `plans/background-mode.md` §4e
+- [ ] Remove dead Healthcheck tab from UI → `plans/healthcheck-tab-removal.md`
 - [ ] Play-test AC-018..020 on the work laptop (needs MSVC toolchain to build)
+- [ ] Implementation plans index + conventions: `plans/README.md` (suggested build order included)
 
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments
