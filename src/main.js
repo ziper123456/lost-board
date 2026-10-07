@@ -2523,25 +2523,25 @@ function renderProjectsSettings() {
     commitProject(comp);
   });
   panel.querySelectorAll(".prj-rm-root").forEach((b) =>
-    b.addEventListener("click", () => {
-      comp.data.roots.splice(Number(b.dataset.ri), 1);
+    b.addEventListener("click", (e) => {
+      comp.data.roots.splice(Number(e.currentTarget.dataset.ri), 1);
       commitProject(comp);
     })
   );
   panel.querySelectorAll(".pj-scan").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const root = comp.data.roots[Number(b.dataset.ri)];
+    b.addEventListener("click", async (e) => {
+      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
       try {
         root.projects = await native.scanProjectRoot(root.path);
-      } catch (e) {
+      } catch (err) {
         root.projects = [];
       }
       commitProject(comp);
     })
   );
   panel.querySelectorAll(".pj-add-row").forEach((b) => {
-    b.addEventListener("click", () => {
-      const root = comp.data.roots[Number(b.dataset.ri)];
+    b.addEventListener("click", (e) => {
+      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
       root.projects.push({ folder: "", solution: "" });
       commitProject(comp);
     });
@@ -2560,8 +2560,8 @@ function renderProjectsSettings() {
   );
   panel.querySelectorAll(".pj-del").forEach((b) =>
     b.addEventListener("click", (e) => {
-      const root = comp.data.roots[Number(e.target.dataset.ri)];
-      root.projects.splice(Number(e.target.dataset.i), 1);
+      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
+      root.projects.splice(Number(e.currentTarget.dataset.i), 1);
       commitProject(comp);
     })
   );
