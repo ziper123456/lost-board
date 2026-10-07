@@ -2544,11 +2544,11 @@ function renderProjectsSettings() {
   if (!panel.dataset.deleg) {
     panel.dataset.deleg = "1";
     panel.addEventListener("click", (e) => {
-      const btn = e.target.closest(".prj-rm-root, .pj-scan, .pj-add-row, .pj-del");
+      const btn = e.target.closest(".pj-rm-root, .pj-scan, .pj-add-row, .pj-del");
       if (!btn) return;
       const comp = ensureProjectComp();
       const ri = Number(btn.dataset.ri);
-      if (btn.classList.contains("prj-rm-root")) {
+      if (btn.classList.contains("pj-rm-root")) {
         comp.data.roots.splice(ri, 1);
         commitProject(comp);
       } else if (btn.classList.contains("pj-scan")) {
