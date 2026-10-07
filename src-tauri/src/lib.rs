@@ -159,6 +159,135 @@ fn load_frame_image(path: String) -> Result<String, String> {
 }
 
 #[derive(Serialize)]
+struct ProjectEntry {
+    /// Full path of the project folder.
+    folder: String,
+    /// Optional solution path found within (or below) the project folder.
+    solution: Option<String>,
+}
+
+/// Scan a repository root: every immediate subfolder becomes a "project". For
+/// each, walk downward until a solution file (.sln/.slnx/.csproj) is found.
+/// Also returns any solution files loose in the root itself.
+#[tauri::command]
+fn scan_project_root(root: String) -> Result<Vec<ProjectEntry>, String> {
+    let root_p = Path::new(&root);
+    if !root_p.is_dir() {
+        return Err(format!("Root folder not found: {root}"));
+    }
+
+    // Solutions loose in the root (e.g. repo-level .sln) get a "root" pseudo-project.
+    let mut projects = Vec::new();
+    let mut root_solutions: Vec<String> = Vec::new();
+    for entry in fs::read_dir(root_p)
+        .map_err(|e| format!("Failed to read root: {e}"))?
+        .filter_map(Result::ok)
+    {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(sln) = solution_in(&p) {
+                root_solutions.push(sln);
+            }
+        } else if p.is_dir() {
+            // Skip common ignored dirs and hidden/dot-dirs (e.g. .vs, .idea).
+            let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+            if is_ignored_dir(name) {
+                continue;
+            }
+            let solution = find_solution(&p, 0);
+            projects.push(ProjectEntry {
+                folder: p.to_string_lossy().into_owned(),
+                solution,
+            });
+        }
+    }
+
+    if !root_solutions.is_empty() {
+        projects.insert(0, ProjectEntry {
+            folder: root_p.to_string_lossy().into_owned(),
+            solution: pick_best_solution(&mut root_solutions),
+        });
+    }
+
+    projects.sort_by(|a, b| a.folder.cmp(&b.folder));
+    Ok(projects)
+}
+
+/// Directories never treated as projects and never recursed into.
+fn is_ignored_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "bin" | "obj" | "target" | "dist" | "out"
+        )
+}
+
+/// A folder can hold several candidates (e.g. a .sln next to a .csproj).
+/// The Solution button opens exactly one path, so pick a single winner:
+/// .sln first, then .slnx, then .csproj, alphabetical within each kind.
+fn pick_best_solution(candidates: &mut Vec<String>) -> Option<String> {
+    candidates.sort();
+    let rank = |s: &str| {
+        if s.ends_with(".sln") {
+            0
+        } else if s.ends_with(".slnx") {
+            1
+        } else {
+            2
+        }
+    };
+    candidates.sort_by_key(|s| rank(s));
+    candidates.into_iter().next().cloned()
+}
+
+fn solution_in(p: &Path) -> Option<String> {
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if matches!(ext, "sln" | "slnx" | "csproj") {
+        Some(p.to_string_lossy().into_owned())
+    } else {
+        None
+    }
+}
+
+/// Recursively search `dir` for a solution file, up to `depth` levels.
+fn find_solution(dir: &Path, depth: usize) -> Option<String> {
+    // Check files in this dir first.
+    if let Ok(read) = fs::read_dir(dir) {
+        let mut here = Vec::new();
+        for entry in read.filter_map(Result::ok) {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(s) = solution_in(&p) {
+                    here.push(s);
+                }
+            }
+        }
+        if !here.is_empty() {
+            return pick_best_solution(&mut here);
+        }
+        if depth >= 4 {
+            return None;
+        }
+        // Otherwise recurse into subdirs.
+        if let Ok(read2) = fs::read_dir(dir) {
+            for entry in read2.filter_map(Result::ok) {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if is_ignored_dir(name) {
+                        continue;
+                    }
+                    if let Some(s) = find_solution(&p, depth + 1) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(Serialize)]
 struct FeedItem {
     title: String,
     link: String,
@@ -812,6 +941,7 @@ pub fn run() {
             load_tile_icon,
             pick_image,
             load_frame_image,
+            scan_project_root,
             set_spotify_client_id,
             spotify_connected,
             spotify_begin,

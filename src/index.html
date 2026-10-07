@@ -50,6 +50,7 @@
           <button class="tab" data-tab="news">News</button>
           <button class="tab" data-tab="translate">Translate</button>
           <button class="tab" data-tab="frame">Frame</button>
+          <button class="tab" data-tab="projects">Projects</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="healthcheck">Healthcheck</button>
         </nav>
@@ -101,13 +102,14 @@
               <div class="item-row">
                 <input id="add-title" type="text" placeholder="Tile name" />
                 <select id="add-kind">
-                  <option value="launcher">Folders &amp; Solutions</option>
+                  <option value="launcher">Folders &amp; Files</option>
                   <option value="bookmarks">Bookmarks</option>
                   <option value="azure">Azure DevOps</option>
                   <option value="weather">Weather</option>
                   <option value="news">News</option>
                   <option value="translate">Translate</option>
                   <option value="frame">Frame</option>
+                  <option value="project">Projects</option>
                   <option value="spotify">Spotify</option>
                   <option value="system">System</option>
                 </select>
@@ -116,7 +118,7 @@
             </div>
           </div>
           <div class="tab-panel" data-panel="folders">
-            <p>Choose a tile, then add folders and solution (.sln) files to it. Click a tile on the dashboard to open it.</p>
+            <p>Choose a tile, then add folders and files to it. Click a tile on the dashboard to open it (via its file association).</p>
             <div id="folders-list"></div>
           </div>
           <div class="tab-panel" data-panel="bookmarks">
@@ -150,6 +152,10 @@
           <div class="tab-panel" data-panel="frame">
             <p>Photo-frame tile: choose a local image or GIF that fills this tile.</p>
             <div id="frame-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="projects">
+            <p>Projects/Services tile: add a repo root and it scans each subfolder for its solution. Each project has Folder + Solution buttons.</p>
+            <div id="project-list"></div>
           </div>
           <div class="tab-panel" data-panel="healthcheck"><div id="healthcheck-list"></div></div>
         </div>
