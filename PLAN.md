@@ -3,11 +3,12 @@
 Cross-machine tracking for the project. **This file + `spec.md` live in the repo** so work can
 continue from any machine. Keep this updated as you go.
 
-## Status
-- **Phase 0 (Foundation):** in progress — project skeleton + native commands are in place; build tooling, app-data persistence, and the production grid still need completing.
-- **Phase 1 (Core launchers):** not started.
-- **Phase 2 (Live information):** not started.
+## Status (updated 2026-10-07)
+- **Phase 0 (Foundation):** done — scaffold, native commands, app-data persistence, fixed-column grid with drag/resize/snap, timer lifecycle.
+- **Phase 1 (Core launchers):** done — Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links.
+- **Phase 2 (Live information):** mostly done — Weather + world clock, News, Translate, Spotify (+shuffle/repeat/queue). **Healthcheck not started.**
 - **Phase 3 (Enhancements):** not started (synced lyrics etc.).
+- **Review:** see `REVIEW.md`; open follow-ups tracked as GitHub issues #18, #19, #20.
 
 ## Locked decisions (from spec)
 | Decision | Value |
@@ -65,17 +66,19 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] Clear compartment refresh timers when tiles re-render or are removed
 
 ### Phase 1 — Core launchers
-- [x] **Folders / Solutions** compartment: pick paths in Settings, click to open
+- [x] **Folders & Files** compartment: pick paths in Settings (or OS drag-drop), click to open via association
+- [x] **Projects** compartment: repo-root scanning, per-project Folder + Solution buttons, re-scan, manual rows
 - [x] **Bookmarks** compartment: CRUD + click-to-open
 - [x] **Azure DevOps** compartment: repo config, deep-links (PR + Files) to specific repo
-- [x] Azure live tiles (open PR count / latest commit) — **dropped** (deep-links are enough)
+- [x] Azure live tiles (open PR count / latest commit) — **dropped** (deep-links are enough; spec §7)
 
 ### Phase 2 — Live information
 - [x] **Weather + world clock** compartment: per-location conditions + local time
 - [x] **News** compartment: RSS feeds, headline list, click-through
 - [x] **Translate** compartment: 3 language fields (EN/DE/ES default), DeepL-backed, key in OS secret store
-- [ ] **Service Healthcheck** compartment: GET /health, green/red + latency
-- [ ] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume
+- [x] **Frame** compartment: photo/GIF tile with fit modes
+- [ ] **Service Healthcheck** compartment: GET /health, green/red + latency (tab exists, no logic — REVIEW.md M1)
+- [x] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume, shuffle/repeat, queue + click-to-jump
 
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments

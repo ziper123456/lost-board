@@ -2,16 +2,18 @@
 type: spec
 title: lost-board — Feature Specification
 project: lost-board
-date: 2026-10-04
-status: draft
+date: 2026-10-07
+status: living (MVP built; healthcheck pending; in review — see REVIEW.md)
 decisions:
   arch: A (Tauri desktop app, local-only)
   scope: MVP all compartments except synced lyrics (phase 2)
   grid: fixed-column grid (snap to rows/columns)
-  azure: PAT from settings (read-only live tiles)
-  spotify: play/pause/next/prev/volume in v1; synced lyrics phase 2
+  azure: deep-links only (PAT live tiles dropped — deep-links sufficient)
+  spotify: play/pause/next/prev/volume + shuffle/repeat + queue in v1; synced lyrics phase 2
   weather: per-compartment locations + world-clock time per location
-  healthcheck: GET probes to configured /health endpoints (green/red + latency)
+  healthcheck: GET probes to configured /health endpoints (green/red + latency) — not yet built
+  launcher: folders + any file (open via OS association), plus Projects tile with root scanning
+  extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -64,16 +66,30 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-SET-003** Where the user enters an Azure PAT, the system shall store it locally (not in git,
   not in cloud) and use it only for Azure DevOps API calls.
 
-### 2.3 Compartment: Folder / Solution Launcher
+### 2.3 Compartment: Folders & Files Launcher
 
-- **FR-DIR-001** When the user clicks a configured folder compartment, the system shall open that
+- **FR-DIR-001** When the user clicks a configured folder item, the system shall open that
   folder in the OS file explorer.
-- **FR-DIR-002** When the user clicks a configured solution compartment, the system shall launch the
-  `.sln` file in Visual Studio (using its registered file association).
-- **FR-DIR-003** Where a solution file is missing, the system shall show a degraded state instead of
-  failing silently.
-- **FR-DIR-004** When the user configures a folder in Settings, the system shall let them browse to
-  the path (native file picker) rather than typing it.
+- **FR-DIR-002** When the user clicks a configured file item (including `.sln`), the system shall
+  open the file via its registered OS file association (a `.sln` opens in Visual Studio).
+  Opening a solution shall **not** build it.
+- **FR-DIR-003** Where a configured file or folder is missing, the system shall show a degraded
+  state instead of failing silently.
+- **FR-DIR-004** When the user configures a folder or file in Settings, the system shall let them
+  browse to the path (native file picker) rather than typing it.
+- **FR-DIR-005** When the user drops a folder or file from the OS file explorer onto a launcher
+  tile, the system shall add it to that tile's items (deduplicated, sorted).
+
+### 2.3b Compartment: Projects (repo-root scanning)
+
+- **FR-PRJ-001** When the user adds a repo root in Settings, the system shall scan each immediate
+  subfolder as a project and find its solution (`.sln` first, then `.slnx`, then `.csproj`,
+  searching downward, skipping hidden/build-output directories).
+- **FR-PRJ-002** Each project shall show a Folder button (opens in explorer) and a Solution button
+  (opens via file association); where no solution is found the Solution button shall be disabled.
+- **FR-PRJ-003** When the user clicks Re-scan, the system shall refresh that root's project list.
+- **FR-PRJ-004** The system shall allow manual project rows (folder + solution overrides) and
+  per-root titles and colors.
 
 ### 2.4 Compartment: Bookmarks + Azure DevOps
 
@@ -83,9 +99,9 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
   repo identifiers, and provide two deep-link actions: **Pull Requests** and **Files**.
 - **FR-BMK-003** When the user clicks an Azure "Pull Requests" or "Files" action, the system shall
   open the deep-link that targets the **specific configured repo** (not the last-opened one).
-- **FR-BMK-004** Where a PAT is configured, the system shall show live tiles: count of open PRs and
-  latest commit info for each configured repo.
-- **FR-BMK-005** Where no PAT is configured, the system shall still allow deep-link navigation
+- **FR-BMK-004** ~~Where a PAT is configured, the system shall show live tiles~~ — **dropped**
+  (deep-links are sufficient; see §7).
+- **FR-BMK-005** The system shall allow deep-link navigation without any PAT
   (bookmark-only mode).
 
 ### 2.5 Compartment: Spotify
@@ -97,6 +113,11 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-SPT-004** When the user adjusts the volume control, the system shall set Spotify's volume.
 - **FR-SPT-005** Where Spotify is not running or not authorized, the system shall show a clear
   "connect / open Spotify" state rather than an error.
+- **FR-SPT-006** The system shall show shuffle and repeat state synced from the player and allow
+  toggling shuffle and cycling repeat (off → context → track → off). Smart Shuffle is read-only
+  (not settable via the Web API) and shall be indicated as such.
+- **FR-SPT-007** The system shall show the upcoming queue; when the user clicks a queue song, the
+  system shall jump playback to it.
 
 ### 2.6 Compartment: Weather + World Clock (per location)
 
@@ -120,6 +141,17 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 
 - **FR-SYS-001** The system shall display current CPU usage and RAM usage, refreshed on an interval
   (e.g., every 1–2s).
+
+### 2.10 Compartment: Translate (added beyond original scope)
+
+- **FR-TRN-001** Each translate tile shall hold up to 3 language fields; when the user types in one
+  and clicks its Translate button, the system shall fill the others via DeepL.
+- **FR-TRN-002** The DeepL API key shall be stored in the OS secret store, never in config or git.
+
+### 2.11 Compartment: Frame (added beyond original scope)
+
+- **FR-FRM-001** When the user picks a local image or GIF for a frame tile, the system shall display
+  it filling the tile (configurable fit: cover / contain / stretch).
 
 ### 2.9 Compartment: Service Healthcheck
 
@@ -196,10 +228,11 @@ Given an Azure repo configured for org X / project Y / repo Z,
 When the user clicks the "Files" action,
 Then the browser opens the files page for repo Z specifically, not the last-opened repo.
 
-### AC-007: Azure live tile (PAT present)
-Given a valid PAT and an Azure repo with ≥1 open PR,
+### AC-007: Azure live tile (PAT present) — DROPPED
+~~Given a valid PAT and an Azure repo with ≥1 open PR,
 When the dashboard refreshes,
-Then the tile shows the count of open PRs for that repo.
+Then the tile shows the count of open PRs for that repo.~~
+Dropped with FR-BMK-004 (deep-links sufficient).
 
 ### AC-008: Azure bookmark-only mode (no PAT)
 Given no PAT configured,
@@ -236,10 +269,11 @@ Given a fixed-column grid,
 When the user drags a compartment,
 Then it snaps into the nearest grid cell without overlapping neighbors.
 
-### AC-015: Healthy service
+### AC-015: Healthy service — NOT YET BUILT
 Given a configured service whose health endpoint returns 200,
 When the dashboard probes it,
 Then the tile shows green and the reported latency.
+(Status: healthcheck tab exists in UI but has no logic — see REVIEW.md M1.)
 
 ### AC-016: Unhealthy service
 Given a configured service whose health endpoint returns 500 (or is unreachable),
@@ -338,6 +372,7 @@ Then the health endpoint URL opens in the browser.
 
 ## 7. Out of Scope (MVP) / Future
 - **Synced lyrics** → Phase 2 (largest complexity, least essential — confirmed decision).
+- **Azure PAT live tiles** (FR-BMK-004/AC-007) → dropped (deep-links sufficient).
 - Cloud sync, multi-device, accounts → out of scope (single-user local app).
 - Authentication / PIN → out of scope (decision 7).
 - Mobile / remote access → out of scope.
@@ -350,7 +385,8 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Project name~~ → **lost-board** (confirmed).
 - [x] ~~Grid density~~ → **fixed-column grid** (confirmed).
 - [x] ~~Weather locations~~ → **per-compartment locations + world-clock time** (confirmed).
-- [x] ~~Grid density~~ → **fixed-column grid** (confirmed).
 - [x] ~~Tech stack~~ → **Tauri** (confirmed).
-- [x] ~~Healthcheck compartment~~ → **probe-only GET, green/red + latency** (confirmed).
+- [x] ~~Healthcheck compartment~~ → **probe-only GET, green/red + latency** (confirmed; not yet built).
+- [x] ~~Azure PAT live tiles~~ → **dropped** (deep-links sufficient).
 - [ ] Healthcheck: which services/URLs do you want to probe first? (helps pick default refresh interval & whether auth headers are needed)
+- [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner).

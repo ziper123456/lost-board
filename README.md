@@ -13,10 +13,15 @@ weather (with world clocks), news, service healthchecks, and system stats.
 
 - **Frontend:** plain HTML + CSS + JS (no bundler) — fast to start, easy to reason about.
 - **Backend:** [Tauri v2](https://v2.tauri.app) (Rust). Exposes native commands a webpage cannot do:
-  - `open_folder` — open a folder in the OS file explorer
-  - `open_solution` — **open** a `.sln` via its OS file association (does **not** build it)
-  - `open_url` — open a URL in the default browser
+  - `open_folder` / `open_solution` / `open_url` — open folders, files (`.sln` opens in VS, **never builds**), URLs
+  - `pick_folder` / `pick_solution` / `pick_icon` / `pick_image` — native file pickers
+  - `classify_path` — classify a dropped path (dir / solution / file / missing)
+  - `scan_project_root` — scan a repo root into projects with solutions
   - `get_system_stats` — live CPU / RAM usage
+  - `fetch_rss` / `cache_favicon` — CORS-free feed fetch, on-disk favicon cache
+  - `load_state` / `save_state` — app-data JSON config with schema validation + `.bak` on corrupt
+  - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
+  - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue
 
 ## Prerequisites (one-time, per machine)
 
@@ -57,8 +62,11 @@ spec.md               # feature specification (EARS requirements, ACs, error han
 PLAN.md               # roadmap + implementation TODO (cross-machine)
 ```
 
-## Status
+## Status (updated 2026-10-07)
 
-Scaffold complete. Fixed-column grid (drag + snap + resize) and the Folders/Solutions
-compartment are done. Compartments still to build per [`PLAN.md`](PLAN.md): bookmarks, Azure,
-Spotify, weather+world-clock, news, healthcheck.
+MVP is built: fixed-column grid (drag + snap + resize), Folders & Files, Projects (root
+scanning), Bookmarks, Azure deep-links, Weather + world clocks, News, Translate, Frame,
+System stats, and Spotify (playback + shuffle/repeat + queue). **Still to build:** Service
+Healthcheck (tab exists, no logic yet). Details in [`PLAN.md`](PLAN.md), requirements in
+[`spec.md`](spec.md), latest review in [`REVIEW.md`](REVIEW.md), open follow-ups as GitHub
+issues #18, #19, #20.
