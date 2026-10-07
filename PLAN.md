@@ -82,18 +82,19 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] ~~**Service Healthcheck** compartment~~ — **dropped** (tab removal pending implementation)
 - [x] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume, shuffle/repeat, queue + click-to-jump
 
-### Next — Background mode (specced + planned, not yet built)
+### Next — Background mode + Vocab (specced + planned, not yet built)
 - [ ] Tray icon + menu (Show/Hide, Autostart, Quit) — FR-WIN-001 → `plans/background-mode.md` §4c
 - [ ] Autostart toggle in Settings — FR-WIN-002 → `plans/background-mode.md` §4c–e
 - [ ] Always-on-bottom + fullscreen + skip taskbar — FR-WIN-003/004 → `plans/background-mode.md` §4e
-- [ ] Remove dead Healthcheck tab from UI → `plans/healthcheck-tab-removal.md`
 - [ ] Play-test AC-018..020 on the work laptop (needs MSVC toolchain to build)
+- [ ] Vocab flashcard tile + drill popup (FR-VOC-001..008, AC-021..026) → `plans/vocab-flashcard-popup.md` (needs 3-screen setup for placement test; supersedes Practice-tile discussion)
+- [ ] Remove dead Healthcheck tab from UI → `plans/healthcheck-tab-removal.md`
 - [ ] Implementation plans index + conventions: `plans/README.md` (suggested build order included)
 
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments
 - [ ] Play-test AC-001..AC-017 (see spec.md)
-- [ ] **Spotify synced lyrics** (third-party provider, timeline sync)
+- [x] ~~Spotify synced lyrics~~ — **dropped**
 - [ ] macOS / Linux builds
 - [ ] Multi-screen / status-bar support
 - [ ] Weather: forecast detail / multiple units

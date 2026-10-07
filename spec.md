@@ -16,6 +16,7 @@ decisions:
   launcher: folders + any file (open via OS association), plus Projects tile with root scanning
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   window: background mode — tray + autostart + always-on-bottom (specced §2.12, not yet built)
+  vocab: flashcard tile (passive rotation) + drill popup (active recall) (specced §2.13, not yet built; supersedes Practice-tile discussion)
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -174,6 +175,35 @@ first-class APIs.
 - **FR-WIN-005** Known quirks (accepted): Win+D minimizes the window (restore via tray icon);
   Alt-Tab focus keeps it visually behind other windows.
 
+### 2.13 Vocab: flashcard tile + drill popup (next up — not yet built)
+
+Design: passive exposure lives on the board (infinite trilingual flashcard), active recall
+lives in a popup on the main screen (typing drill). This supersedes the earlier
+Practice-tile discussion — one passive surface + one active surface, no overlap.
+Card data comes from the shared `cards.csv` (single source of truth); tile and popup
+shuffle independently (different words in each is variety, not a bug).
+
+**Flashcard tile (passive):**
+
+- **FR-VOC-001** The tile shall display a trilingual card (English + Spanish + German) and
+  auto-advance to the next card every N seconds (per-tile setting).
+- **FR-VOC-002** Rotation shall pause while the tile is collapsed and resume when expanded.
+- **FR-VOC-003** The tile shall offer an action opening the full vocab-app (gateway, not replacement).
+
+**Drill popup (active):**
+
+- **FR-VOC-004** When popups are enabled, the system shall show a drill popup bottom-right of
+  the primary monitor every M minutes (setting).
+- **FR-VOC-005** Each popup shall present exactly one English word with an input for the target
+  language (popup language setting: ES / DE / Both, mirroring vocab-app modes).
+- **FR-VOC-006** Typing shall auto-check on match (case- and diacritic-insensitive, port of
+  vocab-app matching); max 2 attempts per word, then the answer is revealed.
+- **FR-VOC-007** On a correct answer the popup shall show a brief success state and auto-close
+  (~1.5s); on reveal-after-fail the user dismisses manually.
+- **FR-VOC-008** Every popup shall offer Dismiss and Snooze-30min; the system shall never stack
+  popups (no second popup while one is open); a quiet-hours window and a master enable/disable
+  switch shall be configurable.
+
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
 ~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).
@@ -298,6 +328,36 @@ Given Background mode on and fullscreen active,
 When the user exits fullscreen,
 Then the window returns to a movable windowed state (draggable by title bar).
 
+### AC-021: Flashcard rotation
+Given a vocab tile with rotation set to 10 seconds,
+When 10 seconds elapse,
+Then the tile shows the next trilingual (EN/ES/DE) card.
+
+### AC-022: Collapsed tile pauses rotation
+Given a collapsed vocab tile,
+When the rotation interval elapses,
+Then the card does not advance until the tile is expanded.
+
+### AC-023: Drill popup placement and schedule
+Given popups enabled every 30 minutes,
+When 30 minutes elapse with no popup open,
+Then a drill popup appears bottom-right of the primary monitor.
+
+### AC-024: Correct answer auto-closes
+Given an open drill popup,
+When the user types the correct translation,
+Then a success state shows and the popup auto-closes (~1.5s).
+
+### AC-025: Two wrong attempts reveal
+Given an open drill popup,
+When the user fails twice,
+Then the correct answer is revealed for manual dismissal.
+
+### AC-026: Snooze and no stacking
+Given an open drill popup,
+When the user clicks Snooze-30min (or while any popup is open),
+Then no new popup appears for 30 minutes (and never a second popup while one is open).
+
 ### AC-016: Unhealthy service
 Given a configured service whose health endpoint returns 500 (or is unreachable),
 When the dashboard probes it,
@@ -389,6 +449,11 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Spotify synced lyrics~~ — **dropped** (2026-10-07, no longer wanted).
 - [ ] Background mode implementation (FR-WIN-001..005, AC-018..020) — **code deferred to work laptop** (no build toolchain on this machine).
 - [ ] Healthcheck tab removal from UI (dropped feature cleanup).
+- [ ] Vocab implementation (FR-VOC-001..008, AC-021..026):
+  - [ ] Rust `read_vocab_cards` command (parse shared `cards.csv`, in-memory cache).
+  - [ ] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
+  - [ ] Drill popup page + scheduler + placement + annoyance controls.
+  - [ ] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
 - [ ] (Optional) macOS/Linux build; multi-screen/status-bar support.
 
 ---
@@ -415,3 +480,4 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Healthcheck services/URLs~~ → dropped with the feature.
 - [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner), #21 (config export/import).
 - [ ] Window close behavior with tray present (close-to-tray vs quit)? — decide during background-mode implementation.
+- [ ] Shared progress merge (tile/popup practice stats + vocab-app sessions in one store)? — future work; tile/popup stats stay local for now.

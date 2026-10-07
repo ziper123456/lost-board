@@ -19,6 +19,7 @@ MSVC toolchain to compile and test). Read the relevant file before implementing.
 | Item | Plan / tracking | Spec |
 |---|---|---|
 | Background mode (tray + autostart + always-on-bottom) | [`background-mode.md`](background-mode.md) | `spec.md` §2.12, AC-018..020 |
+| Vocab flashcard tile + drill popup | [`vocab-flashcard-popup.md`](vocab-flashcard-popup.md) | `spec.md` §2.13, AC-021..026 |
 | Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) | `spec.md` §2.9/§7 (dropped) |
 | Spotify queue-jump fast path | Issue #18 (code in issue) | `spec.md` FR-SPT-007 |
 | Projects tile resurrect fix | Issue #19 (code in issue) | — (bugfix) |
@@ -29,5 +30,6 @@ MSVC toolchain to compile and test). Read the relevant file before implementing.
 
 1. Healthcheck tab removal (trivial, warms up the build).
 2. Issues #19 → #20 (small, contained, verifiable).
-3. Background mode (largest; needs the plan's verification steps + AC-018..020).
-4. Issues #18 → #21 (need live Spotify / two-machine testing).
+3. Background mode (needs the plan's verification steps + AC-018..020).
+4. Vocab flashcard + popup (needs the 3-screen setup for AC-023 placement testing).
+5. Issues #18 → #21 (need live Spotify / two-machine testing).
