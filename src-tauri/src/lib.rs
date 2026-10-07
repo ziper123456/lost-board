@@ -874,6 +874,7 @@ async fn spotify_volume(percent: u8) -> Result<(), String> {
 struct SpotifyQueueItem {
     title: String,
     artist: String,
+    uri: String,
 }
 
 /// Fetch the current playback queue (the next-up tracks).
@@ -903,6 +904,7 @@ async fn spotify_queue() -> Result<Vec<SpotifyQueueItem>, String> {
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    uri: it.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                 })
                 .collect()
         })

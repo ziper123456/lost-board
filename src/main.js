@@ -926,6 +926,20 @@ async function renderSpotifyBody(c, body) {
   await refresh(true);
   const t = setInterval(() => refresh(false), 3000);
   addTimer(body, t);
+  // Jump to a queue song: re-fetch the queue, find the song's position, and
+  // skip forward that many times (the API has no direct jump-to-track).
+  body._spotJump = async (uri) => {
+    try {
+      const q = await native.spotifyQueue();
+      const idx = q.findIndex((s) => s.uri && s.uri === uri);
+      if (idx < 0) return;
+      for (let k = 0; k <= idx; k++) await native.spotifySkip(true);
+      lastTitle = null; // track will change -> force queue refresh
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  };
 }
 
 async function loadSpotifyQueue(body) {
@@ -943,8 +957,13 @@ async function loadSpotifyQueue(body) {
   }
   box.innerHTML = `<div class="spot-queue-title">Up next</div>` + queue
     .slice(0, 20)
-    .map((q) => `<div class="spot-queue-item"><span class="spot-queue-name" title="${escapeHtml(q.title)}">${escapeHtml(q.title)}</span><span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
+    .map((q) => `<div class="spot-queue-item" data-uri="${escapeHtml(q.uri || "")}" title="Play this next: ${escapeHtml(q.title)}"><span class="spot-queue-name">${escapeHtml(q.title)}</span><span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
     .join("");
+  box.querySelectorAll(".spot-queue-item[data-uri]").forEach((el) =>
+    el.addEventListener("click", () => {
+      if (el.dataset.uri && typeof body._spotJump === "function") body._spotJump(el.dataset.uri);
+    })
+  );
 }
 
 const PLAY_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
