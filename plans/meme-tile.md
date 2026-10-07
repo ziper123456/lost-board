@@ -94,7 +94,13 @@ Cache the list + timestamp in state; refetch when older than ~24h.
 - New overlay section in `index.html` (sibling to `#settings`, e.g. `#meme-focus`):
   large preview (image + live caption overlay), caption top/bottom inputs, collection
   grid (click = preview, × = remove), add-URL box, drop zone (same drop handler family),
-  Export PNG button, Close.
+  **search row (query input + engine select + Go; Enter confirms)**, Export PNG button, Close.
+- Search row behavior: on confirm, build `engineUrl.replace("{q}", encodeURIComponent(query))`
+  and call the existing `native.openUrl(...)` (same command bookmarks use — no new Rust code).
+  Default engine: Pinterest `https://www.pinterest.com/search/pins/?q={q}&rs=typed`;
+  engine URL stored in state (editable in the meme settings tab); a couple of presets
+  (Google Images, Bing) may be offered if their `{q}` patterns verify at build time —
+  otherwise ship Pinterest-only and add presets later.
 - Open/close helpers written generically (`openFocus(kind, id)` / `closeFocus()`) so a
   second tile can reuse them later — but only the meme tile wires them in v1.
 - Export: draw image + overlay text onto `<canvas>` at natural resolution, `toBlob` →
@@ -120,6 +126,7 @@ Old states load fine (arrays default to empty via existing `|| []` guards).
 5. Caption inputs render live overlay in expanded view (AC-030).
 6. Expand opens a larger-than-Settings view with preview, grid, add box, drop zone, editor (AC-031).
 7. Export saves an openable PNG (AC-032).
+8. Search box with "disappointing meme" opens the Pinterest search tab (AC-033); custom engine URL respected.
 
 ## 6. Done criteria
 

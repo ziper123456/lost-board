@@ -235,6 +235,10 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-MEM-006** The tile shall offer an Expand action opening an expanded view larger than
   the Settings panel (fullscreen in-app overlay): large preview, collection browser grid,
   add-URL box, drop zone, and the caption editor — all operable without scrolling a tiny tile.
+- **FR-MEM-007** The expanded view shall offer a search box: typing a query and confirming
+  shall open a browser tab at the configured search URL with the encoded query appended
+  (default: Pinterest `https://www.pinterest.com/search/pins/?q={q}&rs=typed`; engine URL
+  configurable with a `{q}` placeholder).
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
@@ -420,6 +424,11 @@ Given a captioned meme in the expanded view,
 When the user clicks Export,
 Then a PNG file is saved.
 
+### AC-033: Search box opens browser tab
+Given the expanded view with default engine,
+When the user types "disappointing meme" and confirms,
+Then a browser tab opens at `https://www.pinterest.com/search/pins/?q=disappointing%20meme&rs=typed`.
+
 ### AC-016: Unhealthy service
 Given a configured service whose health endpoint returns 500 (or is unreachable),
 When the dashboard probes it,
@@ -516,7 +525,7 @@ Then the health endpoint URL opens in the browser.
   - [ ] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
   - [ ] Drill popup page + scheduler + placement + annoyance controls.
   - [ ] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
-- [ ] Meme tile implementation (FR-MEM-001..006, AC-027..032):
+- [ ] Meme tile implementation (FR-MEM-001..007, AC-027..033):
   - [ ] Rotation from top-100 + shared curated collection (image fetch/cache command).
   - [ ] Add via URL paste + file drop (browser-tab drop best-effort).
   - [ ] Local caption overlay + PNG export.
