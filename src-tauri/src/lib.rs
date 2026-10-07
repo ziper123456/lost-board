@@ -189,9 +189,9 @@ fn scan_project_root(root: String) -> Result<Vec<ProjectEntry>, String> {
                 root_solutions.push(sln);
             }
         } else if p.is_dir() {
-            // Skip common ignored dirs.
+            // Skip common ignored dirs and hidden/dot-dirs (e.g. .vs, .idea).
             let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
-            if matches!(name, "node_modules" | "bin" | "obj" | ".git" | "target" | "dist" | "out") {
+            if is_ignored_dir(name) {
                 continue;
             }
             let solution = find_solution(&p, 0);
@@ -205,12 +205,39 @@ fn scan_project_root(root: String) -> Result<Vec<ProjectEntry>, String> {
     if !root_solutions.is_empty() {
         projects.insert(0, ProjectEntry {
             folder: root_p.to_string_lossy().into_owned(),
-            solution: Some(root_solutions.join(";")),
+            solution: pick_best_solution(&mut root_solutions),
         });
     }
 
     projects.sort_by(|a, b| a.folder.cmp(&b.folder));
     Ok(projects)
+}
+
+/// Directories never treated as projects and never recursed into.
+fn is_ignored_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "bin" | "obj" | "target" | "dist" | "out"
+        )
+}
+
+/// A folder can hold several candidates (e.g. a .sln next to a .csproj).
+/// The Solution button opens exactly one path, so pick a single winner:
+/// .sln first, then .slnx, then .csproj, alphabetical within each kind.
+fn pick_best_solution(candidates: &mut Vec<String>) -> Option<String> {
+    candidates.sort();
+    let rank = |s: &str| {
+        if s.ends_with(".sln") {
+            0
+        } else if s.ends_with(".slnx") {
+            1
+        } else {
+            2
+        }
+    };
+    candidates.sort_by_key(|s| rank(s));
+    candidates.into_iter().next().cloned()
 }
 
 fn solution_in(p: &Path) -> Option<String> {
@@ -236,21 +263,23 @@ fn find_solution(dir: &Path, depth: usize) -> Option<String> {
             }
         }
         if !here.is_empty() {
-            return Some(here.join(";"));
+            return pick_best_solution(&mut here);
         }
         if depth >= 4 {
             return None;
         }
         // Otherwise recurse into subdirs.
-        for entry in fs::read_dir(dir).unwrap().filter_map(Result::ok) {
-            let p = entry.path();
-            if p.is_dir() {
-                let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
-                if matches!(name, "node_modules" | "bin" | "obj" | ".git" | "target" | "dist" | "out") {
-                    continue;
-                }
-                if let Some(s) = find_solution(&p, depth + 1) {
-                    return Some(s);
+        if let Ok(read2) = fs::read_dir(dir) {
+            for entry in read2.filter_map(Result::ok) {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if is_ignored_dir(name) {
+                        continue;
+                    }
+                    if let Some(s) = find_solution(&p, depth + 1) {
+                        return Some(s);
+                    }
                 }
             }
         }
