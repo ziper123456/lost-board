@@ -24,6 +24,7 @@ const ICON = {
   remove: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`,
   folder: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>`,
   solution: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/></svg>`,
+  file: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/><circle cx="8" cy="10.5" r="1.2"/></svg>`,
 };
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ const DEFAULT_STATE = {
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
     { id: "bmk", kind: "bookmarks", title: "Bookmarks", x: 6, y: 0, w: 6, h: 2, data: { urls: [] } },
-    { id: "lch", kind: "launcher", title: "Folders & Solutions", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
+    { id: "lch", kind: "launcher", title: "Folders & Files", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
 
@@ -162,6 +163,10 @@ async openFolder(path) {
   async loadFrameImage(path) {
     if (window.__TAURI__) return invoke("load_frame_image", { path });
     return "";
+  },
+  async scanProjectRoot(root) {
+    if (window.__TAURI__) return invoke("scan_project_root", { root });
+    return [];
   },
   async setSpotifyClientId(id) {
     if (window.__TAURI__) return invoke("set_spotify_client_id", { id });
@@ -545,14 +550,16 @@ async function renderCompartmentBody(c, body) {
   } else if (c.kind === "launcher") {
     const items = c.data?.items || [];
     if (!items.length) {
-      body.innerHTML = `<div class="muted">No folders or solutions yet — add some in Settings.</div>`;
+      body.innerHTML = `<div class="muted">No folders or files yet — add some in Settings.</div>`;
       return;
     }
     body.innerHTML = items
       .map(
         (it, i) => `
         <div class="launcher-tile ${it.kind}">
-          <span class="launcher-icon">${it.kind === "folder" ? ICON.folder : ICON.solution}</span>
+          <span class="launcher-icon">${
+            it.kind === "folder" ? ICON.folder : it.kind === "solution" ? ICON.solution : ICON.file
+          }</span>
           <button class="launcher-open" data-id="${c.id}" data-idx="${i}">${escapeHtml(it.label || it.path)}</button>
           <span class="launcher-path" title="${escapeHtml(it.path)}">${escapeHtml(it.path)}</span>
         </div>`
@@ -566,7 +573,7 @@ async function renderCompartmentBody(c, body) {
         b.classList.remove("err");
         try {
           if (it.kind === "folder") await native.openFolder(it.path);
-          else await native.openSolution(it.path);
+          else await native.openSolution(it.path); // opens any file via association
         } catch (err) {
           b.classList.add("err");
           b.textContent = "Not found: " + (it.label || it.path);
@@ -637,6 +644,8 @@ async function renderCompartmentBody(c, body) {
     renderFrameBody(c, body);
   } else if (c.kind === "spotify") {
     renderSpotifyBody(c, body);
+  } else if (c.kind === "project") {
+    renderProjectsBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -903,6 +912,63 @@ const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="curren
 const PREV_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 7h2v10H6zM20 5v14L9 12z"/></svg>`;
 // Next: a vertical bar on the left + triangle pointing right.
 const NEXT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 7h2v10h-2zM4 5v14l11-7z"/></svg>`;
+
+// ---------------------------------------------------------------------------
+// Projects tile. Per repo root, lists each subfolder as a project with a
+// Folder button and a Solution button (greyed when none). Roots are grouped,
+// each group collapsible. Paths are editable in Settings.
+// ---------------------------------------------------------------------------
+function renderProjectsBody(c, body) {
+  const roots = c.data?.roots || [];
+  const groupIcon = (open) =>
+    `<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style="transition:transform .12s;${open ? "" : "transform:rotate(-90deg)"}"><path d="M6 4l4 4-4 4z"/></svg>`;
+  const folderBtn = (folder) =>
+    `<button class="btn ghost prj-folder" data-path="${escapeHtml(folder)}" title="Open folder">${ICON.folder} Folder</button>`;
+  const solBtn = (solution) =>
+    solution
+      ? `<button class="btn ghost prj-sol" data-path="${escapeHtml(solution)}" title="Open solution">${ICON.solution} Solution</button>`
+      : `<button class="btn ghost prj-sol muted" disabled title="No solution found">${ICON.solution} Solution</button>`;
+
+  body.innerHTML =
+    (roots.length ? "" : `<div class="prj-note">Configure repo roots in Settings to auto-fill projects.</div>`) +
+    roots
+      .map((root, ri) => {
+        const open = root.collapsed !== true;
+        const items = (root.projects || [])
+          .map(
+            (pr, i) => `
+            <div class="prj-row">
+              <span class="prj-name">${escapeHtml(pr.folder.split(/[\\/]/).pop() || pr.folder)}</span>
+              <div class="prj-actions">
+                ${folderBtn(pr.folder)}
+                ${solBtn(pr.solution)}
+              </div>
+            </div>`
+          )
+          .join("");
+        return `
+        <div class="prj-group">
+          <button class="prj-root" data-root="${ri}">${groupIcon(open)} <span>${escapeHtml(root.path)}</span></button>
+          <div class="prj-items" ${open ? "" : "hidden"}>${items || `<div class="muted">No projects found.</div>`}</div>
+        </div>`;
+      })
+      .join("");
+
+  body.querySelectorAll(".prj-root").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const ri = Number(btn.dataset.root);
+      roots[ri].collapsed = roots[ri].collapsed !== true;
+      saveState();
+      render();
+    })
+  );
+  body.querySelectorAll(".prj-folder").forEach((b) =>
+    b.addEventListener("click", () => native.openFolder(b.dataset.path).catch((e) => alert(`Folder: ${e.message || e}`)))
+  );
+  body.querySelectorAll(".prj-sol:not([disabled])").forEach((b) =>
+    b.addEventListener("click", () => native.openSolution(b.dataset.path).catch((e) => alert(`Solution: ${e.message || e}`)))
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Weather + world clock. Open-Meteo (no API key). Each weather compartment
@@ -1192,6 +1258,7 @@ function activateTab(tabName) {
   if (tabName === "translate") renderTranslateSettings();
   if (tabName === "frame") renderFrameSettings();
   if (tabName === "spotify") renderSpotifySettings();
+  if (tabName === "projects") renderProjectsSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -1206,6 +1273,7 @@ const KIND_TAB = {
   translate: "translate",
   frame: "frame",
   spotify: "spotify",
+  project: "projects",
 };
 
 function openTileSettings(id) {
@@ -1221,6 +1289,7 @@ function openTileSettings(id) {
   if (comp.kind === "translate") selectedTranslateId = id;
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
+  if (comp.kind === "project") selectedProjectId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1395,6 +1464,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "translate") renderTranslateSettings();
   if (comp.kind === "frame") renderFrameSettings();
   if (comp.kind === "spotify") renderSpotifySettings();
+  if (comp.kind === "project") renderProjectsSettings();
 }
 
 function ensureLauncher() {
@@ -1403,7 +1473,7 @@ function ensureLauncher() {
     const launcher = {
       id: "launcher" + Date.now(),
       kind: "launcher",
-      title: "Folders & Solutions",
+      title: "Folders & Files",
       x: 0,
       y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
       w: 4,
@@ -2346,8 +2416,159 @@ function renderSpotifySettings() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Projects settings editor. Add repo roots; each root is scanned for projects
+// (folder + solution), with editable paths and manual-rows for overrides.
+// ---------------------------------------------------------------------------
+let selectedProjectId = null;
+function ensureProjectComp() {
+  const comps = state.compartments.filter((c) => c.kind === "project");
+  if (comps.length === 0) {
+    const comp = {
+      id: "prj" + Date.now(),
+      kind: "project",
+      title: "Projects",
+      x: 0,
+      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
+      w: 5,
+      h: 5,
+      data: { roots: [] },
+    };
+    state.compartments.push(comp);
+    selectedProjectId = comp.id;
+    return comp;
+  }
+  if (!comps.some((c) => c.id === selectedProjectId)) selectedProjectId = comps[0].id;
+  const comp = state.compartments.find((c) => c.id === selectedProjectId);
+  comp.data = comp.data || {};
+  if (!Array.isArray(comp.data.roots)) comp.data.roots = [];
+  return comp;
+}
+function commitProject(comp) {
+  saveState();
+  render();
+  renderProjectsSettings();
+}
+function renderProjectsSettings() {
+  const panel = document.getElementById("project-list");
+  if (!panel) return;
+  const comp = ensureProjectComp();
+  const comps = state.compartments.filter((c) => c.kind === "project");
+
+  panel.innerHTML = "";
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="project-select">
+      ${comps
+        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+        .join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const addRoot = document.createElement("div");
+  addRoot.className = "item-row";
+  addRoot.innerHTML = `
+    <label>Repo root</label>
+    <input id="project-root" type="text" placeholder="e.g. D:\\dev\\core\\src" />
+    <button class="btn ghost" id="project-browse">Browse…</button>
+    <button class="btn primary" id="project-add-root">Add</button>`;
+  panel.appendChild(addRoot);
+
+  comp.data.roots.forEach((root, ri) => {
+    const group = document.createElement("div");
+    group.className = "prj-settings-group";
+    const items = (root.projects || [])
+      .map(
+        (pr, i) => `
+        <div class="item-row prj-edit-row">
+          <input class="pj-folder" data-ri="${ri}" data-i="${i}" type="text" title="Folder path" value="${escapeHtml(pr.folder)}" />
+          <input class="pj-solution" data-ri="${ri}" data-i="${i}" type="text" title="Solution path (empty = none)" value="${escapeHtml(pr.solution || "")}" />
+          <button class="btn ghost danger icon-btn pj-del" data-ri="${ri}" data-i="${i}">${ICON.remove}</button>
+        </div>`
+      )
+      .join("");
+    group.innerHTML = `
+      <div class="item-row prj-settings-head">
+        <strong>${escapeHtml(root.path)}</strong>
+        <button class="btn ghost pj-scan" data-ri="${ri}">Re-scan</button>
+        <button class="btn ghost danger pj-rm-root" data-ri="${ri}">Remove root</button>
+      </div>
+      <div class="prj-settings-items">${items}</div>
+      <button class="btn ghost pj-add-row" data-ri="${ri}">+ manual project</button>`;
+    panel.appendChild(group);
+  });
+
+  panel.querySelector("#project-select").addEventListener("change", (e) => {
+    selectedProjectId = e.target.value;
+    renderProjectsSettings();
+  });
+  panel.querySelector("#project-browse").addEventListener("click", async () => {
+    const p = await native.pickFolder();
+    if (p) panel.querySelector("#project-root").value = p;
+  });
+  panel.querySelector("#project-add-root").addEventListener("click", async () => {
+    const rootPath = panel.querySelector("#project-root").value.trim();
+    if (!rootPath) return;
+    comp.data.roots.push({ path: rootPath, collapsed: false, projects: [] });
+    const root = comp.data.roots[comp.data.roots.length - 1];
+    try {
+      root.projects = await native.scanProjectRoot(rootPath);
+    } catch (e) {
+      root.projects = [];
+    }
+    commitProject(comp);
+  });
+  panel.querySelectorAll(".prj-rm-root").forEach((b) =>
+    b.addEventListener("click", () => {
+      comp.data.roots.splice(Number(b.dataset.ri), 1);
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".pj-scan").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const root = comp.data.roots[Number(b.dataset.ri)];
+      try {
+        root.projects = await native.scanProjectRoot(root.path);
+      } catch (e) {
+        root.projects = [];
+      }
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".pj-add-row").forEach((b) => {
+    b.addEventListener("click", () => {
+      const root = comp.data.roots[Number(b.dataset.ri)];
+      root.projects.push({ folder: "", solution: "" });
+      commitProject(comp);
+    });
+  });
+  panel.querySelectorAll(".pj-folder").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].folder = e.target.value;
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".pj-solution").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].solution = e.target.value;
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".pj-del").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      const root = comp.data.roots[Number(e.target.dataset.ri)];
+      root.projects.splice(Number(e.target.dataset.i), 1);
+      commitProject(comp);
+    })
+  );
+}
+
 const KIND_DEFAULTS = {
-  launcher: { title: "Folders & Solutions", data: { items: [] } },
+  launcher: { title: "Folders & Files", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
   azure: { title: "Azure DevOps", data: { org: "", project: "", repos: [] } },
   system: { title: "System", data: {} },
@@ -2356,6 +2577,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
+  project: { title: "Projects", data: { roots: [] } },
 };
 
 document.getElementById("btn-add-compartment").addEventListener("click", () => {
@@ -2633,10 +2855,11 @@ async function setupDragDrop() {
 
     for (const p of paths) {
       const kind = await native.classifyPath(p);
-      if (kind !== "dir" && kind !== "sln") continue;
+      if (kind === "missing") continue;
+      const itemKind = kind === "dir" ? "folder" : kind === "sln" ? "solution" : "file";
       const label = p.split(/[\\/]/).pop() || p;
       if (comp.data.items.some((it) => it.path === p)) continue; // no dupes
-      comp.data.items.push({ kind: kind === "dir" ? "folder" : "solution", label, path: p });
+      comp.data.items.push({ kind: itemKind, label, path: p });
     }
     comp.data.items.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }));
     saveState();
