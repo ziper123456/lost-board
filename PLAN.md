@@ -6,9 +6,11 @@ continue from any machine. Keep this updated as you go.
 ## Status (updated 2026-10-07)
 - **Phase 0 (Foundation):** done — scaffold, native commands, app-data persistence, fixed-column grid with drag/resize/snap, timer lifecycle.
 - **Phase 1 (Core launchers):** done — Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links.
-- **Phase 2 (Live information):** mostly done — Weather + world clock, News, Translate, Spotify (+shuffle/repeat/queue). **Healthcheck not started.**
-- **Phase 3 (Enhancements):** not started (synced lyrics etc.).
-- **Review:** see `REVIEW.md`; open follow-ups tracked as GitHub issues #18, #19, #20.
+- **Phase 2 (Live information):** mostly done — Weather + world clock, News, Translate, Spotify (+shuffle/repeat/queue).
+- **Dropped (2026-10-07):** Service Healthcheck, synced lyrics, git-status tile, sticky notes. (Local clock covered by weather tiles; media keys covered by keyboard.)
+- **Next up:** Background mode — tray + autostart + always-on-bottom (specced in `spec.md` §2.12, AC-018..020).
+- **Review:** see `REVIEW.md`; open follow-ups tracked as GitHub issues #18, #19, #20, #21.
+- **Environment note:** this machine (personal PC) has no MSVC toolchain and no work laptop access right now — **all code changes deferred to the work laptop** (docs/spec/issues only until then).
 
 ## Locked decisions (from spec)
 | Decision | Value |
@@ -77,8 +79,15 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] **News** compartment: RSS feeds, headline list, click-through
 - [x] **Translate** compartment: 3 language fields (EN/DE/ES default), DeepL-backed, key in OS secret store
 - [x] **Frame** compartment: photo/GIF tile with fit modes
-- [ ] **Service Healthcheck** compartment: GET /health, green/red + latency (tab exists, no logic — REVIEW.md M1)
+- [x] ~~**Service Healthcheck** compartment~~ — **dropped** (tab removal pending implementation)
 - [x] **Spotify** compartment: OAuth PKCE, now-playing, play/pause/next/prev/volume, shuffle/repeat, queue + click-to-jump
+
+### Next — Background mode (specced, not yet built)
+- [ ] Tray icon + menu (Show/Hide, Autostart, Quit) — FR-WIN-001
+- [ ] Autostart toggle in Settings — FR-WIN-002
+- [ ] Always-on-bottom + fullscreen + skip taskbar — FR-WIN-003/004
+- [ ] Remove dead Healthcheck tab from UI
+- [ ] Play-test AC-018..020 on the work laptop (needs MSVC toolchain to build)
 
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments

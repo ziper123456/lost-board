@@ -3,17 +3,19 @@ type: spec
 title: lost-board — Feature Specification
 project: lost-board
 date: 2026-10-07
-status: living (MVP built; healthcheck pending; in review — see REVIEW.md)
+status: living (MVP built; background-mode specced, code deferred to work laptop — see REVIEW.md)
 decisions:
   arch: A (Tauri desktop app, local-only)
   scope: MVP all compartments except synced lyrics (phase 2)
   grid: fixed-column grid (snap to rows/columns)
   azure: deep-links only (PAT live tiles dropped — deep-links sufficient)
-  spotify: play/pause/next/prev/volume + shuffle/repeat + queue in v1; synced lyrics phase 2
+  spotify: play/pause/next/prev/volume + shuffle/repeat + queue in v1; synced lyrics dropped
   weather: per-compartment locations + world-clock time per location
-  healthcheck: GET probes to configured /health endpoints (green/red + latency) — not yet built
+  healthcheck: dropped (probe tile deemed unnecessary)
+  lyrics: dropped (was phase 2; no longer wanted)
   launcher: folders + any file (open via OS association), plus Projects tile with root scanning
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
+  window: background mode — tray + autostart + always-on-bottom (specced §2.12, not yet built)
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -153,21 +155,30 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-FRM-001** When the user picks a local image or GIF for a frame tile, the system shall display
   it filling the tile (configurable fit: cover / contain / stretch).
 
-### 2.9 Compartment: Service Healthcheck
+### 2.12 Window, Tray & Background Mode (next up — not yet built)
 
-- **FR-HLT-001** When the user configures a service healthcheck, the system shall periodically send
-  a `GET` request to the service's health endpoint (configurable path, default `/health`).
-- **FR-HLT-002** When a health probe returns a 2xx status, the system shall mark that service
-  **healthy** (green).
-- **FR-HLT-003** When a health probe returns a non-2xx status, times out, or fails to connect, the
-  system shall mark that service **unhealthy** (red).
-- **FR-HLT-004** The system shall display the **HTTP status and latency (ms)** for each service.
-- **FR-HLT-005** When the user clicks a service tile, the system shall open the service's health
-  endpoint in the browser.
-- **FR-HLT-006** Health probes shall be configurable in Settings (URL, optional custom path,
-  optional timeout, refresh interval, optional auth header/token).
-- **FR-HLT-007** Where a service requires authentication, the system shall send the configured token
-  as a header (e.g., `Authorization: Bearer <token>`) and store it via the OS secret store.
+Rationale: a dashboard glanced at all day belongs behind everything as a living background,
+not as a window to reopen. Verified against Tauri v2 docs (2026-10-07): all three pieces are
+first-class APIs.
+
+- **FR-WIN-001** The system shall show a system-tray icon with a menu: Show/Hide, Autostart
+  on/off, Quit. (Tauri core `tray-icon` feature + `TrayIconBuilder`.)
+- **FR-WIN-002** When the user toggles Autostart in Settings, the system shall enable/disable
+  launch-on-Windows-login. (`tauri-plugin-autostart`.)
+- **FR-WIN-003** When the user enables Background mode, the system shall pin the window
+  always-on-bottom, go fullscreen, and hide its taskbar slot, so the dashboard sits behind all
+  other apps like wallpaper. (`setAlwaysOnBottom(true)` + `core:window:allow-set-always-on-bottom`
+  permission + `skipTaskbar`.)
+- **FR-WIN-004** When the user exits fullscreen (F11 / toggle) with Background mode on, the system
+  shall return to a windowed mode that is movable by dragging the title bar.
+- **FR-WIN-005** Known quirks (accepted): Win+D minimizes the window (restore via tray icon);
+  Alt-Tab focus keeps it visually behind other windows.
+
+### 2.9 Compartment: Service Healthcheck — DROPPED
+
+~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).
+The dead Healthcheck tab shall be removed from the UI when implementation resumes (see §7).
+AC-015..017 are dropped with it.
 
 ---
 
@@ -269,11 +280,23 @@ Given a fixed-column grid,
 When the user drags a compartment,
 Then it snaps into the nearest grid cell without overlapping neighbors.
 
-### AC-015: Healthy service — NOT YET BUILT
-Given a configured service whose health endpoint returns 200,
-When the dashboard probes it,
-Then the tile shows green and the reported latency.
-(Status: healthcheck tab exists in UI but has no logic — see REVIEW.md M1.)
+### AC-015/016/017: Healthcheck — DROPPED
+~~Healthy / unhealthy service tiles, click-through.~~ Dropped with FR-HLT (2026-10-07).
+
+### AC-018: Autostart
+Given Autostart enabled in Settings,
+When Windows starts a new login session,
+Then lost-board launches automatically.
+
+### AC-019: Background mode
+Given Background mode enabled,
+When the user opens other applications,
+Then the dashboard stays fullscreen behind them, with no taskbar slot and a tray icon present.
+
+### AC-020: Exit to windowed
+Given Background mode on and fullscreen active,
+When the user exits fullscreen,
+Then the window returns to a movable windowed state (draggable by title bar).
 
 ### AC-016: Unhealthy service
 Given a configured service whose health endpoint returns 500 (or is unreachable),
@@ -362,16 +385,17 @@ Then the health endpoint URL opens in the browser.
 - [ ] Offline / stale-data badge behavior across network compartments.
 - [ ] Play-test AC-001..AC-012.
 
-### Phase 2 — Synced lyrics + enhancements
-- [ ] Spotify synced lyrics via third-party provider (LRCLIB is free & sync-friendly; Musixmatch/Genius as alternatives).
-- [ ] Timeline syncing to track position.
-- [ ] Fallback "unsynced" display when no synced lyric available.
+### Phase 2 — Enhancements
+- [x] ~~Spotify synced lyrics~~ — **dropped** (2026-10-07, no longer wanted).
+- [ ] Background mode implementation (FR-WIN-001..005, AC-018..020) — **code deferred to work laptop** (no build toolchain on this machine).
+- [ ] Healthcheck tab removal from UI (dropped feature cleanup).
 - [ ] (Optional) macOS/Linux build; multi-screen/status-bar support.
 
 ---
 
 ## 7. Out of Scope (MVP) / Future
-- **Synced lyrics** → Phase 2 (largest complexity, least essential — confirmed decision).
+- **Synced lyrics** → dropped (2026-10-07, was Phase 2, no longer wanted).
+- **Service Healthcheck** (FR-HLT/AC-015..017 + UI tab) → dropped (2026-10-07, deemed unnecessary).
 - **Azure PAT live tiles** (FR-BMK-004/AC-007) → dropped (deep-links sufficient).
 - Cloud sync, multi-device, accounts → out of scope (single-user local app).
 - Authentication / PIN → out of scope (decision 7).
@@ -388,5 +412,6 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Tech stack~~ → **Tauri** (confirmed).
 - [x] ~~Healthcheck compartment~~ → **probe-only GET, green/red + latency** (confirmed; not yet built).
 - [x] ~~Azure PAT live tiles~~ → **dropped** (deep-links sufficient).
-- [ ] Healthcheck: which services/URLs do you want to probe first? (helps pick default refresh interval & whether auth headers are needed)
-- [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner).
+- [x] ~~Healthcheck services/URLs~~ → dropped with the feature.
+- [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner), #21 (config export/import).
+- [ ] Window close behavior with tray present (close-to-tray vs quit)? — decide during background-mode implementation.
