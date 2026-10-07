@@ -2522,30 +2522,6 @@ function renderProjectsSettings() {
     }
     commitProject(comp);
   });
-  panel.querySelectorAll(".prj-rm-root").forEach((b) =>
-    b.addEventListener("click", (e) => {
-      comp.data.roots.splice(Number(e.currentTarget.dataset.ri), 1);
-      commitProject(comp);
-    })
-  );
-  panel.querySelectorAll(".pj-scan").forEach((b) =>
-    b.addEventListener("click", async (e) => {
-      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
-      try {
-        root.projects = await native.scanProjectRoot(root.path);
-      } catch (err) {
-        root.projects = [];
-      }
-      commitProject(comp);
-    })
-  );
-  panel.querySelectorAll(".pj-add-row").forEach((b) => {
-    b.addEventListener("click", (e) => {
-      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
-      root.projects.push({ folder: "", solution: "" });
-      commitProject(comp);
-    });
-  });
   panel.querySelectorAll(".pj-folder").forEach((inp) =>
     inp.addEventListener("change", (e) => {
       comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].folder = e.target.value;
@@ -2558,13 +2534,38 @@ function renderProjectsSettings() {
       commitProject(comp);
     })
   );
-  panel.querySelectorAll(".pj-del").forEach((b) =>
-    b.addEventListener("click", (e) => {
-      const root = comp.data.roots[Number(e.currentTarget.dataset.ri)];
-      root.projects.splice(Number(e.currentTarget.dataset.i), 1);
-      commitProject(comp);
-    })
-  );
+
+  // Event delegation on the panel for the project action buttons. Added once so
+  // re-renders don't stack duplicate handlers; resolves the current comp fresh.
+  if (!panel.dataset.deleg) {
+    panel.dataset.deleg = "1";
+    panel.addEventListener("click", (e) => {
+      const btn = e.target.closest(".prj-rm-root, .pj-scan, .pj-add-row, .pj-del");
+      if (!btn) return;
+      const comp = ensureProjectComp();
+      const ri = Number(btn.dataset.ri);
+      if (btn.classList.contains("prj-rm-root")) {
+        comp.data.roots.splice(ri, 1);
+        commitProject(comp);
+      } else if (btn.classList.contains("pj-scan")) {
+        const root = comp.data.roots[ri];
+        (async () => {
+          try {
+            root.projects = await native.scanProjectRoot(root.path);
+          } catch (err) {
+            root.projects = [];
+          }
+          commitProject(comp);
+        })();
+      } else if (btn.classList.contains("pj-add-row")) {
+        comp.data.roots[ri].projects.push({ folder: "", solution: "" });
+        commitProject(comp);
+      } else if (btn.classList.contains("pj-del")) {
+        comp.data.roots[ri].projects.splice(Number(btn.dataset.i), 1);
+        commitProject(comp);
+      }
+    });
+  }
 }
 
 const KIND_DEFAULTS = {
