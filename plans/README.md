@@ -6,10 +6,14 @@ MSVC toolchain to compile and test). Read the relevant file before implementing.
 ## Conventions (both machines)
 
 1. **Compiler is truth.** Sketches are uncompiled reference — verify every API at
-   build time, fix drift, and list corrections in the commit message.
-2. **Close the loop.** Commit messages reference the plan file
-   (e.g. `implements plans/background-mode.md`). If implementation diverged from
-   the plan, say what and why.
+   build time and fix drift.
+2. **Close the loop (blocking, not prose).** Every implementation commit must do all three:
+   (a) reference the plan file (e.g. `implements plans/background-mode.md`);
+   (b) append dated entries to that plan's **Corrections log** (§8) for every API name
+   that differed from the sketches;
+   (c) state divergences (what changed from the plan and why).
+   A commit without (b) is the early-warning sign from the 2026-10-07 pre-mortem —
+   it means drift is going unrecorded.
 3. **One plan per work item.** Small fixes live as GitHub issues (with code);
    larger features get a file here. Never duplicate code in both places —
    point at the single source.

@@ -58,6 +58,8 @@ async fn fetch_image_cached(app: tauri::AppHandle, url: String) -> Result<String
 - Extension/mime: sniff from `Content-Type` response header (Pinterest URLs often lack
   usable extensions) with extension fallback; reject non-image content-types.
 - Size guard: refuse absurd payloads (e.g. > 15 MB) with a clear error.
+- Cache key: hash of the canonical URL (e.g. SHA-256 hex); this key is what
+  `state.memeCollection[].cacheKey` references — the join point between disk and state.
 - Register in `generate_handler![...]`; add frontend `native.fetchImageCached(url)` wrapper.
 
 Top-100 list itself: fetch from **frontend** `fetch()` (imgflip sends permissive CORS —
@@ -80,10 +82,16 @@ Cache the list + timestamp in state; refetch when older than ~24h.
 
 ### 4c. Curated collection settings
 
-- Shared store: `state.memeCollection = [{ id, name, dataUri|url, addedAt }]` (top-level,
-  not per tile). Cap at ~200 entries with a clear-full/oldest warning (data-URIs bloat
-  state JSON — note: large GIFs as data-URIs in persisted state is the known perf
-  caveat from the performance review; prefer stills, warn over ~5 MB total).
+> Pre-mortem Failure #3: **never persist image bytes in state JSON.** Entries store
+> *references*; bytes live in the disk cache from §4a. A 40 MB state file with a
+> `localStorage` write on every `saveState()` is how config silently stops saving.
+
+- Shared store: `state.memeCollection = [{ id, name, sourceUrl, cacheKey, addedAt }]`
+  (top-level, not per tile). At render time, resolve `cacheKey` → data-URI from the
+  disk cache (re-fetch from `sourceUrl` on cache miss, then re-cache).
+- Cap at ~200 entries. **State-size guard:** if the state JSON exceeds ~1 MB, surface a
+  warning in Settings (this is the early-warning signal — investigate before it grows).
+- Prefer stills over GIFs in guidance text (perf review finding).
 - Add flows: URL paste box (fetch → cache → push), file browse (reuse `pick_image` +
   `load_frame_image`), OS drop onto tile (§2).
 - Per-entry remove; collection browser grid lives in the expanded view (§4d), settings
@@ -110,8 +118,8 @@ Cache the list + timestamp in state; refetch when older than ~24h.
 ### 4e. State shape (additive, backward-compatible)
 
 ```js
-state.memeCollection = [];        // shared curated stash
-state.memeTop100 = { at: 0, items: [] };  // cached template list
+state.memeCollection = [];        // shared stash: [{ id, name, sourceUrl, cacheKey, addedAt }] — REFERENCES only, never bytes
+state.memeTop100 = { at: 0, items: [] };  // cached template list (URLs only, fetched images go through disk cache too)
 // per meme tile data: { intervalSec, top, bottom } (caption draft, optional)
 ```
 
@@ -132,8 +140,15 @@ Old states load fine (arrays default to empty via existing `|| []` guards).
 
 - [ ] Builds clean; sketches verified/corrected.
 - [ ] AC-027..032 play-tested.
-- [ ] Commit references this plan + lists API corrections.
+- [ ] State JSON stays lean (references only — spot-check file size after curating 20+ images).
+- [ ] Commit references this plan.
+- [ ] **Corrections log appended below** (per `plans/README.md` convention).
 - [ ] Browser-tab drop verdict recorded (works / doesn't — update FR-MEM-002 note).
+
+## 8. Corrections log (filled at implementation)
+
+_(Work-laptop agent: append dated entries here.)_
+- (none yet)
 
 ## 7. Risks & unknowns
 

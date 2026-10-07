@@ -31,7 +31,26 @@ build a separate drill tile; one passive surface + one active surface only.
 ## 3. Prerequisites
 
 - Work laptop with MSVC toolchain; `npm install` fresh.
-- A `cards.csv` snapshot location decided (§2, option (a) recommended).
+- `cards.csv` snapshot: **decided** — `src-tauri/resources/cards.csv`, wired via
+  `bundle.resources` (committed 2026-10-07).
+
+## 3b. Phase 0 — popup shell prototype (build FIRST, before §4c–4e)
+
+> Pre-mortem Failure #2: the second-window integration (placement + focus + snooze
+> round-trip) is the riskiest unknown in this plan and must be de-risked with an
+> empty shell before any drill logic exists.
+
+1. Create bare `src/drill.html` ("hello") and open it via the §4d window code on a
+   timer: verify it lands **bottom-right of the primary monitor on the real 3-screen
+   setup** (record any DPI/scale correction needed).
+2. **Focus test:** trigger the popup while typing in another app (e.g. VS). If it
+   steals keystrokes, set `focus: false` on creation (verify option name) — decide here,
+   not later.
+3. **Snooze round-trip test:** write the snooze flag from the popup, read it from the
+   main-window scheduler tick. If `localStorage` is **not** shared between windows,
+   implement the Rust-command fallback immediately — do not build drill logic on an
+   unverified channel.
+4. Only when 1–3 pass, proceed to §4c (drill content).
 
 ## 4. Changes, file by file
 
@@ -126,10 +145,17 @@ Recommend a dedicated **Vocab tab** (two independent configs live here):
 
 ## 6. Done criteria
 
+- [ ] Phase 0 shell prototype passed (placement + focus + snooze round-trip) before drill logic.
 - [ ] Builds clean; all sketches verified/corrected.
 - [ ] AC-021..026 play-tested on the real 3-screen setup.
-- [ ] Commit references this plan + lists API corrections.
-- [ ] `cards.csv` snapshot strategy recorded (where the file lives, how to refresh it).
+- [ ] Commit references this plan.
+- [ ] **Corrections log appended below** (per `plans/README.md` convention).
+- [x] ~~`cards.csv` snapshot strategy~~ — decided: `src-tauri/resources/cards.csv` + `bundle.resources`.
+
+## 8. Corrections log (filled at implementation)
+
+_(Work-laptop agent: append dated entries here.)_
+- (none yet)
 
 ## 7. Risks & unknowns
 

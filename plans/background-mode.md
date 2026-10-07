@@ -177,8 +177,13 @@ behind-mode still deliver the value) and note it.
 
 ## 5. Verification (on the work laptop — requires build)
 
+> Pre-mortem Failure #4 gate: the tray icon is this feature's single lifeline
+> (no taskbar slot in behind-mode). **Verify step 1 passes before touching
+> always-on-bottom.** If the tray doesn't render, stop — do not proceed to §4e.
+
 1. `npm run dev` compiles clean (this validates all sketches at once).
-2. Toggle Autostart on → check Windows Task Manager → Startup tab lists lost-board; toggle off → gone. (AC-018)
+2. **Tray gate (blocking):** tray icon renders; Show/Hide/Quit each work from a cold start. If not, fix here first.
+3. Toggle Autostart on → check Windows Task Manager → Startup tab lists lost-board; toggle off → gone. (AC-018)
 3. Enable Background mode → open Notepad/another app over it → dashboard stays fullscreen behind; no taskbar slot; tray icon visible with Show/Hide/Quit working. (AC-019)
 4. F11 / fullscreen toggle → windowed, draggable by title bar; re-enable fullscreen keeps behind-mode. (AC-020)
 5. Restart app → background mode + checkboxes restored from state.
@@ -187,9 +192,16 @@ behind-mode still deliver the value) and note it.
 ## 6. Done criteria
 
 - [ ] Builds clean (`npm run dev` / `cargo build`).
+- [ ] Tray gate (§5 step 2) passed independently, before behind-mode.
 - [ ] AC-018..020 play-tested, results noted in commit message.
-- [ ] Commit references this plan (`plans/background-mode.md`) and lists any API corrections.
+- [ ] Commit references this plan (`plans/background-mode.md`).
+- [ ] **Corrections log appended below** (per `plans/README.md` convention — every API name that differed from the sketches, and what it became).
 - [ ] Open question resolved: window-close behavior with tray present (close-to-tray vs quit) — record decision in `spec.md` §8.
+
+## 8. Corrections log (filled at implementation)
+
+_(Work-laptop agent: append dated entries here, e.g. `2026-10-xx: setSkipTaskbar missing — used X instead.`)_
+- (none yet)
 
 ## 7. Risks & unknowns
 
