@@ -694,14 +694,19 @@ struct SpotifyTrack {
     playing: bool,
     progress_ms: u64,
     duration_ms: u64,
+    shuffle: bool,
+    smart_shuffle: bool,
+    repeat: String,
 }
 
-/// Fetch the currently playing track.
+/// Fetch the current playback state (track + shuffle/repeat flags).
+/// Uses GET /me/player (a superset of currently-playing) so one call also
+/// yields shuffle_state, smart_shuffle and repeat_state.
 #[tauri::command]
 async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
     let token = spotify_access_token().await?;
     let resp = reqwest::Client::new()
-        .get("https://api.spotify.com/v1/me/player/currently-playing")
+        .get("https://api.spotify.com/v1/me/player")
         .bearer_auth(&token)
         .send()
         .await
@@ -712,7 +717,10 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
     let body = resp.text().await.map_err(|e| format!("read: {e}"))?;
     let v: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("parse: {e}, body: {body}"))?;
-    let item = v.get("item").ok_or("no item")?;
+    let item = match v.get("item") {
+        Some(it) if !it.is_null() => it,
+        _ => return Ok(None),
+    };
     let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let artist = item
         .get("artists")
@@ -735,6 +743,13 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
     let playing = v.get("is_playing").and_then(|x| x.as_bool()).unwrap_or(false);
     let progress_ms = v.get("progress_ms").and_then(|x| x.as_u64()).unwrap_or(0);
     let duration_ms = item.get("duration_ms").and_then(|x| x.as_u64()).unwrap_or(0);
+    let shuffle = v.get("shuffle_state").and_then(|x| x.as_bool()).unwrap_or(false);
+    let smart_shuffle = v.get("smart_shuffle").and_then(|x| x.as_bool()).unwrap_or(false);
+    let repeat = v
+        .get("repeat_state")
+        .and_then(|x| x.as_str())
+        .unwrap_or("off")
+        .to_string();
     Ok(Some(SpotifyTrack {
         title,
         artist,
@@ -743,7 +758,55 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         playing,
         progress_ms,
         duration_ms,
+        shuffle,
+        smart_shuffle,
+        repeat,
     }))
+}
+
+/// Toggle regular shuffle on the active device.
+/// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
+/// and surfaced through `smart_shuffle` in now-playing.)
+#[tauri::command]
+async fn spotify_shuffle(state: bool) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let url = format!("https://api.spotify.com/v1/me/player/shuffle?state={state}");
+    let resp = reqwest::Client::new()
+        .put(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("shuffle request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+/// Set repeat mode on the active device: off | context | track.
+#[tauri::command]
+async fn spotify_repeat(state: String) -> Result<(), String> {
+    if !matches!(state.as_str(), "off" | "context" | "track") {
+        return Err("repeat state must be off, context or track".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let url = format!("https://api.spotify.com/v1/me/player/repeat?state={state}");
+    let resp = reqwest::Client::new()
+        .put(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("repeat request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
 }
 
 /// Play (or pause) on the active device.
@@ -949,6 +1012,8 @@ pub fn run() {
             spotify_now_playing,
             spotify_play,
             spotify_skip,
+            spotify_shuffle,
+            spotify_repeat,
             spotify_volume,
             spotify_queue,
             get_system_stats,

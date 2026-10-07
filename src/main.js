@@ -192,6 +192,12 @@ async openFolder(path) {
   async spotifySkip(next) {
     if (window.__TAURI__) return invoke("spotify_skip", { next });
   },
+  async spotifyShuffle(state) {
+    if (window.__TAURI__) return invoke("spotify_shuffle", { state });
+  },
+  async spotifyRepeat(state) {
+    if (window.__TAURI__) return invoke("spotify_repeat", { state });
+  },
   async spotifyVolume(percent) {
     if (window.__TAURI__) return invoke("spotify_volume", { percent });
   },
@@ -804,9 +810,11 @@ async function renderSpotifyBody(c, body) {
       </div>
       <div class="spot-controls">
         <div class="spot-controls-left">
+          <button class="btn ghost icon-btn spot-shuffle" title="Shuffle">${SHUFFLE_ICON}</button>
           <button class="btn ghost icon-btn spot-prev" title="Previous">${PREV_ICON}</button>
           <button class="btn ghost icon-btn spot-play" title="Play/Pause">${PLAY_ICON}</button>
           <button class="btn ghost icon-btn spot-next" title="Next">${NEXT_ICON}</button>
+          <button class="btn ghost icon-btn spot-repeat" title="Repeat: off">${REPEAT_ICON}</button>
         </div>
         <div class="spot-volume">
           <input type="range" class="spot-vol" min="0" max="100" value="50" title="Volume" />
@@ -819,6 +827,8 @@ async function renderSpotifyBody(c, body) {
   const bgEl = body.querySelector(".spot-bg");
   const titleEl = body.querySelector(".spot-title");
   let playing = false;
+  let shuffleOn = false;
+  let repeatMode = "off";
   let lastTitle = null;
   const refresh = async (forceQueue) => {
     let track = null;
@@ -841,6 +851,20 @@ async function renderSpotifyBody(c, body) {
     body.querySelector(".spot-fill").style.width = track.duration_ms ? `${(track.progress_ms / track.duration_ms) * 100}%` : "0%";
     playing = track.playing;
     body.querySelector(".spot-play").innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+    // Sync shuffle / repeat buttons with the player state.
+    const shuffleBtn = body.querySelector(".spot-shuffle");
+    shuffleBtn.classList.toggle("active", !!track.shuffle);
+    shuffleBtn.classList.toggle("active-smart", !!track.smart_shuffle && !track.shuffle);
+    shuffleBtn.title = track.smart_shuffle
+      ? "Smart Shuffle is on (enabled in the Spotify app)"
+      : track.shuffle ? "Shuffle: on" : "Shuffle: off";
+    const repeatBtn = body.querySelector(".spot-repeat");
+    const rep = track.repeat || "off";
+    repeatBtn.classList.toggle("active", rep !== "off");
+    repeatBtn.innerHTML = rep === "track" ? REPEAT_ONE_ICON : REPEAT_ICON;
+    repeatBtn.title = `Repeat: ${rep}`;
+    shuffleOn = !!track.shuffle;
+    repeatMode = rep;
     // Re-fetch the queue only when the track (or explicit request) changed.
     if (forceQueue || track.title !== lastTitle) {
       lastTitle = track.title;
@@ -874,6 +898,23 @@ async function renderSpotifyBody(c, body) {
       alert(`Spotify: ${e.message || e}`);
     }
   });
+  body.querySelector(".spot-shuffle").addEventListener("click", async () => {
+    try {
+      await native.spotifyShuffle(!shuffleOn);
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
+  body.querySelector(".spot-repeat").addEventListener("click", async () => {
+    const next = repeatMode === "off" ? "context" : repeatMode === "context" ? "track" : "off";
+    try {
+      await native.spotifyRepeat(next);
+      await refresh(true);
+    } catch (e) {
+      alert(`Spotify: ${e.message || e}`);
+    }
+  });
   body.querySelector(".spot-vol").addEventListener("change", async (e) => {
     try {
       await native.spotifyVolume(Number(e.target.value));
@@ -902,11 +943,14 @@ async function loadSpotifyQueue(body) {
   }
   box.innerHTML = `<div class="spot-queue-title">Up next</div>` + queue
     .slice(0, 20)
-    .map((q) => `<div class="spot-queue-item" title="${escapeHtml(q.title)}">${escapeHtml(q.title)} <span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
+    .map((q) => `<div class="spot-queue-item"><span class="spot-queue-name" title="${escapeHtml(q.title)}">${escapeHtml(q.title)}</span><span class="spot-queue-artist">${escapeHtml(q.artist)}</span></div>`)
     .join("");
 }
 
 const PLAY_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+const SHUFFLE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>`;
+const REPEAT_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
+const REPEAT_ONE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><path d="M11 10h1v4" stroke-width="1.6"/><circle cx="11.5" cy="10" r="0.4" fill="currentColor"/></svg>`;
 const PAUSE_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>`;
 // Previous: triangle pointing left + a vertical bar on the right.
 const PREV_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M6 7h2v10H6zM20 5v14L9 12z"/></svg>`;
