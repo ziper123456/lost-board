@@ -948,7 +948,7 @@ function renderProjectsBody(c, body) {
           .join("");
         return `
         <div class="prj-group">
-          <button class="prj-root" data-root="${ri}">${groupIcon(open)} <span>${escapeHtml(root.path)}</span></button>
+          <button class="prj-root" data-root="${ri}" style="${root.color ? `--prj-color:${escapeHtml(root.color)};` : ""}">${groupIcon(open)} <span>${escapeHtml(root.name || (root.path || "").split(/[\\/]/).filter(Boolean).pop() || root.path)}</span></button>
           <div class="prj-items" ${open ? "" : "hidden"}>${items || `<div class="muted">No projects found.</div>`}</div>
         </div>`;
       })
@@ -2497,7 +2497,9 @@ function renderProjectsSettings() {
       .join("");
     group.innerHTML = `
       <div class="item-row prj-settings-head">
-        <strong>${escapeHtml(root.path)}</strong>
+        <input class="ro-name" data-ri="${ri}" type="text" title="Group title" placeholder="Title" value="${escapeHtml(root.name || "")}" />
+        <label>path <span class="ro-path-label">${escapeHtml(root.path)}</span></label>
+        <input type="color" class="ro-color" data-ri="${ri}" value="${root.color || "#23232b"}" title="Group color" />
         <button class="btn ghost pj-scan" data-ri="${ri}">Re-scan</button>
         <button class="btn ghost danger pj-rm-root" data-ri="${ri}">Remove root</button>
       </div>
@@ -2535,6 +2537,18 @@ function renderProjectsSettings() {
   panel.querySelectorAll(".pj-solution").forEach((inp) =>
     inp.addEventListener("change", (e) => {
       comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].solution = e.target.value;
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".ro-name").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      comp.data.roots[Number(e.target.dataset.ri)].name = e.target.value;
+      commitProject(comp);
+    })
+  );
+  panel.querySelectorAll(".ro-color").forEach((inp) =>
+    inp.addEventListener("change", (e) => {
+      comp.data.roots[Number(e.target.dataset.ri)].color = e.target.value;
       commitProject(comp);
     })
   );
