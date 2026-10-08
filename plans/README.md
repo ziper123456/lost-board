@@ -1,7 +1,7 @@
-# Implementation Plans — index
+# Implementation Plans — index (all items built 2026-10-08, kept for reference)
 
-Plans for work that is **designed here, built on the work laptop** (which has the
-MSVC toolchain to compile and test). Read the relevant file before implementing.
+Plans live here per feature; the conventions below still apply to new work.
+Read the relevant file before implementing.
 
 ## Conventions (both machines)
 
@@ -18,24 +18,24 @@ MSVC toolchain to compile and test). Read the relevant file before implementing.
    larger features get a file here. Never duplicate code in both places —
    point at the single source.
 
-## Active plans
+## Active plans — all built 2026-10-08, kept for reference
 
 | Item | Plan / tracking | Spec |
 |---|---|---|
-| Background mode (tray + autostart + always-on-bottom) | [`background-mode.md`](background-mode.md) | `spec.md` §2.12, AC-018..020 |
-| Vocab flashcard tile + drill popup | [`vocab-flashcard-popup.md`](vocab-flashcard-popup.md) | `spec.md` §2.13, AC-021..026 |
-| Meme tile (rotation + captioning + expanded view) | [`meme-tile.md`](meme-tile.md) | `spec.md` §2.14, AC-027..032 |
-| Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) | `spec.md` §2.9/§7 (dropped) |
-| Spotify queue-jump fast path | Issue #18 (code in issue) | `spec.md` FR-SPT-007 |
-| Projects tile resurrect fix | Issue #19 (code in issue) | — (bugfix) |
-| Scanner single-pass + symlinks | Issue #20 (code in issue) | `spec.md` FR-PRJ-001 |
-| Config export/import | Issue #21 (design in issue) | not yet specced — spec it if picked up |
+| Background mode (tray + autostart + always-on-bottom) | [`background-mode.md`](background-mode.md) ✅ PR #30 | `spec.md` §2.12, AC-018..020 |
+| Vocab flashcard tile + drill popup + TTS | [`vocab-flashcard-popup.md`](vocab-flashcard-popup.md) ✅ PRs #31, #33 | `spec.md` §2.13, AC-021..026, AC-034 |
+| Meme tile (rotation + captioning + expanded view) | [`meme-tile.md`](meme-tile.md) ✅ PR #32 | `spec.md` §2.14, AC-027..033 |
+| Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) ✅ PR #29 | `spec.md` §2.9/§7 (dropped) |
+| Spotify queue-jump fast path | Issue #18 ✅ PR #24 | `spec.md` FR-SPT-007 |
+| Projects tile resurrect fix | Issue #19 ✅ PR #22 | — (bugfix) |
+| Scanner single-pass + symlinks | Issue #20 ✅ PR #23 | `spec.md` FR-PRJ-001 |
+| Config export/import | Issue #21 ✅ PR #25 | `spec.md` §5 |
 
-## Suggested build order (work laptop)
+## Suggested build order — completed 2026-10-08 in this order; remaining work is PLAN.md Phase 3
 
-1. Healthcheck tab removal (trivial, warms up the build).
-2. Issues #19 → #20 (small, contained, verifiable).
-3. Background mode (needs the plan's verification steps + AC-018..020).
-4. Vocab flashcard + popup (needs the 3-screen setup for AC-023 placement testing).
-5. Meme tile (needs Pinterest URL + file-drop testing; record browser-tab drop verdict).
-6. Issues #18 → #21 (need live Spotify / two-machine testing).
+1. ~~Healthcheck tab removal~~ ✅ PR #29.
+2. ~~Issues #19 → #20~~ ✅ PRs #22, #23.
+3. ~~Background mode~~ ✅ PR #30.
+4. ~~Vocab flashcard + popup (+TTS)~~ ✅ PRs #31, #33.
+5. ~~Meme tile~~ ✅ PR #32.
+6. ~~Issues #18 → #21~~ ✅ PRs #24, #25.

@@ -1,8 +1,6 @@
 # Implementation Plan — Remove dead Healthcheck tab
 
-> ⚠️ **Status: planned, not built.** Trivial HTML/CSS edit, but held for the work
-> laptop so it ships with a verified build. No Rust/JS logic exists for healthcheck,
-> so removal is deletion-only.
+> ✅ **Status: built and merged (PR #29, 2026-10-08).** Deletion-only as planned, plus an editable/persisted zoom input on the same branch.
 
 ## 1. Goal
 
