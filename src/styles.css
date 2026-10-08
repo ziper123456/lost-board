@@ -687,6 +687,12 @@ input[type="text"], input[type="number"], input[type="password"], select {
   font-size: 0.85rem;
 }
 
+/* Vocab flashcard tile */
+.vocab-card { padding: 10px 4px 6px; text-align: center; }
+.vocab-en { font-size: 1.35rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vocab-other { font-size: 0.82rem; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vocab-open { margin-top: 6px; }
+
 /* Simple system stats widget */
 .meter { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .meter .bar { flex: 1; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }

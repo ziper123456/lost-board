@@ -51,6 +51,7 @@
           <button class="tab" data-tab="translate">Translate</button>
           <button class="tab" data-tab="frame">Frame</button>
           <button class="tab" data-tab="projects">Projects</button>
+          <button class="tab" data-tab="vocab">Vocab</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="config">Config</button>
         </nav>
@@ -118,6 +119,7 @@
                   <option value="translate">Translate</option>
                   <option value="frame">Frame</option>
                   <option value="project">Projects</option>
+                  <option value="vocab">Vocab</option>
                   <option value="spotify">Spotify</option>
                   <option value="system">System</option>
                 </select>
@@ -164,6 +166,10 @@
           <div class="tab-panel" data-panel="projects">
             <p>Projects/Services tile: add a repo root and it scans each subfolder for its solution. Each project has Folder + Solution buttons.</p>
             <div id="project-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="vocab">
+            <p>Vocab tile rotates trilingual flashcards. The drill popup quizzes one word on schedule — bottom-right of the primary monitor.</p>
+            <div id="vocab-list"></div>
           </div>
           <div class="tab-panel" data-panel="config">
             <p>Move this dashboard to another machine: export a file here, import it there. API keys and tokens stay in each machine's own secret store and are never exported.</p>

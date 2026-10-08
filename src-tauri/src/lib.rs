@@ -1084,6 +1084,13 @@ pub fn run() {
             import_config,
             set_autostart,
             autostart_enabled,
+            read_vocab_cards,
+            vocab_popup_lang,
+            open_vocab_popup,
+            close_vocab_popup,
+            snooze_vocab_popup,
+            clear_vocab_snooze,
+            vocab_tick,
             pick_folder,
             pick_solution,
             pick_icon,
@@ -1146,6 +1153,273 @@ fn autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
     app.autolaunch()
         .is_enabled()
         .map_err(|e| format!("autostart: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Vocab flashcards: bundled CSV word list + drill popup window management.
+// The popup is created Rust-side (no frontend window-API needed); the main
+// window drives it through a periodic vocab_tick() call. Transient popup
+// state (last fire time) lives in process statics; snooze is persisted in
+// the state file under `vocab.snoozeUntil` so restarts stay snoozed.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, Clone)]
+struct VocabCard {
+    id: String,
+    en: String,
+    es: String,
+    de: String,
+}
+
+static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
+static VOCAB_LANG: StdMutex<String> = StdMutex::new(String::new());
+static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
+    use tauri::path::BaseDirectory;
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = app.path().resolve("resources/cards.csv", BaseDirectory::Resource) {
+        candidates.push(p);
+    }
+    candidates.push(std::path::PathBuf::from("src-tauri/resources/cards.csv"));
+    candidates.push(std::path::PathBuf::from("resources/cards.csv"));
+    let path = candidates.into_iter().find(|p| p.is_file());
+    let path = match path {
+        Some(p) => p,
+        None => {
+            eprintln!("lost-board: cards.csv not found in any candidate location");
+            return Vec::new();
+        }
+    };
+    let mut rdr = match csv::Reader::from_path(&path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("lost-board: failed to open {}: {e}", path.display());
+            return Vec::new();
+        }
+    };
+    // Columns: id,categories,studyCount,en_US,es_ES,de_DE. Categories contain
+    // quoted commas, so index into parsed records (never split lines by hand).
+    // Header row is consumed by the csv reader; skip short/bad rows.
+    rdr.records()
+        .filter_map(|r| r.ok())
+        .filter_map(|rec| {
+            if rec.len() < 6 {
+                return None;
+            }
+            let (id, en, es, de) = (
+                rec.get(0)?.trim(),
+                rec.get(3)?.trim(),
+                rec.get(4)?.trim(),
+                rec.get(5)?.trim(),
+            );
+            if id.is_empty() || en.is_empty() {
+                return None;
+            }
+            Some(VocabCard {
+                id: id.to_string(),
+                en: en.to_string(),
+                es: es.to_string(),
+                de: de.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Return `count` random cards (shuffled each call; tile and popup draw
+/// independently by design — different words in each is variety, not a bug).
+#[tauri::command]
+fn read_vocab_cards(app: tauri::AppHandle, count: usize) -> Result<Vec<VocabCard>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    if all.is_empty() {
+        return Err("no vocabulary cards available".into());
+    }
+    use rand::seq::SliceRandom;
+    let mut rng = rand::thread_rng();
+    let mut idx: Vec<usize> = (0..all.len()).collect();
+    idx.shuffle(&mut rng);
+    Ok(idx
+        .into_iter()
+        .take(count.max(1).min(all.len()))
+        .map(|i| all[i].clone())
+        .collect())
+}
+
+fn read_vocab_section(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    let path = match state_file_path(app) {
+        Ok(p) => p,
+        Err(_) => return serde_json::Map::new(),
+    };
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return serde_json::Map::new(),
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("vocab").cloned())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn write_vocab_keys(app: &tauri::AppHandle, keys: &[(&str, serde_json::Value)]) -> Result<(), String> {
+    let path = state_file_path(app)?;
+    let text = fs::read_to_string(&path).unwrap_or_else(|_| "{}".into());
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+    let obj = v.as_object_mut().ok_or("state root is not an object")?;
+    let vocab = obj
+        .entry("vocab")
+        .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+    let vobj = vocab.as_object_mut().ok_or("vocab is not an object")?;
+    for (k, val) in keys {
+        vobj.insert((*k).to_string(), val.clone());
+    }
+    fs::write(&path, serde_json::to_string(&v).map_err(|e| format!("serialize: {e}"))?)
+        .map_err(|e| format!("Failed to save vocab state: {e}"))
+}
+
+/// Language the next popup drills ("es" | "de" | "both"), stored at open time
+/// so drill.html needs no URL-query parsing.
+#[tauri::command]
+fn vocab_popup_lang() -> Result<String, String> {
+    Ok(VOCAB_LANG.lock().unwrap().clone())
+}
+
+fn open_drill_window(app: &tauri::AppHandle, lang: &str) -> Result<&'static str, String> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+    if let Some(w) = app.get_webview_window("drill") {
+        let _ = w.set_focus();
+        return Ok("already-open");
+    }
+    *VOCAB_LANG.lock().unwrap() = lang.to_string();
+    // Bottom-right of the primary monitor, converted to logical pixels.
+    let mon = app
+        .primary_monitor()
+        .map_err(|e| format!("monitor: {e}"))?
+        .ok_or("no primary monitor")?;
+    let scale = mon.scale_factor().max(1.0);
+    const W: f64 = 360.0;
+    const H: f64 = 240.0;
+    const M: f64 = 16.0;
+    let x = (mon.position().x as f64 + mon.size().width as f64) / scale - W - M;
+    let y = (mon.position().y as f64 + mon.size().height as f64) / scale - H - M;
+    WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
+        .title("Vocab drill")
+        .inner_size(W, H)
+        .position(x, y)
+        .decorations(false)
+        .resizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .build()
+        .map_err(|e| format!("popup: {e}"))?;
+    Ok("opened")
+}
+
+/// Open (or focus) the drill popup. Used by the scheduler and the settings
+/// Preview button alike.
+#[tauri::command]
+async fn open_vocab_popup(app: tauri::AppHandle, lang: String) -> Result<String, String> {
+    open_drill_window(&app, &lang).map(|s| s.to_string())
+}
+
+/// Close the drill popup (called from the popup itself).
+#[tauri::command]
+async fn close_vocab_popup(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("drill") {
+        w.close().map_err(|e| format!("close popup: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Snooze popups for 30 minutes (spec FR-VOC-008). Persisted so a restart
+/// stays snoozed; the popup closes itself right after.
+#[tauri::command]
+async fn snooze_vocab_popup(app: tauri::AppHandle) -> Result<(), String> {
+    let until = now_secs() + 30 * 60;
+    write_vocab_keys(&app, &[("snoozeUntil", serde_json::Value::from(until))])?;
+    close_vocab_popup(app).await
+}
+
+/// Clear a snooze early (settings button).
+#[tauri::command]
+async fn clear_vocab_snooze(app: tauri::AppHandle) -> Result<(), String> {
+    write_vocab_keys(&app, &[("snoozeUntil", serde_json::Value::from(0))])
+}
+
+fn in_quiet_hours(start: &str, end: &str) -> bool {
+    if start.is_empty() || end.is_empty() {
+        return false;
+    }
+    let parse = |s: &str| {
+        let mut it = s.split(':');
+        match (it.next()?.parse::<u32>().ok()?, it.next()?.parse::<u32>().ok()?) {
+            (h, m) if h < 24 && m < 60 => Some(h * 60 + m),
+            _ => None,
+        }
+    };
+    let (s, e) = match (parse(start), parse(end)) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return false,
+    };
+    if s == e {
+        return false;
+    }
+    let now = {
+        use chrono::Local;
+        let t = Local::now();
+        use chrono::Timelike;
+        t.hour() * 60 + t.minute()
+    };
+    if s < e {
+        now >= s && now < e
+    } else {
+        now >= s || now < e
+    }
+}
+
+/// Scheduler tick (called from the main window every ~30s). Reads popup config
+/// from the state file and decides: opens the popup or reports why not.
+/// Returns one of: opened | disabled | snoozed | quiet-hours | too-soon |
+/// already-open.
+#[tauri::command]
+async fn vocab_tick(app: tauri::AppHandle) -> Result<String, String> {
+    let cfg = read_vocab_section(&app);
+    let enabled = cfg.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !enabled {
+        return Ok("disabled".into());
+    }
+    let now = now_secs();
+    let snooze_until = cfg.get("snoozeUntil").and_then(|v| v.as_u64()).unwrap_or(0);
+    if snooze_until > now {
+        return Ok("snoozed".into());
+    }
+    let qs = cfg.get("quietStart").and_then(|v| v.as_str()).unwrap_or("");
+    let qe = cfg.get("quietEnd").and_then(|v| v.as_str()).unwrap_or("");
+    if in_quiet_hours(qs, qe) {
+        return Ok("quiet-hours".into());
+    }
+    let every_min = cfg.get("everyMin").and_then(|v| v.as_u64()).unwrap_or(30).max(1);
+    let last = *VOCAB_LAST_POPUP_AT.lock().unwrap();
+    if last > 0 && now < last + every_min * 60 {
+        return Ok("too-soon".into());
+    }
+    let lang = cfg.get("lang").and_then(|v| v.as_str()).unwrap_or("es");
+    let status = open_drill_window(&app, lang)?;
+    if status == "opened" {
+        *VOCAB_LAST_POPUP_AT.lock().unwrap() = now;
+        let _ = write_vocab_keys(&app, &[("lastPopupAt", serde_json::Value::from(now))]);
+    }
+    Ok(status.into())
 }
 
 /// Validate the expected dashboard-state schema. The payload must be an object
