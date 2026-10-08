@@ -25,6 +25,8 @@ const ICON = {
   folder: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>`,
   solution: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/></svg>`,
   file: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/><circle cx="8" cy="10.5" r="1.2"/></svg>`,
+  volumeOn: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6z"/><path d="M10 5.5a3.5 3.5 0 0 1 0 5M11.8 3.7a6 6 0 0 1 0 8.6"/></svg>`,
+  volumeOff: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6z"/><path d="M10.5 6.5l3 3M13.5 6.5l-3 3"/></svg>`,
 };
 
 // ---------------------------------------------------------------------------
@@ -898,7 +900,35 @@ async function renderVocabBody(c, body) {
       <div class="vocab-en"></div>
       <div class="vocab-other"></div>
     </div>
+    <div class="vocab-foot">
+      <button class="btn ghost icon-btn vocab-speak-toggle" title="Voice enable: speak each card EN, ES, DE">${c.data?.speak ? ICON.volumeOn : ICON.volumeOff}</button>
+      <input type="range" class="vocab-vol" min="0" max="100" value="${c.data?.volume === undefined ? 100 : Math.min(100, Math.max(0, Number(c.data.volume) || 0))}" title="Speech volume" />
+      <span class="vocab-vol-pct"></span>
+    </div>
   `;
+  const volEl = body.querySelector(".vocab-vol");
+  const pctEl = body.querySelector(".vocab-vol-pct");
+  const syncPct = () => {
+    pctEl.textContent = `${volEl.value}%`;
+  };
+  syncPct();
+  let volSaveT = 0;
+  volEl.addEventListener("input", () => {
+    c.data.volume = Number(volEl.value);
+    syncPct();
+    clearTimeout(volSaveT);
+    volSaveT = setTimeout(saveState, 400);
+  });
+  volEl.addEventListener("change", () => {
+    c.data.volume = Math.min(100, Math.max(0, Number(volEl.value) || 0));
+    saveState();
+  });
+  body.querySelector(".vocab-speak-toggle").addEventListener("click", () => {
+    c.data.speak = !c.data.speak;
+    if (!c.data.speak && "speechSynthesis" in window) window.speechSynthesis.cancel();
+    saveState();
+    render();
+  });
   const enEl = body.querySelector(".vocab-en");
   const otherEl = body.querySelector(".vocab-other");
   let i = 0;
@@ -908,7 +938,7 @@ async function renderVocabBody(c, body) {
     enEl.textContent = card.en;
     otherEl.textContent = `${card.es} • ${card.de}`;
     i += 1;
-    if (speakOn) speakVocabCard(body, card, voiceURIs);
+    if (speakOn) speakVocabCard(body, card, voiceURIs, c.data?.volume);
     if (i % cards.length === 0) {
       // Refresh the batch every full cycle so rotation never goes stale.
       native.readVocabCards(20).then((fresh) => { if (fresh.length) cards = fresh; }).catch(() => {});
@@ -959,11 +989,13 @@ function pickSpeechVoice(voices, voiceURI, langPrefix) {
 
 // Speak one card EN -> ES -> DE. Generation-guarded per tile body so a stale
 // chain (advance / teardown race) can never talk over the current card.
-function speakVocabCard(body, card, voiceURIs) {
+function speakVocabCard(body, card, voiceURIs, volumePct) {
   if (!("speechSynthesis" in window)) return;
   const synth = window.speechSynthesis;
   const gen = (body._vocabSpeakGen = (body._vocabSpeakGen || 0) + 1);
   synth.cancel();
+  const volNum = Number(volumePct);
+  const volume = Math.min(1, Math.max(0, Number.isFinite(volNum) ? volNum / 100 : 1));
   getSpeechVoices()
     .then(async (voices) => {
       if (!body.isConnected || body._vocabSpeakGen !== gen) return;
@@ -979,6 +1011,7 @@ function speakVocabCard(body, card, voiceURIs) {
           const u = new SpeechSynthesisUtterance(p.text);
           u.lang = p.lang;
           u.rate = 0.95;
+          u.volume = volume;
           const v = pickSpeechVoice(voices, p.uri, p.lang.slice(0, 2));
           if (v) u.voice = v;
           u.onend = done;
