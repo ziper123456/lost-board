@@ -703,6 +703,8 @@ struct SpotifyTrack {
     shuffle: bool,
     smart_shuffle: bool,
     repeat: String,
+    context_uri: String,
+    context_type: String,
 }
 
 /// Fetch the current playback state (track + shuffle/repeat flags).
@@ -756,6 +758,18 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         .and_then(|x| x.as_str())
         .unwrap_or("off")
         .to_string();
+    let context_uri = v
+        .get("context")
+        .and_then(|c| c.get("uri"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let context_type = v
+        .get("context")
+        .and_then(|c| c.get("type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
     Ok(Some(SpotifyTrack {
         title,
         artist,
@@ -767,6 +781,8 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         shuffle,
         smart_shuffle,
         repeat,
+        context_uri,
+        context_type,
     }))
 }
 
@@ -827,6 +843,32 @@ async fn spotify_play(play: bool) -> Result<(), String> {
         .send()
         .await
         .map_err(|e| format!("play request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+/// Jump directly to a track within its context (album/playlist) in one call.
+/// Uses PUT /me/player/play with context_uri + offset.uri — instant, no
+/// skip-loop, preserves context and repeat mode. Fails when the track is not
+/// part of the context (callers fall back to paced skips).
+#[tauri::command]
+async fn spotify_jump(context_uri: String, track_uri: String) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({
+        "context_uri": context_uri,
+        "offset": { "uri": track_uri },
+    });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player/play")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("jump request: {e}"))?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -1020,6 +1062,7 @@ pub fn run() {
             spotify_now_playing,
             spotify_play,
             spotify_skip,
+            spotify_jump,
             spotify_shuffle,
             spotify_repeat,
             spotify_volume,

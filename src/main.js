@@ -192,6 +192,9 @@ async openFolder(path) {
   async spotifySkip(next) {
     if (window.__TAURI__) return invoke("spotify_skip", { next });
   },
+  async spotifyJump(contextUri, trackUri) {
+    if (window.__TAURI__) return invoke("spotify_jump", { context_uri: contextUri, track_uri: trackUri });
+  },
   async spotifyShuffle(state) {
     if (window.__TAURI__) return invoke("spotify_shuffle", { state });
   },
@@ -926,18 +929,54 @@ async function renderSpotifyBody(c, body) {
   await refresh(true);
   const t = setInterval(() => refresh(false), 3000);
   addTimer(body, t);
-  // Jump to a queue song: re-fetch the queue, find the song's position, and
-  // skip forward that many times (the API has no direct jump-to-track).
+  // Jump to a queue song. Fast path: one PUT /play with context+offset when
+  // playing from an album/playlist. Fallback: paced skip-forward loop that
+  // stops on rate-limit (429) instead of hammering through.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const setQueueStatus = (text) => {
+    const t = body.querySelector(".spot-queue-title");
+    if (t) t.textContent = text;
+  };
   body._spotJump = async (uri) => {
+    if (body._spotJumping) return;
+    body._spotJumping = true;
     try {
+      const current = await native.spotifyNowPlaying().catch(() => null);
+      const ctxUri = current?.context_uri || "";
+      const ctxType = current?.context_type || "";
+      if (ctxUri && (ctxType === "album" || ctxType === "playlist")) {
+        try {
+          await native.spotifyJump(ctxUri, uri);
+          lastTitle = null; // track will change -> force queue refresh
+          await refresh(true);
+          return;
+        } catch {
+          // Track not in context (or similar) — fall through to skips.
+        }
+      }
       const q = await native.spotifyQueue();
       const idx = q.findIndex((s) => s.uri && s.uri === uri);
       if (idx < 0) return;
-      for (let k = 0; k <= idx; k++) await native.spotifySkip(true);
+      setQueueStatus("Jumping…");
+      for (let k = 0; k <= idx; k++) {
+        try {
+          await native.spotifySkip(true);
+        } catch (e) {
+          const msg = `${e.message || e}`;
+          if (/429/.test(msg)) {
+            setQueueStatus("Rate limited — stopped early");
+            break;
+          }
+          throw e;
+        }
+        await sleep(175);
+      }
       lastTitle = null; // track will change -> force queue refresh
       await refresh(true);
     } catch (e) {
       alert(`Spotify: ${e.message || e}`);
+    } finally {
+      body._spotJumping = false;
     }
   };
 }
