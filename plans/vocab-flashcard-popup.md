@@ -163,6 +163,7 @@ _(Work-laptop agent: append dated entries here.)_
 - 2026-10-08: `focused(false)` kept per plan lean — manual focus test (§5 step 3 here, Phase 0 item 2) decides whether it stays.
 - 2026-10-08 (PR-review fixes, pre-merge): tick no longer focuses an already-open popup (`focus_existing` flag — only Preview focuses; fixes a 30s focus-theft loop); CSV load requires en+es+de non-empty (empty target auto-matched empty input); `lastPopupAt` static seeded from file on first tick (restarts honor cadence); new `vocab_popup_state` command mirrored into JS memory by the tick so settings commits can't clobber a popup-set snooze; Vocab tab renders tile-less via non-creating lookup (no resurrect, same rule as Projects).
 - 2026-10-08: FR-VOC-003 (vocab-app gateway button + URL setting) removed per user request — single-app use. Tile button, settings field, and state default deleted; spec marked dropped.
+- 2026-10-08: TTS follow-up (FR-VOC-009/AC-034): per-tile "Voice enable" + per-language voice dropdowns (EN/ES/DE, voiceURI stored in tile data), Web Speech API sequence EN→ES→DE with generation-guarded chaining, cancel on advance, teardown hook in clearBodyTimers (silent on collapse/remove). No Rust changes.
 
 ## 7. Risks & unknowns
 
