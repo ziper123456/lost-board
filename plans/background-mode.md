@@ -201,7 +201,12 @@ behind-mode still deliver the value) and note it.
 ## 8. Corrections log (filled at implementation)
 
 _(Work-laptop agent: append dated entries here, e.g. `2026-10-xx: setSkipTaskbar missing — used X instead.`)_
-- (none yet)
+- 2026-10-08: permission IDs confirmed verbatim for Tauri 2.12.1 (`core:window:allow-set-always-on-bottom`, `core:window:allow-set-skip-taskbar`) — no drift from §4b sketch.
+- 2026-10-08: `tauri-plugin-autostart` resolved to 2.7.0; `init(MacosLauncher::LaunchAgent, None)` + `ManagerExt::autolaunch()` + `enable()/disable()/is_enabled()` all match the §4c sketch — no drift.
+- 2026-10-08: tray icon set explicitly from `app.default_window_icon()` (cloned when present) rather than relying on builder default — §4c "check at runtime" resolved proactively; visual check still required (§5 step 2).
+- 2026-10-08: default window label confirmed `main` (no explicit label in `tauri.conf.json`), so `get_webview_window("main")` in menu events is correct.
+- 2026-10-08: `setSkipTaskbar` exists on the JS `Window` object per existing usage pattern, but the *effect* (taskbar slot disappearing) is unverified headless — flagged for manual test (§5 step 4), fallback per §4e edge note still stands.
+- 2026-10-08: spec §8 close-behavior question resolved → close quits (unchanged); no close interception in v1.
 
 ## 7. Risks & unknowns
 

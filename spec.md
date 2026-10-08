@@ -555,5 +555,5 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Azure PAT live tiles~~ → **dropped** (deep-links sufficient).
 - [x] ~~Healthcheck services/URLs~~ → dropped with the feature.
 - [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner), #21 (config export/import).
-- [ ] Window close behavior with tray present (close-to-tray vs quit)? — decide during background-mode implementation.
+- [x] ~~Window close behavior with tray present~~ → **close quits (unchanged)** — decided during background-mode implementation (2026-10-08): no close interception in v1; closing the window exits the app and removes the tray icon. Tray menu offers Hide for getting the window out of the way without quitting. Revisit close-to-tray only if real usage asks for it.
 - [ ] Shared progress merge (tile/popup practice stats + vocab-app sessions in one store)? — future work; tile/popup stats stay local for now.
