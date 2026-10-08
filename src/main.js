@@ -256,6 +256,18 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_popup_state");
     return null;
   },
+  async fetchImageCached(url) {
+    if (window.__TAURI__) return invoke("fetch_image_cached", { url });
+    return "";
+  },
+  async importImageFile(path) {
+    if (window.__TAURI__) return invoke("import_image_file", { path });
+    return null;
+  },
+  async loadCachedImage(key) {
+    if (window.__TAURI__) return invoke("load_cached_image", { key });
+    return "";
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -694,6 +706,8 @@ async function renderCompartmentBody(c, body) {
     renderProjectsBody(c, body);
   } else if (c.kind === "vocab") {
     renderVocabBody(c, body);
+  } else if (c.kind === "meme") {
+    renderMemeBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -876,6 +890,153 @@ async function renderVocabBody(c, body) {
   show();
   const t = setInterval(show, intervalSec * 1000);
   addTimer(body, t);
+}
+
+// ---------------------------------------------------------------------------
+// Meme tile: ambient rotation (imgflip top-100 + curated collection) plus an
+// expanded fullscreen view for browsing, captioning, searching, exporting.
+// State holds REFERENCES only (sourceUrl / cacheKey) — never image bytes;
+// bytes live in the Rust-side disk cache (fetch_image_cached family).
+// ---------------------------------------------------------------------------
+const MEME_DAY_MS = 24 * 3600 * 1000;
+const MEME_MAX_ENTRIES = 200;
+const MEME_DEFAULT_ENGINE = "https://www.pinterest.com/search/pins/?q={q}&rs=typed";
+const memeUriCache = new Map(); // entry-key -> data-URI (session only)
+
+function memeCollection() {
+  state.memeCollection = Array.isArray(state.memeCollection) ? state.memeCollection : [];
+  return state.memeCollection;
+}
+function memeTop100() {
+  if (!state.memeTop100 || !Array.isArray(state.memeTop100.items)) state.memeTop100 = { at: 0, items: [] };
+  return state.memeTop100;
+}
+function memeEngine() {
+  if (!state.memeSearchEngine) state.memeSearchEngine = MEME_DEFAULT_ENGINE;
+  return state.memeSearchEngine;
+}
+function memeEntryKey(entry) {
+  return entry.id || entry.sourceUrl || entry.cacheKey || entry.url || "";
+}
+async function memeEntryUri(entry) {
+  const key = memeEntryKey(entry);
+  if (key && memeUriCache.has(key)) return memeUriCache.get(key);
+  let uri = "";
+  if (entry.cacheKey) {
+    try {
+      uri = await native.loadCachedImage(entry.cacheKey);
+    } catch {
+      uri = "";
+    }
+  }
+  if (!uri && entry.sourceUrl) uri = await native.fetchImageCached(entry.sourceUrl);
+  if (!uri && entry.url) uri = await native.fetchImageCached(entry.url);
+  if (!uri) throw new Error("unresolvable entry");
+  if (key) memeUriCache.set(key, uri);
+  return uri;
+}
+async function refreshMemeTop100(force) {
+  const t = memeTop100();
+  if (!force && t.at && Date.now() - t.at < MEME_DAY_MS && t.items.length) return t;
+  try {
+    const resp = await fetch("https://api.imgflip.com/get_memes");
+    const j = await resp.json();
+    if (j.success && Array.isArray(j.data?.memes)) {
+      t.at = Date.now();
+      t.items = j.data.memes.slice(0, 100).map((m) => ({ id: String(m.id), name: m.name, url: m.url }));
+      saveState();
+    }
+  } catch {
+    // Offline or CORS-blocked: keep the old list; rotation continues regardless.
+  }
+  return t;
+}
+function memePool() {
+  const top = memeTop100().items.map((t) => ({ id: "top:" + t.id, name: t.name, url: t.url }));
+  return [...top, ...memeCollection()];
+}
+async function importMemeFiles(paths) {
+  const col = memeCollection();
+  let added = 0;
+  for (const p of paths) {
+    if (col.length >= MEME_MAX_ENTRIES) break;
+    try {
+      const ref = await native.importImageFile(p);
+      if (!ref || !ref.key) continue;
+      if (col.some((e) => e.cacheKey === ref.key)) continue; // no dupes
+      const entry = {
+        id: "m" + Date.now() + added,
+        name: p.split(/[\\/]/).pop() || "image",
+        sourceUrl: null,
+        cacheKey: ref.key,
+        addedAt: Date.now(),
+      };
+      col.push(entry);
+      memeUriCache.set(entry.id, ref.uri);
+      added += 1;
+    } catch {
+      // Not an image (or unreadable) — skip silently.
+    }
+  }
+  if (added) {
+    saveState();
+    render();
+  }
+  return added;
+}
+
+async function renderMemeBody(c, body) {
+  const intervalSec = Math.max(5, Number(c.data?.intervalSec) || 30);
+  body.innerHTML = `
+    <div class="meme-wrap">
+      <img class="meme-img" alt="" />
+      <div class="meme-btns">
+        <button class="btn ghost icon-btn meme-next" title="Next meme">↻</button>
+        <button class="btn ghost icon-btn meme-expand" title="Expand">⛶</button>
+      </div>
+      <div class="meme-note muted"></div>
+    </div>`;
+  const img = body.querySelector(".meme-img");
+  const note = body.querySelector(".meme-note");
+  const pick = async () => {
+    if (!body.isConnected) return;
+    try {
+      await refreshMemeTop100(false);
+    } catch { /* keep old list */ }
+    if (!body.isConnected) return;
+    const pool = memePool();
+    if (!pool.length) {
+      note.textContent = "No memes yet — add some in Settings.";
+      img.removeAttribute("src");
+      return;
+    }
+    note.textContent = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const entry = pool[Math.floor(Math.random() * pool.length)];
+      try {
+        const uri = await memeEntryUri(entry);
+        if (!body.isConnected) return;
+        img.src = uri;
+        img.title = entry.name || "";
+        body._memeEntry = entry;
+        return;
+      } catch {
+        // Unresolvable (offline + uncached, dead file) — try another entry.
+      }
+    }
+    note.textContent = "Couldn't load a meme image.";
+  };
+  await pick();
+  const t = setInterval(pick, intervalSec * 1000);
+  addTimer(body, t);
+  body.querySelector(".meme-next").addEventListener("click", (e) => {
+    e.stopPropagation();
+    pick();
+  });
+  body.querySelector(".meme-expand").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openMemeFocus(c.id);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1497,6 +1658,7 @@ function activateTab(tabName) {
   if (tabName === "projects") renderProjectsSettings();
   if (tabName === "config") renderConfigSettings();
   if (tabName === "vocab") renderVocabSettings();
+  if (tabName === "meme") renderMemeSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -1513,6 +1675,7 @@ const KIND_TAB = {
   spotify: "spotify",
   project: "projects",
   vocab: "vocab",
+  meme: "meme",
 };
 
 function openTileSettings(id) {
@@ -1530,6 +1693,7 @@ function openTileSettings(id) {
   if (comp.kind === "spotify") selectedSpotifyId = id;
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
+  if (comp.kind === "meme") selectedMemeId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1706,6 +1870,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "spotify") renderSpotifySettings();
   if (comp.kind === "project") renderProjectsSettings();
   if (comp.kind === "vocab") renderVocabSettings();
+  if (comp.kind === "meme") renderMemeSettings();
 }
 
 function ensureLauncher() {
@@ -3061,6 +3226,503 @@ setInterval(async () => {
   }
 }, 30000);
 
+// ---------------------------------------------------------------------------
+// Meme settings editor: per-tile rotation, template list refresh, search
+// engine URL, and the shared curated-collection manager (references only).
+// ---------------------------------------------------------------------------
+let selectedMemeId = null;
+function findMemeComp() {
+  return state.compartments.find((c) => c.id === selectedMemeId && c.kind === "meme")
+    ?? state.compartments.find((c) => c.kind === "meme")
+    ?? null;
+}
+function renderMemeSettings() {
+  const panel = document.getElementById("meme-list");
+  if (!panel) return;
+  const comp = findMemeComp();
+  const comps = state.compartments.filter((c) => c.kind === "meme");
+
+  panel.innerHTML = "";
+  if (comp) {
+    const selectorRow = document.createElement("div");
+    selectorRow.className = "item-row";
+    selectorRow.innerHTML = `
+      <label>Tile</label>
+      <select id="meme-select">
+        ${comps
+          .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+          .join("")}
+      </select>
+      <label>Rotate every <input id="meme-interval" type="number" min="5" max="600" value="${Number(comp.data.intervalSec) || 30}" />s</label>`;
+    panel.appendChild(selectorRow);
+    appendCollapsibleRow(panel, comp);
+    appendAppearanceRow(panel, comp);
+    panel.querySelector("#meme-select").addEventListener("change", (e) => {
+      selectedMemeId = e.target.value;
+      renderMemeSettings();
+    });
+    panel.querySelector("#meme-interval").addEventListener("change", (e) => {
+      comp.data.intervalSec = Math.min(600, Math.max(5, Number(e.target.value) || 30));
+      saveState();
+      render();
+      renderMemeSettings();
+    });
+  } else {
+    const hint = document.createElement("div");
+    hint.className = "item-row";
+    hint.innerHTML = `<span class="muted">No meme tile yet — add one from Grid &gt; Add a tile. The collection below is shared and works without a tile.</span>`;
+    panel.appendChild(hint);
+  }
+
+  const top = memeTop100();
+  const topRow = document.createElement("div");
+  topRow.className = "item-row";
+  topRow.innerHTML = `
+    <label>Templates</label>
+    <span class="muted">${top.items.length} cached${top.at ? ` (refreshed ${new Date(top.at).toLocaleDateString()})` : ""}</span>
+    <button class="btn ghost" id="meme-refresh-top">Refresh templates</button>
+    <span id="meme-top-status" class="muted"></span>`;
+  panel.appendChild(topRow);
+  topRow.querySelector("#meme-refresh-top").addEventListener("click", async () => {
+    const st = topRow.querySelector("#meme-top-status");
+    st.textContent = "fetching…";
+    await refreshMemeTop100(true);
+    renderMemeSettings();
+  });
+
+  const engRow = document.createElement("div");
+  engRow.className = "item-row";
+  engRow.innerHTML = `
+    <label>Image search <input id="meme-engine" type="text" value="${escapeHtml(memeEngine())}" title="Search URL with {q} for the query" /></label>`;
+  panel.appendChild(engRow);
+  engRow.querySelector("#meme-engine").addEventListener("change", (e) => {
+    state.memeSearchEngine = e.target.value.trim() || MEME_DEFAULT_ENGINE;
+    saveState();
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "item-row";
+  addRow.innerHTML = `
+    <label>Add image URL <input id="meme-url" type="text" placeholder="https://…" /></label>
+    <button class="btn primary" id="meme-add-url">Add</button>
+    <button class="btn ghost" id="meme-browse">Browse…</button>
+    <span id="meme-add-status" class="muted"></span>`;
+  panel.appendChild(addRow);
+  const addStatus = (t) => {
+    addRow.querySelector("#meme-add-status").textContent = t;
+  };
+  addRow.querySelector("#meme-add-url").addEventListener("click", async () => {
+    const url = addRow.querySelector("#meme-url").value.trim();
+    if (!url) return;
+    addStatus("fetching…");
+    try {
+      await native.fetchImageCached(url);
+      const col = memeCollection();
+      if (col.length >= MEME_MAX_ENTRIES) {
+        addStatus(`collection full (${MEME_MAX_ENTRIES})`);
+        return;
+      }
+      if (col.some((e) => e.sourceUrl === url)) {
+        addStatus("already in collection");
+        return;
+      }
+      let name = url;
+      try {
+        name = new URL(url).hostname + url.slice(-24);
+      } catch { /* keep full url */ }
+      const entry = { id: "m" + Date.now(), name, sourceUrl: url, cacheKey: null, addedAt: Date.now() };
+      col.push(entry);
+      addRow.querySelector("#meme-url").value = "";
+      saveState();
+      render();
+      renderMemeSettings();
+    } catch (e) {
+      addStatus(`failed: ${e.message || e}`);
+    }
+  });
+  addRow.querySelector("#meme-browse").addEventListener("click", async () => {
+    addStatus("choosing file…");
+    try {
+      const p = await native.pickImage();
+      if (!p) {
+        addStatus("");
+        return;
+      }
+      const ref = await native.importImageFile(p);
+      const col = memeCollection();
+      if (col.length >= MEME_MAX_ENTRIES) {
+        addStatus(`collection full (${MEME_MAX_ENTRIES})`);
+        return;
+      }
+      if (!ref || !ref.key || col.some((e) => e.cacheKey === ref.key)) {
+        addStatus("already in collection");
+        return;
+      }
+      const entry = {
+        id: "m" + Date.now(),
+        name: p.split(/[\\/]/).pop() || "image",
+        sourceUrl: null,
+        cacheKey: ref.key,
+        addedAt: Date.now(),
+      };
+      col.push(entry);
+      memeUriCache.set(entry.id, ref.uri);
+      saveState();
+      render();
+      renderMemeSettings();
+    } catch (e) {
+      addStatus(`failed: ${e.message || e}`);
+    }
+  });
+
+  const sizeBytes = JSON.stringify(state).length;
+  if (sizeBytes > 1024 * 1024) {
+    const warn = document.createElement("div");
+    warn.className = "item-row";
+    warn.innerHTML = `<span class="warn">State file is ${(sizeBytes / 1048576).toFixed(1)} MB — investigate before it grows (images must stay as references, never bytes).</span>`;
+    panel.appendChild(warn);
+  }
+
+  const col = memeCollection();
+  const listHead = document.createElement("div");
+  listHead.className = "item-row";
+  listHead.innerHTML = `<label>Collection</label><span class="muted">${col.length} / ${MEME_MAX_ENTRIES} (drops onto a meme tile also add here)</span>`;
+  panel.appendChild(listHead);
+  const list = document.createElement("div");
+  list.className = "meme-settings-list";
+  list.innerHTML = col.length
+    ? col
+        .map(
+          (e) => `
+        <div class="item-row meme-edit-row" data-id="${escapeHtml(e.id)}">
+          <span class="meme-entry-name" title="${escapeHtml(e.sourceUrl || "local file")}">${escapeHtml(e.name || "image")}</span>
+          <span class="muted">${e.sourceUrl ? "url" : "file"}</span>
+          <button class="btn ghost danger icon-btn meme-entry-del" data-id="${escapeHtml(e.id)}" title="Remove">${ICON.remove}</button>
+        </div>`
+        )
+        .join("")
+    : `<div class="muted">Empty — paste a URL, browse a file, or drop images onto a meme tile.</div>`;
+  panel.appendChild(list);
+  list.querySelectorAll(".meme-entry-del").forEach((b) =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.id;
+      state.memeCollection = memeCollection().filter((e) => e.id !== id);
+      memeUriCache.delete(id);
+      saveState();
+      render();
+      renderMemeSettings();
+    })
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Expanded meme view: in-app fullscreen overlay (Settings-shell pattern) for
+// browsing the collection, captioning, searching, and PNG export. Helpers are
+// structured generically (FOCUS_PANELS) so other tiles can adopt the pattern.
+// ---------------------------------------------------------------------------
+const FOCUS_PANELS = { meme: "meme-focus" };
+let focusCtx = null;
+let memeFocusEntry = null;
+let memeFocusUri = "";
+
+function openFocus(kind, id) {
+  const elId = FOCUS_PANELS[kind];
+  if (!elId) return;
+  focusCtx = { kind, id };
+  Object.values(FOCUS_PANELS).forEach((pid) => document.getElementById(pid)?.classList.add("hidden"));
+  document.getElementById(elId)?.classList.remove("hidden");
+  if (kind === "meme") renderMemeFocus();
+}
+function closeFocus() {
+  focusCtx = null;
+  Object.values(FOCUS_PANELS).forEach((pid) => document.getElementById(pid)?.classList.add("hidden"));
+}
+function openMemeFocus(compId) {
+  if (state.compartments.some((c) => c.id === compId)) selectedMemeId = compId;
+  memeFocusEntry = null;
+  memeFocusUri = "";
+  openFocus("meme", compId);
+}
+
+async function previewMemeFocus(entry) {
+  const img = document.querySelector("#meme-focus .meme-preview-img");
+  const nameEl = document.querySelector("#meme-focus .meme-preview-name");
+  const statusEl = document.querySelector("#meme-focus .meme-focus-status");
+  if (!img) return;
+  memeFocusEntry = entry;
+  if (nameEl) nameEl.textContent = entry?.name || "";
+  if (!entry) {
+    img.removeAttribute("src");
+    return;
+  }
+  try {
+    const uri = await memeEntryUri(entry);
+    if (memeFocusEntry !== entry) return; // superseded while resolving
+    memeFocusUri = uri;
+    img.src = uri;
+    if (statusEl) statusEl.textContent = "";
+  } catch (e) {
+    if (statusEl) statusEl.textContent = `Couldn't load image: ${e.message || e}`;
+  }
+}
+
+async function renderMemeFocusGrid() {
+  const grid = document.querySelector("#meme-focus .meme-grid");
+  if (!grid) return;
+  const col = memeCollection();
+  grid.innerHTML = col.length
+    ? col
+        .map(
+          (e) => `
+        <div class="meme-thumb" data-id="${escapeHtml(e.id)}" title="${escapeHtml(e.name || "image")} — click to preview">
+          <img alt="" />
+          <button class="btn ghost danger icon-btn meme-thumb-del" data-id="${escapeHtml(e.id)}" title="Remove">×</button>
+        </div>`
+        )
+        .join("")
+    : `<div class="muted">Collection is empty.</div>`;
+  grid.querySelectorAll(".meme-thumb").forEach((t) =>
+    t.addEventListener("click", (ev) => {
+      if (ev.target.closest(".meme-thumb-del")) return;
+      const entry = memeCollection().find((e) => e.id === t.dataset.id);
+      if (entry) previewMemeFocus(entry);
+    })
+  );
+  grid.querySelectorAll(".meme-thumb-del").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.memeCollection = memeCollection().filter((e) => e.id !== b.dataset.id);
+      memeUriCache.delete(b.dataset.id);
+      saveState();
+      render();
+      renderMemeFocusGrid();
+      if (document.getElementById("meme-list")) renderMemeSettings();
+    })
+  );
+  // Lazy-fill thumbnails so the grid appears instantly on big collections.
+  for (const t of grid.querySelectorAll(".meme-thumb")) {
+    const entry = memeCollection().find((e) => e.id === t.dataset.id);
+    if (!entry) continue;
+    try {
+      const uri = await memeEntryUri(entry);
+      if (!t.isConnected) return;
+      const stillThere = memeCollection().some((e) => e.id === entry.id);
+      if (stillThere) t.querySelector("img").src = uri;
+    } catch {
+      // Dead entry: leave the placeholder box with its title tooltip.
+    }
+  }
+}
+
+function renderMemeFocus() {
+  const root = document.getElementById("meme-focus");
+  if (!root || !root.querySelector(".meme-preview-img")) return; // shell built once below
+  renderMemeFocusGrid();
+  if (memeFocusEntry) {
+    previewMemeFocus(memeFocusEntry);
+    return;
+  }
+  const pool = memePool();
+  previewMemeFocus(pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
+}
+
+function buildMemeFocusShell() {
+  if (document.getElementById("meme-focus")) return;
+  const sec = document.createElement("section");
+  sec.id = "meme-focus";
+  sec.className = "settings hidden";
+  sec.innerHTML = `
+    <div class="settings-panel meme-focus-panel">
+      <header>
+        <h2>Memes</h2>
+        <button id="meme-focus-close" class="btn ghost icon-btn" title="Close">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </header>
+      <div class="meme-focus-main">
+        <div class="meme-preview">
+          <div class="meme-preview-imgwrap">
+            <img class="meme-preview-img" alt="" />
+            <div class="meme-cap meme-cap-top"></div>
+            <div class="meme-cap meme-cap-bottom"></div>
+          </div>
+          <div class="meme-preview-name muted"></div>
+        </div>
+        <div class="meme-editor">
+          <div class="item-row">
+            <label>Top <input id="meme-cap-top" type="text" placeholder="TOP TEXT" /></label>
+            <label>Bottom <input id="meme-cap-bottom" type="text" placeholder="BOTTOM TEXT" /></label>
+          </div>
+          <div class="item-row">
+            <button class="btn primary" id="meme-export">Export PNG</button>
+            <span class="meme-focus-status muted"></span>
+          </div>
+          <div class="item-row">
+            <label>Search images <input id="meme-search" type="text" placeholder="disappointing meme" /></label>
+            <button class="btn ghost" id="meme-search-go">Go</button>
+          </div>
+          <div class="item-row">
+            <label>Add image URL <input id="meme-focus-url" type="text" placeholder="https://…" /></label>
+            <button class="btn ghost" id="meme-focus-add">Add</button>
+            <button class="btn ghost" id="meme-focus-browse">Browse…</button>
+          </div>
+          <div class="meme-drop" title="Drop image files here (or onto a meme tile)">Drop image files here</div>
+          <h3>Collection</h3>
+          <div class="meme-grid"></div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(sec);
+
+  sec.querySelector("#meme-focus-close").addEventListener("click", closeFocus);
+  const capTop = sec.querySelector("#meme-cap-top");
+  const capBottom = sec.querySelector("#meme-cap-bottom");
+  const syncCaps = () => {
+    sec.querySelector(".meme-cap-top").textContent = capTop.value;
+    sec.querySelector(".meme-cap-bottom").textContent = capBottom.value;
+  };
+  capTop.addEventListener("input", syncCaps);
+  capBottom.addEventListener("input", syncCaps);
+  sec.querySelector("#meme-export").addEventListener("click", async () => {
+    const statusEl = sec.querySelector(".meme-focus-status");
+    statusEl.textContent = "exporting…";
+    try {
+      await exportMemePng(memeFocusUri, capTop.value, capBottom.value);
+      statusEl.textContent = "saved — check your downloads";
+    } catch (e) {
+      statusEl.textContent = `export failed: ${e.message || e}`;
+    }
+  });
+  sec.querySelector("#meme-search-go").addEventListener("click", () => {
+    const q = sec.querySelector("#meme-search").value.trim();
+    if (!q) return;
+    native.openUrl(memeEngine().replace("{q}", encodeURIComponent(q)));
+  });
+  sec.querySelector("#meme-search").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sec.querySelector("#meme-search-go").click();
+  });
+  const addUrl = async () => {
+    const inp = sec.querySelector("#meme-focus-url");
+    const url = inp.value.trim();
+    if (!url) return;
+    const statusEl = sec.querySelector(".meme-focus-status");
+    statusEl.textContent = "fetching…";
+    try {
+      await native.fetchImageCached(url);
+      const col = memeCollection();
+      if (col.length >= MEME_MAX_ENTRIES) {
+        statusEl.textContent = `collection full (${MEME_MAX_ENTRIES})`;
+        return;
+      }
+      if (col.some((e) => e.sourceUrl === url)) {
+        statusEl.textContent = "already in collection";
+        return;
+      }
+      col.push({ id: "m" + Date.now(), name: url.slice(-32), sourceUrl: url, cacheKey: null, addedAt: Date.now() });
+      inp.value = "";
+      statusEl.textContent = "";
+      saveState();
+      render();
+      renderMemeFocusGrid();
+      if (document.getElementById("meme-list")) renderMemeSettings();
+    } catch (e) {
+      statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  };
+  sec.querySelector("#meme-focus-add").addEventListener("click", addUrl);
+  sec.querySelector("#meme-focus-browse").addEventListener("click", async () => {
+    const statusEl = sec.querySelector(".meme-focus-status");
+    try {
+      const p = await native.pickImage();
+      if (!p) return;
+      const ref = await native.importImageFile(p);
+      const col = memeCollection();
+      if (col.length >= MEME_MAX_ENTRIES) {
+        statusEl.textContent = `collection full (${MEME_MAX_ENTRIES})`;
+        return;
+      }
+      if (!ref || !ref.key || col.some((e) => e.cacheKey === ref.key)) {
+        statusEl.textContent = "already in collection";
+        return;
+      }
+      const entry = {
+        id: "m" + Date.now(),
+        name: p.split(/[\\/]/).pop() || "image",
+        sourceUrl: null,
+        cacheKey: ref.key,
+        addedAt: Date.now(),
+      };
+      col.push(entry);
+      memeUriCache.set(entry.id, ref.uri);
+      statusEl.textContent = "";
+      saveState();
+      render();
+      renderMemeFocusGrid();
+      if (document.getElementById("meme-list")) renderMemeSettings();
+    } catch (e) {
+      statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+}
+
+async function exportMemePng(imgSrc, top, bottom) {
+  if (!imgSrc) throw new Error("no image to export");
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = () => rej(new Error("image didn't load"));
+    img.src = imgSrc;
+  });
+  const canvas = document.createElement("canvas");
+  const w = img.naturalWidth || 800;
+  const h = img.naturalHeight || 600;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const drawCaption = (text, topSide) => {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    const size = Math.max(16, Math.floor(w / 10));
+    ctx.font = `bold ${size}px Impact, 'Arial Black', sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = Math.max(2, Math.round(size / 12));
+    ctx.lineJoin = "round";
+    // Simple word wrap across the full width.
+    const words = clean.toUpperCase().split(/\s+/);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const test = line ? line + " " + word : word;
+      if (ctx.measureText(test).width > w * 0.94 && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+    const step = size * 1.12;
+    lines.forEach((ln, i) => {
+      const y = topSide ? size * 0.4 + step * (i + 1) : h - size * 0.4 - step * (lines.length - 1 - i);
+      ctx.strokeText(ln, w / 2, y);
+      ctx.fillText(ln, w / 2, y);
+    });
+  };
+  drawCaption(top, true);
+  drawCaption(bottom, false);
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+  if (!blob) throw new Error("canvas export failed");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "meme.png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Files", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -3072,6 +3734,7 @@ const KIND_DEFAULTS = {
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
+  meme: { title: "Memes", data: { intervalSec: 30 } },
   project: { title: "Projects", data: { roots: [] } },
 };
 
@@ -3285,6 +3948,7 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  buildMemeFocusShell();
   zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
   updateZoomUI();
   applyAppearance();
@@ -3348,7 +4012,8 @@ async function setupDragDrop() {
     if (type === "over") {
       gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
       const over = targetAt({ x, y });
-      if (over && state.compartments.find((c) => c.id === over.dataset.id)?.kind === "launcher") {
+      const overKind = over ? state.compartments.find((c) => c.id === over.dataset.id)?.kind : null;
+      if (over && (overKind === "launcher" || overKind === "meme")) {
         over.classList.add("drag-over");
       }
       return;
@@ -3361,11 +4026,30 @@ async function setupDragDrop() {
     gridEl.querySelectorAll(".compartment.drag-over").forEach((el) => el.classList.remove("drag-over"));
     if (!paths || !paths.length) return;
 
+    // Meme drop zone in the expanded view wins over grid tiles while open.
+    const dz = document.querySelector("#meme-focus:not(.hidden) .meme-drop");
+    if (dz && paths && paths.length) {
+      const r = dz.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        await importMemeFiles(paths);
+        renderMemeFocusGrid();
+        if (document.getElementById("meme-list")) renderMemeSettings();
+        return;
+      }
+    }
+
     // Find the launcher tile under the drop point.
     const target = targetAt({ x, y });
     if (!target) return;
     const comp = state.compartments.find((c) => c.id === target.dataset.id);
-    if (!comp || comp.kind !== "launcher") return;
+    if (!comp) return;
+    if (comp.kind === "meme") {
+      await importMemeFiles(paths);
+      if (document.getElementById("meme-list")) renderMemeSettings();
+      if (focusCtx?.kind === "meme") renderMemeFocusGrid();
+      return;
+    }
+    if (comp.kind !== "launcher") return;
 
     comp.data = comp.data || {};
     comp.data.items = comp.data.items || [];

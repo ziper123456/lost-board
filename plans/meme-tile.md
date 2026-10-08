@@ -147,8 +147,10 @@ Old states load fine (arrays default to empty via existing `|| []` guards).
 
 ## 8. Corrections log (filled at implementation)
 
-_(Work-laptop agent: append dated entries here.)_
-- (none yet)
+- 2026-10-08: added `import_image_file` (local file → cache, content-addressed by byte hash) + `load_cached_image(key)` beyond the §4a sketch — file-backed entries have no URL to re-fetch, so they need key-based resolve; URL entries re-resolve via `fetch_image_cached(sourceUrl)` (disk-cache hit, no network).
+- 2026-10-08: search ships Pinterest-only default, no Google/Bing presets (§4d allowed presets only if patterns verify — skipped for v1, engine URL stays editable in settings).
+- 2026-10-08: expanded-view shell built by JS (`buildMemeFocusShell` at boot) instead of static HTML — keeps the `index.html` diff to tab/panel/option only; overlay reuses the Settings CSS shell.
+- 2026-10-08: canvas PNG export via anchor download (plan's verify-in-webview item still open — manual test step 7; Rust-save fallback not built unless anchor fails).
 
 ## 7. Risks & unknowns
 

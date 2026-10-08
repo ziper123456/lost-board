@@ -410,6 +410,211 @@ async fn cache_favicon(app: tauri::AppHandle, host: String) -> Result<String, St
     Ok(format!("data:image/x-icon;base64,{b64}"))
 }
 
+const IMAGE_DIR: &str = "images";
+const MAX_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(data))
+}
+
+/// MIME from a cached file extension (only types this command ever stores).
+fn image_mime_for(ext: &str) -> &'static str {
+    match ext {
+        "jpg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+fn image_data_uri(ext: &str, bytes: &[u8]) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{};base64,{b64}", image_mime_for(ext))
+}
+
+/// Resolve an image extension: sniff the response Content-Type first
+/// (Pinterest URLs often lack usable extensions), fall back to the URL
+/// extension, reject anything that isn't an image.
+fn image_ext_for(content_type: &str, url: &str) -> Option<&'static str> {
+    match content_type {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "image/bmp" => Some("bmp"),
+        "image/avif" => Some("avif"),
+        "image/x-icon" => Some("ico"),
+        _ => {
+            let ext = url
+                .rsplit(['?', '#'])
+                .next()
+                .unwrap_or(url)
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match ext.as_str() {
+                "jpg" | "jpeg" => Some("jpg"),
+                "png" => Some("png"),
+                "gif" => Some("gif"),
+                "webp" => Some("webp"),
+                "svg" => Some("svg"),
+                "bmp" => Some("bmp"),
+                "avif" => Some("avif"),
+                "ico" => Some("ico"),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Fetch any image URL (meme templates, Pinterest direct links), cache the
+/// bytes under app-data `images/` keyed by SHA-256 of the URL, and return a
+/// data-URI. State holds the cache key (reference), never the bytes.
+/// Fetching through here (never remote `<img src>`) kills CORS, hotlink
+/// blocks, and URL rot after the first fetch.
+#[tauri::command]
+async fn fetch_image_cached(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    let url = url.trim().to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http(s) image URLs can be fetched".into());
+    }
+    let key = sha256_hex(url.as_bytes());
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for entry in rd.filter_map(Result::ok) {
+            let p = entry.path();
+            if p.file_stem().and_then(|s| s.to_str()) == Some(key.as_str()) {
+                let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_string();
+                return Ok(image_data_uri(&ext, &bytes));
+            }
+        }
+    }
+
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "lost-board/0.1")
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("image request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("image HTTP {}", resp.status()));
+    }
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !content_type.is_empty() && !content_type.starts_with("image/") {
+        return Err(format!("URL is not an image ({content_type})"));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("image read failed: {e}"))?
+        .to_vec();
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image exceeds the 15 MB limit".into());
+    }
+    let ext = image_ext_for(&content_type, &url).ok_or("could not determine image type")?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
+    fs::write(dir.join(format!("{key}.{ext}")), &bytes)
+        .map_err(|e| format!("Failed to cache image: {e}"))?;
+    Ok(image_data_uri(ext, &bytes))
+}
+
+#[derive(serde::Serialize)]
+struct CachedImageRef {
+    key: String,
+    uri: String,
+}
+
+/// Import a local image file (file browse / OS drop) into the image cache.
+/// Content-addressed by SHA-256 of the bytes; state stores the key only.
+#[tauri::command]
+async fn import_image_file(app: tauri::AppHandle, path: String) -> Result<CachedImageRef, String> {
+    let ext = Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let ext = match ext.as_str() {
+        "jpg" | "jpeg" => "jpg".to_string(),
+        "png" | "gif" | "webp" | "svg" | "bmp" | "avif" | "ico" => ext,
+        _ => return Err("not a supported image file".into()),
+    };
+    let bytes = fs::read(&path).map_err(|e| format!("Failed to read image: {e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image exceeds the 15 MB limit".into());
+    }
+    let key = sha256_hex(&bytes);
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
+    fs::write(dir.join(format!("{key}.{ext}")), &bytes)
+        .map_err(|e| format!("Failed to cache image: {e}"))?;
+    Ok(CachedImageRef {
+        key,
+        uri: image_data_uri(&ext, &bytes),
+    })
+}
+
+/// Resolve a cache key to a data-URI (collection render path). File-backed
+/// entries re-fetch from `sourceUrl` on a miss via `fetch_image_cached`.
+#[tauri::command]
+async fn load_cached_image(app: tauri::AppHandle, key: String) -> Result<String, String> {
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("invalid cache key".into());
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for entry in rd.filter_map(Result::ok) {
+            let p = entry.path();
+            if p.file_stem().and_then(|s| s.to_str()) == Some(key.as_str()) {
+                let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_string();
+                return Ok(image_data_uri(&ext, &bytes));
+            }
+        }
+    }
+    Err("image not in cache".into())
+}
+
 const KEYRING_SERVICE: &str = "lost-board";
 const DEEPL_KEY_USER: &str = "deepl_api_key";
 
@@ -1101,6 +1306,9 @@ pub fn run() {
             open_url,
             fetch_rss,
             cache_favicon,
+            fetch_image_cached,
+            import_image_file,
+            load_cached_image,
             set_deepl_key,
             deepl_key_status,
             clear_deepl_key,
