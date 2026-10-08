@@ -37,6 +37,7 @@ const DEFAULT_STATE = {
   theme: "dark",
   cornerRadius: 10,
   wall: false,
+  backgroundMode: false,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -228,6 +229,13 @@ async openFolder(path) {
   async importConfig() {
     if (window.__TAURI__) return invoke("import_config");
     return null;
+  },
+  async setAutostart(enabled) {
+    if (window.__TAURI__) return invoke("set_autostart", { enabled });
+  },
+  async autostartEnabled() {
+    if (window.__TAURI__) return invoke("autostart_enabled");
+    return false;
   },
 };
 
@@ -1340,6 +1348,40 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "F11") {
     e.preventDefault();
     toggleFullscreen();
+  }
+});
+
+// Background mode: pin the window fullscreen behind all windows (tray icon
+// stays the way back in). Leaving it does NOT force-exit fullscreen;
+// F11 / the toggle still control that independently.
+async function applyBackgroundMode(on) {
+  const next = on === true;
+  if (window.__TAURI__) {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    await win.setAlwaysOnBottom(next);
+    await win.setSkipTaskbar(next);
+    if (next) await win.setFullscreen(true);
+  }
+  // Persist only after the window calls succeed, so a failure never leaves
+  // a checked box / saved state for a mode that isn't applied.
+  state.backgroundMode = next;
+  saveState();
+}
+document.getElementById("set-background").addEventListener("change", async (e) => {
+  try {
+    await applyBackgroundMode(e.target.checked);
+  } catch (err) {
+    e.target.checked = state.backgroundMode === true;
+    alert(`Background mode: ${err.message || err}`);
+  }
+  render();
+});
+document.getElementById("set-autostart").addEventListener("change", async (e) => {
+  try {
+    await native.setAutostart(e.target.checked);
+  } catch (err) {
+    e.target.checked = !e.target.checked;
+    alert(`Autostart: ${err.message || err}`);
   }
 });
 
@@ -3017,6 +3059,19 @@ async function initialize() {
   document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
   document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
   document.getElementById("set-wall").checked = state.wall === true;
+  // Restore background mode + autostart checkbox across restarts. Autostart
+  // itself persists OS-side; only the checkbox needs syncing.
+  document.getElementById("set-background").checked = state.backgroundMode === true;
+  try {
+    document.getElementById("set-autostart").checked = await native.autostartEnabled().catch(() => false);
+  } catch {
+    document.getElementById("set-autostart").checked = false;
+  }
+  try {
+    await applyBackgroundMode(state.backgroundMode === true);
+  } catch (e) {
+    console.error("Failed to restore background mode", e);
+  }
   if (state.previewWidth) {
     previewEl.style.width = `${state.previewWidth}px`;
     previewWidthEl.value = state.previewWidth;

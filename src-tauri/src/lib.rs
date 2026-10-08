@@ -1035,11 +1035,55 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .setup(|app| {
+            use tauri::{
+                menu::{MenuBuilder, MenuItemBuilder},
+                tray::TrayIconBuilder,
+                Manager,
+            };
+            let show = MenuItemBuilder::new("Show").id("show").build(app)?;
+            let hide = MenuItemBuilder::new("Hide").id("hide").build(app)?;
+            let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show, &hide, &quit]).build()?;
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("lost-board")
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        let _ = app.get_webview_window("main").map(|w| {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        });
+                    }
+                    "hide" => {
+                        let _ = app.get_webview_window("main").map(|w| {
+                            let _ = w.hide();
+                        });
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                });
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray = tray.icon(icon);
+            }
+            // A missing tray must never prevent the app itself from starting —
+            // log it and continue without one.
+            if let Err(e) = tray.build(app) {
+                eprintln!("lost-board: failed to create tray icon: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             load_state,
             save_state,
             export_config,
             import_config,
+            set_autostart,
+            autostart_enabled,
             pick_folder,
             pick_solution,
             pick_icon,
@@ -1076,6 +1120,33 @@ pub fn run() {
 }
 
 const STATE_FILE_NAME: &str = "dashboard-state.json";
+
+// ---------------------------------------------------------------------------
+// Background mode: launch-on-login via tauri-plugin-autostart, wrapped in our
+// own commands so the frontend never touches plugin commands directly.
+// ---------------------------------------------------------------------------
+
+/// Enable or disable launch-on-login for this app.
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let m = app.autolaunch();
+    if enabled {
+        m.enable()
+    } else {
+        m.disable()
+    }
+    .map_err(|e| format!("autostart: {e}"))
+}
+
+/// Whether launch-on-login is currently enabled.
+#[tauri::command]
+fn autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("autostart: {e}"))
+}
 
 /// Validate the expected dashboard-state schema. The payload must be an object
 /// with a positive-integer `columns` and an array of `compartments`, each a
