@@ -183,6 +183,10 @@ fn scan_project_root(root: String) -> Result<Vec<ProjectEntry>, String> {
         .map_err(|e| format!("Failed to read root: {e}"))?
         .filter_map(Result::ok)
     {
+        // Never follow symlinked entries at the root either.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
+            continue;
+        }
         let p = entry.path();
         if p.is_file() {
             if let Some(sln) = solution_in(&p) {
@@ -250,38 +254,40 @@ fn solution_in(p: &Path) -> Option<String> {
 }
 
 /// Recursively search `dir` for a solution file, up to `depth` levels.
+/// Single pass: collects candidate files + subdirs together, skipping
+/// symlinked entries up front so linked trees are never followed.
 fn find_solution(dir: &Path, depth: usize) -> Option<String> {
-    // Check files in this dir first.
+    let mut here = Vec::new();
+    let mut subdirs = Vec::new();
     if let Ok(read) = fs::read_dir(dir) {
-        let mut here = Vec::new();
         for entry in read.filter_map(Result::ok) {
+            // Never follow symlinked dirs (avoids cycles / duplicated trees).
+            if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
+                continue;
+            }
             let p = entry.path();
             if p.is_file() {
                 if let Some(s) = solution_in(&p) {
                     here.push(s);
                 }
+            } else if p.is_dir() {
+                subdirs.push(p);
             }
         }
-        if !here.is_empty() {
-            return pick_best_solution(&mut here);
+    }
+    if !here.is_empty() {
+        return pick_best_solution(&mut here);
+    }
+    if depth >= 4 {
+        return None;
+    }
+    for p in subdirs {
+        let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+        if is_ignored_dir(name) {
+            continue;
         }
-        if depth >= 4 {
-            return None;
-        }
-        // Otherwise recurse into subdirs.
-        if let Ok(read2) = fs::read_dir(dir) {
-            for entry in read2.filter_map(Result::ok) {
-                let p = entry.path();
-                if p.is_dir() {
-                    let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
-                    if is_ignored_dir(name) {
-                        continue;
-                    }
-                    if let Some(s) = find_solution(&p, depth + 1) {
-                        return Some(s);
-                    }
-                }
-            }
+        if let Some(s) = find_solution(&p, depth + 1) {
+            return Some(s);
         }
     }
     None
