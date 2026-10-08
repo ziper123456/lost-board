@@ -1,8 +1,7 @@
 # Implementation Plan — Meme tile (rotation + captioning + expanded view)
 
-> ⚠️ **Status: planned, not built.** Code sketches below are **uncompiled**
-> (no Rust toolchain on the planning machine). Treat them as reference —
-> verify every API at build time, fix drift, and note corrections in the commit.
+> ✅ **Status: built and merged (PR #32, 2026-10-08).** Includes output-folder setting,
+> original-format + captioned-GIF export. See §8 corrections log.
 
 ## 1. Goal
 

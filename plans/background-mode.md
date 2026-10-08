@@ -1,9 +1,7 @@
 # Implementation Plan — Background Mode (tray + autostart + always-on-bottom)
 
-> ⚠️ **Status: planned, not built.** Code sketches below are **uncompiled**
-> (no Rust toolchain on the planning machine). Treat them as reference —
-> verify every API against docs.rs / Tauri v2 docs while implementing,
-> fix drift, and note corrections in the commit message.
+> ✅ **Status: built and merged (PR #30, 2026-10-08).** Sketches below verified against
+> Tauri 2.12.1 / autostart 2.7.0 with zero drift — see §8 corrections log.
 
 ## 1. Goal
 

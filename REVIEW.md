@@ -120,3 +120,18 @@ Findings and dispositions:
 - **F3 — `ensureProjectComp()` side effect in delegated panel handler** (`src/main.js`): deleting the Projects tile while its Settings panel is open, then clicking any panel button, silently resurrects an empty tile. **Status: open, fix suggested.**
 - **F4 — `find_solution` reads each directory twice** (`src-tauri/src/lib.rs`): two `read_dir` passes (files, then dirs). Harmless but wasteful on large repos. **Status: open, fix suggested.**
 - **F5 — symlinked directories are followed by the scanner** (`src-tauri/src/lib.rs`): bounded by the depth-4 cap so no infinite loop, but a symlinked tree under an unusual name is still walked. **Status: open, fix suggested.**
+
+---
+
+## 11. Follow-up — delta review `e74e39d..0e79805` (2026-10-08, PRs #18–#33)
+
+All prior open findings are now resolved; each PR below got a dedicated pre-merge review:
+
+- **F2 (queue-jump fast path) → fixed** (PR #18, #24): `PUT /play {context_uri, offset}` one-call jump on album/playlist contexts; paced (~175ms) skip fallback that stops on 429 with visible status; `context_uri`/`context_type` surfaced via `/me/player`. Follow-up arg-casing bug (`context_uri` vs `contextUri`) diagnosed from the refusal-reason status and fixed (PRs #26–#28).
+- **F3 (tile resurrect) → fixed** (PR #22, issue #19): non-creating `findProjectComp()` in the delegated handler; same rule applied to the Vocab tab later (PR #31 review).
+- **F4 + F5 (scanner) → fixed** (PR #23, issue #20): single-pass `read_dir`, symlinked entries skipped up front (root loop included).
+- **M1 (dead Healthcheck tab) → resolved by removal** (PR #29): tab + panel + unused CSS deleted, zero references remain.
+- **M2 (spec drift) → resolved 2026-10-08:** Azure PAT live tiles marked dropped in spec (FR-BMK-004/AC-007), Translate/Frame/Vocab/Meme/Background/Config all specced (FR-VOC incl. 009, FR-MEM, FR-WIN, AC-018..034), README/PLAN status rewritten.
+- **New since `e74e39d`:** PR #25 config export/import (#21), PR #29 healthcheck removal + editable/persisted zoom, PR #30 background mode (tray/autostart/behind-mode), PR #31 vocab tile + drill popup (5 pre-merge review findings fixed on-branch), PR #32 meme tile (3 pre-merge review findings fixed on-branch, incl. captioned animated GIF export), PR #33 vocab TTS (per-tile toggle, volume/speed sliders, per-language voices).
+- **M3 (null CSP) / M4 (unbounded remote sizes):** still open, unchanged — deferred to Phase 3 hardening.
+- **Scope note:** spec §8 healthcheck entries now historical (feature dropped + tab removed); Azure PAT stays dropped; close-behavior decided (close quits).

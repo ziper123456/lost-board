@@ -3,8 +3,10 @@
 Personal dashboard launcher — a single-user, local-only desktop app.
 
 It replaces a browser start page and scattered bookmarks with a customizable grid of live
-"compartments": open folders / solutions, jump to Azure DevOps repos, control Spotify, and see
-weather (with world clocks), news, service healthchecks, and system stats.
+"compartments": open folders / solutions / files, browse scanned repo projects, jump to Azure
+DevOps repos, control Spotify, drill vocabulary with flashcards, rotate memes, and see weather
+(with world clocks), news, translate text, framed photos, and system stats — optionally pinned
+as a desktop background with tray + autostart.
 
 > **Spec & progress tracking live in this repo** so work can continue on any machine (e.g. a work PC).
 > See [`spec.md`](spec.md) (requirements) and [`PLAN.md`](PLAN.md) (roadmap / TODO).
@@ -20,8 +22,13 @@ weather (with world clocks), news, service healthchecks, and system stats.
   - `get_system_stats` — live CPU / RAM usage
   - `fetch_rss` / `cache_favicon` — CORS-free feed fetch, on-disk favicon cache
   - `load_state` / `save_state` — app-data JSON config with schema validation + `.bak` on corrupt
+  - `export_config` / `import_config` — move the config to another machine (secrets never exported)
   - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
-  - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue
+  - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue/jump
+  - `set_autostart` / `autostart_enabled` — launch on login (tray icon + background behind-mode)
+  - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close) — bundled CSV flashcards + drill popup
+  - `fetch_image_cached` / `import_image_file` / `load_cached_image` — disk-cached image pool (meme tile)
+  - `save_meme_png` / `save_meme_source` / `save_meme_captioned_gif` — captioned/static/animated exports
 
 ## Prerequisites (one-time, per machine)
 
@@ -52,21 +59,27 @@ src/                  # frontend (HTML/CSS/JS)
   index.html          # topbar, dashboard grid container, settings overlay
   styles.css          # theme + layout
   main.js             # state, grid rendering, compartment logic, settings wiring
+  drill.html          # vocab drill popup window
 src-tauri/            # Rust backend (Tauri v2)
   Cargo.toml
   tauri.conf.json
-  capabilities/default.json
+  capabilities/default.json   # main window permissions
+  capabilities/drill.json     # drill popup permissions
+  resources/cards.csv # bundled vocabulary list (versioned snapshot)
   src/lib.rs          # native commands
   src/main.rs         # entry point
 spec.md               # feature specification (EARS requirements, ACs, error handling)
 PLAN.md               # roadmap + implementation TODO (cross-machine)
+plans/                # per-feature implementation plans + corrections logs
 ```
 
-## Status (updated 2026-10-07)
+## Status (updated 2026-10-08)
 
-MVP is built: fixed-column grid (drag + snap + resize), Folders & Files, Projects (root
-scanning), Bookmarks, Azure deep-links, Weather + world clocks, News, Translate, Frame,
-System stats, and Spotify (playback + shuffle/repeat + queue). **Still to build:** Service
-Healthcheck (tab exists, no logic yet). Details in [`PLAN.md`](PLAN.md), requirements in
-[`spec.md`](spec.md), latest review in [`REVIEW.md`](REVIEW.md), open follow-ups as GitHub
-issues #18, #19, #20.
+Everything planned is built: fixed-column grid (drag + snap + resize, editable zoom),
+Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links, Weather + world
+clocks, News, Translate, Frame, System stats, Spotify (playback + shuffle/repeat + queue
+jump), Background mode (tray + autostart + always-on-bottom), Vocab flashcards (tile +
+drill popup + per-tile speech), Memes (rotation + collection + captioning + export), and
+Config export/import. Service Healthcheck was dropped and its tab removed. **No open
+PRs, no open issues.** Details in [`PLAN.md`](PLAN.md), requirements in
+[`spec.md`](spec.md), latest review in [`REVIEW.md`](REVIEW.md).

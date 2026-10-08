@@ -2,8 +2,8 @@
 type: spec
 title: lost-board — Feature Specification
 project: lost-board
-date: 2026-10-07
-status: living (MVP built; background-mode specced, code deferred to work laptop — see REVIEW.md)
+date: 2026-10-08
+status: living (all planned features built — see PLAN.md; Phase 3 backlog open)
 decisions:
   arch: A (Tauri desktop app, local-only)
   scope: MVP all compartments except synced lyrics (phase 2)
@@ -15,9 +15,9 @@ decisions:
   lyrics: dropped (was phase 2; no longer wanted)
   launcher: folders + any file (open via OS association), plus Projects tile with root scanning
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
-  window: background mode — tray + autostart + always-on-bottom (specced §2.12, not yet built)
-  vocab: flashcard tile (passive rotation) + drill popup (active recall) (specced §2.13, not yet built; supersedes Practice-tile discussion)
-  meme: rotation tile (top-100 + curated) + local captioning + expanded view (specced §2.14, not yet built)
+  window: background mode — tray + autostart + always-on-bottom (built, PR #30)
+  vocab: flashcard tile + drill popup + per-tile speech (built, PRs #31, #33)
+  meme: rotation tile (top-100 + curated) + local captioning + expanded view + GIF/PNG export (built, PR #32)
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -157,7 +157,7 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-FRM-001** When the user picks a local image or GIF for a frame tile, the system shall display
   it filling the tile (configurable fit: cover / contain / stretch).
 
-### 2.12 Window, Tray & Background Mode (next up — not yet built)
+### 2.12 Window, Tray & Background Mode (built — PR #30)
 
 Rationale: a dashboard glanced at all day belongs behind everything as a living background,
 not as a window to reopen. Verified against Tauri v2 docs (2026-10-07): all three pieces are
@@ -176,7 +176,7 @@ first-class APIs.
 - **FR-WIN-005** Known quirks (accepted): Win+D minimizes the window (restore via tray icon);
   Alt-Tab focus keeps it visually behind other windows.
 
-### 2.13 Vocab: flashcard tile + drill popup (next up — not yet built)
+### 2.13 Vocab: flashcard tile + drill popup + speech (built — PRs #31, #33)
 
 Design: passive exposure lives on the board (infinite trilingual flashcard), active recall
 lives in a popup on the main screen (typing drill). This supersedes the earlier
@@ -208,7 +208,7 @@ shuffle independently (different words in each is variety, not a bug).
   languages in order (English, then Spanish, then German) via the Web Speech API, each in
   its per-language configured voice (default voice when unchosen or unavailable).
 
-### 2.14 Meme tile: rotation + local captioning + expanded view (next up — not yet built)
+### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
 Design: a compact tile for ambient rotation plus an expanded view (larger than Settings)
 for doing things — browsing the collection, captioning, adding sources. The expanded
@@ -525,20 +525,21 @@ Then the health endpoint URL opens in the browser.
 - [ ] Offline / stale-data badge behavior across network compartments.
 - [ ] Play-test AC-001..AC-012.
 
-### Phase 2 — Enhancements
+### Phase 2 — Enhancements (all built 2026-10-08)
 - [x] ~~Spotify synced lyrics~~ — **dropped** (2026-10-07, no longer wanted).
-- [ ] Background mode implementation (FR-WIN-001..005, AC-018..020) — **code deferred to work laptop** (no build toolchain on this machine).
-- [ ] Healthcheck tab removal from UI (dropped feature cleanup).
-- [ ] Vocab implementation (FR-VOC-001..008, AC-021..026):
-  - [ ] Rust `read_vocab_cards` command (parse shared `cards.csv`, in-memory cache).
-  - [ ] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
-  - [ ] Drill popup page + scheduler + placement + annoyance controls.
-  - [ ] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
-- [ ] Meme tile implementation (FR-MEM-001..007, AC-027..033):
-  - [ ] Rotation from top-100 + shared curated collection (image fetch/cache command).
-  - [ ] Add via URL paste + file drop (browser-tab drop best-effort).
-  - [ ] Local caption overlay + PNG export.
-  - [ ] Expanded view (fullscreen overlay, reusable pattern).
+- [x] ~~Background mode implementation (FR-WIN-001..005, AC-018..020)~~ — built (PR #30).
+- [x] ~~Healthcheck tab removal from UI (dropped feature cleanup)~~ — built (PR #29).
+- [x] ~~Vocab implementation (FR-VOC-001..009, AC-021..026, AC-034)~~ — built (PRs #31, #33):
+  - [x] Rust `read_vocab_cards` command (parse shared `cards.csv`, in-memory cache).
+  - [x] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
+  - [x] Drill popup page + scheduler + placement + annoyance controls.
+  - [x] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
+  - [x] Per-tile speech with per-language voices, volume + speed (FR-VOC-009).
+- [x] ~~Meme tile implementation (FR-MEM-001..007, AC-027..033)~~ — built (PR #32):
+  - [x] Rotation from top-100 + shared curated collection (image fetch/cache command).
+  - [x] Add via URL paste + file drop (browser-tab drop best-effort).
+  - [x] Local caption overlay + PNG export (+ animated GIF export, captioned or not).
+  - [x] Expanded view (fullscreen overlay, reusable pattern).
 - [ ] (Optional) macOS/Linux build; multi-screen/status-bar support.
 
 ---
@@ -560,9 +561,9 @@ Then the health endpoint URL opens in the browser.
 - [x] ~~Grid density~~ → **fixed-column grid** (confirmed).
 - [x] ~~Weather locations~~ → **per-compartment locations + world-clock time** (confirmed).
 - [x] ~~Tech stack~~ → **Tauri** (confirmed).
-- [x] ~~Healthcheck compartment~~ → **probe-only GET, green/red + latency** (confirmed; not yet built).
+- [x] ~~Healthcheck compartment~~ → **dropped with the feature** (dead tab removed, PR #29).
 - [x] ~~Azure PAT live tiles~~ → **dropped** (deep-links sufficient).
 - [x] ~~Healthcheck services/URLs~~ → dropped with the feature.
-- [ ] Tracking: open review follow-ups as GitHub issues #18 (queue jump), #19 (tile resurrect), #20 (scanner), #21 (config export/import).
+- [x] ~~Tracking: open review follow-ups as GitHub issues~~ — all closed (#18 queue jump, #19 tile resurrect, #20 scanner, #21 config export/import).
 - [x] ~~Window close behavior with tray present~~ → **close quits (unchanged)** — decided during background-mode implementation (2026-10-08): no close interception in v1; closing the window exits the app and removes the tray icon. Tray menu offers Hide for getting the window out of the way without quitting. Revisit close-to-tray only if real usage asks for it.
 - [ ] Shared progress merge (tile/popup practice stats + vocab-app sessions in one store)? — future work; tile/popup stats stay local for now.

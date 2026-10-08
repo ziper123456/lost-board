@@ -1,8 +1,7 @@
 # Implementation Plan — Vocab flashcard tile + drill popup
 
-> ⚠️ **Status: planned, not built.** Code sketches below are **uncompiled**
-> (no Rust toolchain on the planning machine). Treat them as reference —
-> verify every API at build time, fix drift, and note corrections in the commit.
+> ✅ **Status: built and merged (PR #31 tile+popup, PR #33 TTS, 2026-10-08).** Follow-up
+> FR-VOC-009 (per-tile speech with per-language voices, volume/speed) also shipped. See §8 corrections log.
 
 ## 1. Goal
 
