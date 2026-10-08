@@ -3638,8 +3638,12 @@ function buildMemeFocusShell() {
   capTop.addEventListener("input", syncCaps);
   capBottom.addEventListener("input", syncCaps);
   sec.querySelector("#meme-export").addEventListener("click", async () => {
+    const btn = sec.querySelector("#meme-export");
+    if (btn.disabled) return; // export already running (GIF encode can take a while)
+    btn.disabled = true;
     const statusEl = sec.querySelector(".meme-focus-status");
     statusEl.textContent = "exporting…";
+    try {
     const top = capTop.value.trim();
     const bottom = capBottom.value.trim();
     const entry = memeFocusEntry;
@@ -3705,6 +3709,9 @@ function buildMemeFocusShell() {
       statusEl.title = dest || "";
     } catch (e) {
       statusEl.textContent = `export failed: ${e.message || e}`;
+    }
+    } finally {
+      btn.disabled = false;
     }
   });
   sec.querySelector("#meme-search-go").addEventListener("click", () => {

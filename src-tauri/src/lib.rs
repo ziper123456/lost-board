@@ -637,36 +637,10 @@ async fn save_meme_png(dir: String, filename: String, png_base64: String) -> Res
     if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
         return Err("payload is not a PNG image".into());
     }
-    let safe: String = filename
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if safe.is_empty() || safe == ".png" {
-        return Err("invalid file name".into());
-    }
-    let dest = if dir.trim().is_empty() {
-        match rfd::AsyncFileDialog::new()
-            .set_title("Save meme PNG")
-            .set_file_name(&safe)
-            .add_filter("PNG", &["png"])
-            .save_file()
-            .await
-        {
-            Some(f) => f.path().to_path_buf(),
-            None => return Ok(None),
-        }
-    } else {
-        let d = std::path::PathBuf::from(dir.trim());
-        if !d.is_dir() {
-            return Err("output folder no longer exists — pick it again".into());
-        }
-        d.join(&safe)
+    let safe = sanitize_meme_filename(&filename)?;
+    let dest = match resolve_meme_dest(&dir, &safe, "Save meme PNG", "PNG", &["png"]).await? {
+        Some(d) => d,
+        None => return Ok(None),
     };
     fs::write(&dest, &bytes).map_err(|e| format!("Failed to save PNG: {e}"))?;
     Ok(Some(dest.to_string_lossy().into_owned()))
@@ -691,69 +665,19 @@ async fn save_meme_source(
     cache_key: String,
     source_url: String,
 ) -> Result<Option<SavedMeme>, String> {
-    let image_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
-        .join(IMAGE_DIR);
-    let mut resolved: Option<(String, Vec<u8>)> = None;
-    if !cache_key.is_empty() && cache_key.chars().all(|c| c.is_ascii_hexdigit()) {
-        if let Ok(rd) = fs::read_dir(&image_dir) {
-            for entry in rd.filter_map(Result::ok) {
-                let p = entry.path();
-                if p.file_stem().and_then(|s| s.to_str()) == Some(cache_key.as_str()) {
-                    let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
-                    let ext = p
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("bin")
-                        .to_string();
-                    resolved = Some((ext, bytes));
-                    break;
-                }
-            }
-        }
-    }
-    if resolved.is_none() && (source_url.starts_with("http://") || source_url.starts_with("https://")) {
-        if let Ok((ext, bytes)) = download_image(source_url.trim()).await {
-            let key = sha256_hex(source_url.trim().as_bytes());
-            fs::create_dir_all(&image_dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
-            let _ = fs::write(image_dir.join(format!("{key}.{ext}")), &bytes);
-            resolved = Some((ext, bytes));
-        }
-    }
-    let (ext, bytes) = resolved.ok_or("original image unavailable (offline and uncached)")?;
-    let safe_stem: String = stem
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if safe_stem.is_empty() {
-        return Err("invalid file name".into());
-    }
-    let filename = format!("{safe_stem}.{ext}");
-    let dest = if dir.trim().is_empty() {
-        match rfd::AsyncFileDialog::new()
-            .set_title("Save meme")
-            .set_file_name(&filename)
-            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"])
-            .save_file()
-            .await
-        {
-            Some(f) => f.path().to_path_buf(),
-            None => return Ok(None),
-        }
-    } else {
-        let d = std::path::PathBuf::from(dir.trim());
-        if !d.is_dir() {
-            return Err("output folder no longer exists — pick it again".into());
-        }
-        d.join(&filename)
+    let (ext, bytes) = resolve_meme_source_bytes(&app, &cache_key, &source_url).await?;
+    let stem = sanitize_meme_stem(&stem)?;
+    let dest = match resolve_meme_dest(
+        &dir,
+        &format!("{stem}.{ext}"),
+        "Save meme",
+        "Images",
+        &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+    )
+    .await?
+    {
+        Some(d) => d,
+        None => return Ok(None),
     };
     fs::write(&dest, &bytes).map_err(|e| format!("Failed to save image: {e}"))?;
     Ok(Some(SavedMeme {
@@ -814,6 +738,25 @@ fn sanitize_meme_stem(stem: &str) -> Result<String, String> {
         })
         .collect();
     if safe.is_empty() {
+        return Err("invalid file name".into());
+    }
+    Ok(safe)
+}
+
+/// Filename variant that additionally allows dots (for caller-built names
+/// like `meme-123.png` that already carry their extension).
+fn sanitize_meme_filename(name: &str) -> Result<String, String> {
+    let safe: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() || safe == ".png" {
         return Err("invalid file name".into());
     }
     Ok(safe)
@@ -1026,14 +969,24 @@ async fn save_meme_captioned_gif(
         return Err("no caption text".into());
     }
     let font_bytes = load_meme_font()?;
-    let font = ab_glyph::FontRef::try_from_slice(&font_bytes)
-        .map_err(|e| format!("caption font: {e}"))?;
-    let gif_bytes = caption_gif_frames(&bytes, &top, &bottom, &font)?;
     let stem = sanitize_meme_stem(&stem)?;
+    // Resolve the destination (dialog) BEFORE the heavy CPU work so a
+    // cancellation returns fast instead of waiting out the encode.
     let dest = match resolve_meme_dest(&dir, &format!("{stem}.gif"), "Save meme GIF", "GIF", &["gif"]).await? {
         Some(d) => d,
         None => return Ok(None),
     };
+    // Decode + caption + re-encode is pure CPU (up to 500 frames of text
+    // rasterization + quantization): keep it off the async runtime workers.
+    let top_owned = top.clone();
+    let bottom_owned = bottom.clone();
+    let gif_bytes = tokio::task::spawn_blocking(move || {
+        let font = ab_glyph::FontRef::try_from_slice(&font_bytes)
+            .map_err(|e| format!("caption font: {e}"))?;
+        caption_gif_frames(&bytes, &top_owned, &bottom_owned, &font)
+    })
+    .await
+    .map_err(|e| format!("GIF worker: {e}"))??;
     fs::write(&dest, &gif_bytes).map_err(|e| format!("Failed to save GIF: {e}"))?;
     Ok(Some(SavedMeme {
         path: dest.to_string_lossy().into_owned(),
