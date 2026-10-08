@@ -274,6 +274,14 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("save_meme_png", { dir, filename, pngBase64 });
     return null;
   },
+  async saveMemeSource(dir, stem, cacheKey, sourceUrl) {
+    if (window.__TAURI__) return invoke("save_meme_source", { dir, stem, cacheKey, sourceUrl });
+    return null;
+  },
+  async saveMemeCaptionedGif(dir, stem, cacheKey, sourceUrl, top, bottom) {
+    if (window.__TAURI__) return invoke("save_meme_captioned_gif", { dir, stem, cacheKey, sourceUrl, top, bottom });
+    return null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -924,6 +932,10 @@ function memeEngine() {
 function memeEntryKey(entry) {
   return entry.id || entry.sourceUrl || entry.cacheKey || entry.url || "";
 }
+function memeExtOf(pathOrUrl) {
+  const ext = (String(pathOrUrl || "").split(/[?#]/)[0].split(".").pop() || "").toLowerCase();
+  return ext === "jpeg" ? "jpg" : ext;
+}
 async function memeEntryUri(entry) {
   const key = memeEntryKey(entry);
   if (key && memeUriCache.has(key)) return memeUriCache.get(key);
@@ -975,6 +987,7 @@ async function importMemeFiles(paths) {
         name: p.split(/[\\/]/).pop() || "image",
         sourceUrl: null,
         cacheKey: ref.key,
+        ext: memeExtOf(p),
         addedAt: Date.now(),
       };
       col.push(entry);
@@ -3336,7 +3349,7 @@ function renderMemeSettings() {
       try {
         name = new URL(url).hostname + url.slice(-24);
       } catch { /* keep full url */ }
-      const entry = { id: "m" + Date.now(), name, sourceUrl: url, cacheKey: null, addedAt: Date.now() };
+      const entry = { id: "m" + Date.now(), name, sourceUrl: url, cacheKey: null, ext: memeExtOf(url), addedAt: Date.now() };
       col.push(entry);
       addRow.querySelector("#meme-url").value = "";
       saveState();
@@ -3369,6 +3382,7 @@ function renderMemeSettings() {
         name: p.split(/[\\/]/).pop() || "image",
         sourceUrl: null,
         cacheKey: ref.key,
+        ext: memeExtOf(p),
         addedAt: Date.now(),
       };
       col.push(entry);
@@ -3624,11 +3638,68 @@ function buildMemeFocusShell() {
   sec.querySelector("#meme-export").addEventListener("click", async () => {
     const statusEl = sec.querySelector(".meme-focus-status");
     statusEl.textContent = "exporting…";
+    const top = capTop.value.trim();
+    const bottom = capBottom.value.trim();
+    const entry = memeFocusEntry;
+    const urlOf = entry ? entry.sourceUrl || entry.url || "" : "";
+    const keyOf = entry ? entry.cacheKey || "" : "";
+    // No caption: export the ORIGINAL bytes (a GIF stays an animated GIF,
+    // a JPG keeps full quality). A captioned GIF is re-encoded frame by
+    // frame (animation kept); anything else captioned renders to static PNG.
+    const entryIsGif = entry?.ext === "gif" || /\.gif(\?|#|$)/i.test(urlOf);
+    let sourceTried = false;
+    if (!top && !bottom && (keyOf || urlOf)) {
+      sourceTried = true;
+      try {
+        const saved = await native.saveMemeSource(
+          state.memeOutputDir || "",
+          `meme-${Date.now()}`,
+          keyOf,
+          urlOf
+        );
+        if (saved) {
+          statusEl.textContent = `saved: ${saved.path}${saved.ext === "gif" ? " (animated GIF kept)" : ""}`;
+          statusEl.title = saved.path;
+          return;
+        }
+        statusEl.textContent = "save cancelled";
+        return;
+      } catch (e) {
+        // Original unavailable (offline + uncached): fall through to PNG.
+      }
+    }
+    if ((top || bottom) && entryIsGif && (keyOf || urlOf)) {
+      try {
+        const saved = await native.saveMemeCaptionedGif(
+          state.memeOutputDir || "",
+          `meme-${Date.now()}`,
+          keyOf,
+          urlOf,
+          capTop.value,
+          capBottom.value
+        );
+        if (saved) {
+          statusEl.textContent = `saved: ${saved.path} (animated GIF with caption)`;
+          statusEl.title = saved.path;
+          return;
+        }
+        statusEl.textContent = "save cancelled";
+        return;
+      } catch (e) {
+        // Animated export failed (no font, too many frames, …): fall
+        // through to the static PNG render below.
+      }
+    }
     try {
       const pngBase64 = await exportMemePng(memeFocusUri, capTop.value, capBottom.value);
       const filename = `meme-${Date.now()}.png`;
       const dest = await native.saveMemePng(state.memeOutputDir || "", filename, pngBase64);
-      statusEl.textContent = dest ? `saved: ${dest}` : "save cancelled";
+      const note = top || bottom
+        ? entryIsGif ? " (static PNG — animated export failed)" : ""
+        : sourceTried
+          ? " (original unavailable — static PNG)"
+          : "";
+      statusEl.textContent = dest ? `saved: ${dest}${note}` : "save cancelled";
       statusEl.title = dest || "";
     } catch (e) {
       statusEl.textContent = `export failed: ${e.message || e}`;
@@ -3659,7 +3730,7 @@ function buildMemeFocusShell() {
         statusEl.textContent = "already in collection";
         return;
       }
-      col.push({ id: "m" + Date.now(), name: url.slice(-32), sourceUrl: url, cacheKey: null, addedAt: Date.now() });
+      col.push({ id: "m" + Date.now(), name: url.slice(-32), sourceUrl: url, cacheKey: null, ext: memeExtOf(url), addedAt: Date.now() });
       inp.value = "";
       statusEl.textContent = "";
       saveState();
@@ -3691,6 +3762,7 @@ function buildMemeFocusShell() {
         name: p.split(/[\\/]/).pop() || "image",
         sourceUrl: null,
         cacheKey: ref.key,
+        ext: memeExtOf(p),
         addedAt: Date.now(),
       };
       col.push(entry);
