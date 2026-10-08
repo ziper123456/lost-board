@@ -962,7 +962,9 @@ async function renderSpotifyBody(c, body) {
           await refresh(true);
           return;
         } catch (e) {
-          setQueueStatus(`Jumping… (direct ${ctxType || "?" } refused, stepping)`);
+          const reason = `${e.message || e}`.replace(/^Spotify HTTP /, "").slice(0, 90);
+          console.error("spotifyJump refused:", e);
+          setQueueStatus(`Jumping… (direct refused: ${reason}, stepping)`);
         }
       } else {
         setQueueStatus("Jumping… (no playback context, stepping)");
