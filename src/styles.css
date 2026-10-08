@@ -695,6 +695,9 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .vocab-foot .btn.icon-btn { padding: 3px 5px; flex: 0 0 auto; }
 .vocab-vol { flex: 1; min-width: 0; accent-color: var(--accent); }
 .vocab-vol-pct { font-size: 0.72rem; color: var(--muted); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+.vocab-rate-label { font-size: 0.72rem; color: var(--muted); flex: 0 0 auto; }
+.vocab-rate { flex: 1; min-width: 0; accent-color: var(--accent); }
+.vocab-rate-val { font-size: 0.72rem; color: var(--muted); min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Meme tile */
 .meme-wrap { position: relative; height: 100%; min-height: 120px; }

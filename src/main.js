@@ -905,6 +905,11 @@ async function renderVocabBody(c, body) {
       <input type="range" class="vocab-vol" min="0" max="100" value="${c.data?.volume === undefined ? 100 : Math.min(100, Math.max(0, Number(c.data.volume) || 0))}" title="Speech volume" />
       <span class="vocab-vol-pct"></span>
     </div>
+    <div class="vocab-foot">
+      <span class="vocab-rate-label" title="Speech speed">Speed</span>
+      <input type="range" class="vocab-rate" min="0.5" max="2" step="0.05" value="${c.data?.rate === undefined ? 0.95 : Math.min(2, Math.max(0.5, Number(c.data.rate) || 0.95))}" title="Speech speed" />
+      <span class="vocab-rate-val"></span>
+    </div>
   `;
   const volEl = body.querySelector(".vocab-vol");
   const pctEl = body.querySelector(".vocab-vol-pct");
@@ -923,6 +928,23 @@ async function renderVocabBody(c, body) {
     c.data.volume = Math.min(100, Math.max(0, Number(volEl.value) || 0));
     saveState();
   });
+  const rateEl = body.querySelector(".vocab-rate");
+  const rateVal = body.querySelector(".vocab-rate-val");
+  const syncRate = () => {
+    rateVal.textContent = `${Number(rateEl.value).toFixed(2)}×`;
+  };
+  syncRate();
+  let rateSaveT = 0;
+  rateEl.addEventListener("input", () => {
+    c.data.rate = Number(rateEl.value);
+    syncRate();
+    clearTimeout(rateSaveT);
+    rateSaveT = setTimeout(saveState, 400);
+  });
+  rateEl.addEventListener("change", () => {
+    c.data.rate = Math.min(2, Math.max(0.5, Number(rateEl.value) || 0.95));
+    saveState();
+  });
   body.querySelector(".vocab-speak-toggle").addEventListener("click", () => {
     c.data.speak = !c.data.speak;
     if (!c.data.speak && "speechSynthesis" in window) window.speechSynthesis.cancel();
@@ -938,7 +960,7 @@ async function renderVocabBody(c, body) {
     enEl.textContent = card.en;
     otherEl.textContent = `${card.es} • ${card.de}`;
     i += 1;
-    if (speakOn) speakVocabCard(body, card, voiceURIs, c.data?.volume);
+    if (speakOn) speakVocabCard(body, card, voiceURIs, c.data?.volume, c.data?.rate);
     if (i % cards.length === 0) {
       // Refresh the batch every full cycle so rotation never goes stale.
       native.readVocabCards(20).then((fresh) => { if (fresh.length) cards = fresh; }).catch(() => {});
@@ -989,13 +1011,15 @@ function pickSpeechVoice(voices, voiceURI, langPrefix) {
 
 // Speak one card EN -> ES -> DE. Generation-guarded per tile body so a stale
 // chain (advance / teardown race) can never talk over the current card.
-function speakVocabCard(body, card, voiceURIs, volumePct) {
+function speakVocabCard(body, card, voiceURIs, volumePct, rateVal) {
   if (!("speechSynthesis" in window)) return;
   const synth = window.speechSynthesis;
   const gen = (body._vocabSpeakGen = (body._vocabSpeakGen || 0) + 1);
   synth.cancel();
   const volNum = Number(volumePct);
   const volume = Math.min(1, Math.max(0, Number.isFinite(volNum) ? volNum / 100 : 1));
+  const rateNum = Number(rateVal);
+  const rate = Math.min(2, Math.max(0.5, Number.isFinite(rateNum) ? rateNum : 0.95));
   getSpeechVoices()
     .then(async (voices) => {
       if (!body.isConnected || body._vocabSpeakGen !== gen) return;
@@ -1010,7 +1034,7 @@ function speakVocabCard(body, card, voiceURIs, volumePct) {
         await new Promise((done) => {
           const u = new SpeechSynthesisUtterance(p.text);
           u.lang = p.lang;
-          u.rate = 0.95;
+          u.rate = rate;
           u.volume = volume;
           const v = pickSpeechVoice(voices, p.uri, p.lang.slice(0, 2));
           if (v) u.voice = v;
