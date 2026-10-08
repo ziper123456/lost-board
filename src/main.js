@@ -3246,8 +3246,17 @@ function renderVocabSettings() {
     } else {
       const tip = document.createElement("div");
       tip.className = "item-row";
-      tip.innerHTML = `<span class="muted">Tip: enable speech on one tile only; missing ES/DE voices need Windows language packs.</span>`;
+      tip.innerHTML = `<span class="muted">Tip: enable speech on one tile only. New voices appear here after a restart.</span>
+        <button class="btn ghost" id="vocab-windows-voices">Windows voice settings…</button>
+        <span class="muted">Add Español/Deutsch language packs (with speech) or Narrator natural voices for better quality.</span>`;
       panel.appendChild(tip);
+      tip.querySelector("#vocab-windows-voices").addEventListener("click", async () => {
+        try {
+          await native.openUrl("ms-settings:speech");
+        } catch (e) {
+          alert(`Couldn't open Windows settings: ${e.message || e}`);
+        }
+      });
     }
     voiceRow.querySelector("#vocab-speak").addEventListener("change", (e) => {
       comp.data.speak = e.target.checked;
