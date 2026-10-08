@@ -2858,6 +2858,7 @@ function updateZoomUI() {
 function setZoom(z) {
   zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
   state.zoom = zoom;
+  saveState();
   updateZoomUI();
   render();
 }
