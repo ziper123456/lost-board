@@ -55,6 +55,12 @@ const THEMES = {
   midnight: { bg: "#0a0e14", panel: "#111722", panel2: "#18202e", border: "#243044", text: "#dbe4f0", muted: "#7d8ca3", accent: "#38bdf8" },
   emerald: { bg: "#0b1512", panel: "#0f1c18", panel2: "#15251f", border: "#1f3a30", text: "#e0f0e8", muted: "#7fa593", accent: "#10b981" },
   amber: { bg: "#16120a", panel: "#1f180d", panel2: "#2a2113", border: "#3a2f1c", text: "#f2ead9", muted: "#a89570", accent: "#f59e0b" },
+  dracula: { bg: "#282a36", panel: "#353746", panel2: "#44475a", border: "#4d5170", text: "#f8f8f2", muted: "#9a9cbf", accent: "#bd93f9" },
+  nord: { bg: "#2e3440", panel: "#3b4252", panel2: "#434c5e", border: "#4c566a", text: "#eceff4", muted: "#8b98b0", accent: "#88c0d0" },
+  solarizedDark: { bg: "#002b36", panel: "#073642", panel2: "#0d4b5c", border: "#155e75", text: "#839496", muted: "#5f7a85", accent: "#268bd2" },
+  solarizedLight: { bg: "#fdf6e3", panel: "#eee8d5", panel2: "#e3dabf", border: "#d3c9a8", text: "#657b83", muted: "#93a1a1", accent: "#268bd2" },
+  rosePine: { bg: "#191724", panel: "#1f1d2e", panel2: "#26233a", border: "#403d52", text: "#e0def4", muted: "#908caa", accent: "#eb6f92" },
+  gruvbox: { bg: "#282828", panel: "#3c3836", panel2: "#504945", border: "#665c54", text: "#ebdbb2", muted: "#a89984", accent: "#fabd2f" },
 };
 
 // Apply theme palette, corner radius and wall pattern to the document.
