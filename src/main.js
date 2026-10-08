@@ -37,6 +37,7 @@ const DEFAULT_STATE = {
   theme: "dark",
   cornerRadius: 10,
   wall: false,
+  backgroundMode: false,
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -1354,13 +1355,17 @@ window.addEventListener("keydown", (e) => {
 // stays the way back in). Leaving it does NOT force-exit fullscreen;
 // F11 / the toggle still control that independently.
 async function applyBackgroundMode(on) {
-  state.backgroundMode = on === true;
+  const next = on === true;
+  if (window.__TAURI__) {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    await win.setAlwaysOnBottom(next);
+    await win.setSkipTaskbar(next);
+    if (next) await win.setFullscreen(true);
+  }
+  // Persist only after the window calls succeed, so a failure never leaves
+  // a checked box / saved state for a mode that isn't applied.
+  state.backgroundMode = next;
   saveState();
-  if (!window.__TAURI__) return;
-  const win = window.__TAURI__.window.getCurrentWindow();
-  await win.setAlwaysOnBottom(state.backgroundMode);
-  await win.setSkipTaskbar(state.backgroundMode);
-  if (state.backgroundMode) await win.setFullscreen(true);
 }
 document.getElementById("set-background").addEventListener("change", async (e) => {
   try {

@@ -1070,7 +1070,11 @@ pub fn run() {
             if let Some(icon) = app.default_window_icon().cloned() {
                 tray = tray.icon(icon);
             }
-            tray.build(app)?;
+            // A missing tray must never prevent the app itself from starting —
+            // log it and continue without one.
+            if let Err(e) = tray.build(app) {
+                eprintln!("lost-board: failed to create tray icon: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
