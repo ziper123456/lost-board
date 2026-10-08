@@ -193,7 +193,9 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("spotify_skip", { next });
   },
   async spotifyJump(contextUri, trackUri) {
-    if (window.__TAURI__) return invoke("spotify_jump", { context_uri: contextUri, track_uri: trackUri });
+    // Tauri maps Rust `context_uri`/`track_uri` params from camelCase keys
+    // (same as save_state <- stateJson); snake_case keys arrive as missing.
+    if (window.__TAURI__) return invoke("spotify_jump", { contextUri, trackUri });
   },
   async spotifyShuffle(state) {
     if (window.__TAURI__) return invoke("spotify_shuffle", { state });
