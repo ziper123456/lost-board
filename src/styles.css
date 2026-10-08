@@ -60,6 +60,12 @@ html, body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.zoom-level input {
+  width: 52px;
+  padding: 2px 4px;
+  font-size: 0.78rem;
+  text-align: right;
+}
 .preview-width-label input {
   width: 58px;
   padding: 3px 6px;

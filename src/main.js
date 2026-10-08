@@ -2853,7 +2853,7 @@ document.getElementById("set-wall").addEventListener("change", (e) => {
 // ---------------------------------------------------------------------------
 function updateZoomUI() {
   const el = document.getElementById("zoom-level");
-  if (el) el.textContent = `${Math.round(zoom * 100)}%`;
+  if (el && document.activeElement !== el) el.value = Math.round(zoom * 100);
 }
 function setZoom(z) {
   zoom = clamp(z, ZOOM_MIN, ZOOM_MAX);
@@ -2868,6 +2868,14 @@ function zoomReset() {
 document.getElementById("zoom-in").addEventListener("click", () => setZoom(zoom * 1.25));
 document.getElementById("zoom-out").addEventListener("click", () => setZoom(zoom / 1.25));
 document.getElementById("zoom-fit").addEventListener("click", zoomReset);
+document.getElementById("zoom-level").addEventListener("change", (e) => {
+  const pct = Number(e.target.value);
+  if (!Number.isFinite(pct)) {
+    updateZoomUI();
+    return;
+  }
+  setZoom(pct / 100); // setZoom clamps to ZOOM_MIN..ZOOM_MAX and refreshes the input
+});
 
 // ---------------------------------------------------------------------------
 // Drag + resize gestures (fixed-column grid, snap to cells, collision-safe).
