@@ -1009,6 +1009,31 @@ function pickSpeechVoice(voices, voiceURI, langPrefix) {
   return voices.find((v) => (v.lang || "").toLowerCase().startsWith(pref)) || null;
 }
 
+// (Re)fill one voice dropdown: lang-matched voices first, then the rest.
+// Preserves the user's current pick across refills.
+function fillVocabVoiceSelect(sel, slot, list, preferred) {
+  const cur = sel.value || preferred || "";
+  const matches = list.filter((vv) => (vv.lang || "").toLowerCase().startsWith(slot));
+  const rest = list.filter((vv) => !(vv.lang || "").toLowerCase().startsWith(slot));
+  sel.innerHTML = `<option value="">Default</option>` + [...matches, ...rest]
+    .map((vv) => `<option value="${escapeHtml(vv.voiceURI)}" ${vv.voiceURI === cur ? "selected" : ""}>${escapeHtml(vv.name)} (${escapeHtml(vv.lang)})</option>`)
+    .join("");
+}
+
+// Late-arriving voices (slow OS enumeration) refill any open dropdowns and
+// refresh the shared cache so tiles pick them up too.
+if ("speechSynthesis" in window) {
+  window.speechSynthesis.addEventListener("voiceschanged", () => {
+    const list = window.speechSynthesis.getVoices();
+    if (!list.length) return;
+    speechVoicesPromise = Promise.resolve(list);
+    for (const slot of ["en", "es", "de"]) {
+      const sel = document.querySelector(`#vocab-voice-${slot}`);
+      if (sel) fillVocabVoiceSelect(sel, slot, list);
+    }
+  });
+}
+
 // Speak one card EN -> ES -> DE. Generation-guarded per tile body so a stale
 // chain (advance / teardown race) can never talk over the current card.
 function speakVocabCard(body, card, voiceURIs, volumePct, rateVal) {
@@ -3284,13 +3309,12 @@ function renderVocabSettings() {
     const fillVoiceSelects = (list) => {
       if (!voiceRow.isConnected) return;
       for (const slot of ["en", "es", "de"]) {
-        const sel = voiceRow.querySelector(`#vocab-voice-${slot}`);
-        const current = (comp.data.voices || {})[slot] || "";
-        const matches = list.filter((vv) => (vv.lang || "").toLowerCase().startsWith(slot));
-        const rest = list.filter((vv) => !(vv.lang || "").toLowerCase().startsWith(slot));
-        sel.innerHTML = `<option value="">Default</option>` + [...matches, ...rest]
-          .map((vv) => `<option value="${escapeHtml(vv.voiceURI)}" ${vv.voiceURI === current ? "selected" : ""}>${escapeHtml(vv.name)} (${escapeHtml(vv.lang)})</option>`)
-          .join("");
+        fillVocabVoiceSelect(
+          voiceRow.querySelector(`#vocab-voice-${slot}`),
+          slot,
+          list,
+          (comp.data.voices || {})[slot] || ""
+        );
       }
     };
     getSpeechVoices().then(fillVoiceSelects).catch(() => {});
