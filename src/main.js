@@ -1054,7 +1054,7 @@ async function renderMemeBody(c, body) {
   });
   body.querySelector(".meme-expand").addEventListener("click", (e) => {
     e.stopPropagation();
-    openMemeFocus(c.id);
+    openMemeFocus(c.id, body._memeEntry);
   });
 }
 
@@ -3457,9 +3457,11 @@ function closeFocus() {
   focusCtx = null;
   Object.values(FOCUS_PANELS).forEach((pid) => document.getElementById(pid)?.classList.add("hidden"));
 }
-function openMemeFocus(compId) {
+function openMemeFocus(compId, currentEntry) {
   if (state.compartments.some((c) => c.id === compId)) selectedMemeId = compId;
-  memeFocusEntry = null;
+  // Open on the meme the tile is currently showing (falls back to random
+  // when the tile hasn't resolved one yet).
+  memeFocusEntry = currentEntry || null;
   memeFocusUri = "";
   openFocus("meme", compId);
 }
@@ -3578,7 +3580,7 @@ function buildMemeFocusShell() {
             <label>Bottom <input id="meme-cap-bottom" type="text" placeholder="BOTTOM TEXT" /></label>
           </div>
           <div class="item-row">
-            <button class="btn primary" id="meme-export">Export PNG</button>
+            <button class="btn primary" id="meme-export">Export</button>
             <span class="meme-focus-status muted"></span>
           </div>
           <div class="item-row">
