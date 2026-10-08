@@ -252,6 +252,10 @@ async openFolder(path) {
   async clearVocabSnooze() {
     if (window.__TAURI__) return invoke("clear_vocab_snooze");
   },
+  async vocabPopupState() {
+    if (window.__TAURI__) return invoke("vocab_popup_state");
+    return null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -2917,49 +2921,42 @@ function renderProjectsSettings() {
 // (also the manual placement/focus test hook).
 // ---------------------------------------------------------------------------
 let selectedVocabId = null;
-function ensureVocabComp() {
-  const comps = state.compartments.filter((c) => c.kind === "vocab");
-  if (comps.length === 0) {
-    const comp = {
-      id: "voc" + Date.now(),
-      kind: "vocab",
-      title: "Vocab",
-      x: 0,
-      y: state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0),
-      w: 4,
-      h: 3,
-      data: { intervalSec: 10 },
-    };
-    state.compartments.push(comp);
-    selectedVocabId = comp.id;
-    return comp;
-  }
-  if (!comps.some((c) => c.id === selectedVocabId)) selectedVocabId = comps[0].id;
-  const comp = state.compartments.find((c) => c.id === selectedVocabId);
-  comp.data = comp.data || {};
-  return comp;
+// Non-creating lookup for the settings tab — opening Vocab settings must
+// never resurrect a deleted tile (same rule as the Projects tab). The drill
+// popup config below is global and works with zero tiles.
+function findVocabComp() {
+  return state.compartments.find((c) => c.id === selectedVocabId && c.kind === "vocab")
+    ?? state.compartments.find((c) => c.kind === "vocab")
+    ?? null;
 }
 function renderVocabSettings() {
   const panel = document.getElementById("vocab-list");
   if (!panel) return;
-  const comp = ensureVocabComp();
+  const comp = findVocabComp();
   const comps = state.compartments.filter((c) => c.kind === "vocab");
   const v = vocabConfig();
 
   panel.innerHTML = "";
-  const selectorRow = document.createElement("div");
-  selectorRow.className = "item-row";
-  selectorRow.innerHTML = `
-    <label>Tile</label>
-    <select id="vocab-select">
-      ${comps
-        .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
-        .join("")}
-    </select>
-    <label>Rotate every <input id="vocab-interval" type="number" min="3" max="300" value="${Number(comp.data.intervalSec) || 10}" />s</label>`;
-  panel.appendChild(selectorRow);
-  appendCollapsibleRow(panel, comp);
-  appendAppearanceRow(panel, comp);
+  if (comp) {
+    const selectorRow = document.createElement("div");
+    selectorRow.className = "item-row";
+    selectorRow.innerHTML = `
+      <label>Tile</label>
+      <select id="vocab-select">
+        ${comps
+          .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+          .join("")}
+      </select>
+      <label>Rotate every <input id="vocab-interval" type="number" min="3" max="300" value="${Number(comp.data.intervalSec) || 10}" />s</label>`;
+    panel.appendChild(selectorRow);
+    appendCollapsibleRow(panel, comp);
+    appendAppearanceRow(panel, comp);
+  } else {
+    const hint = document.createElement("div");
+    hint.className = "item-row";
+    hint.innerHTML = `<span class="muted">No Vocab tile yet — add one from Grid &gt; Add a tile. The drill popup below works without a tile.</span>`;
+    panel.appendChild(hint);
+  }
 
   const head = document.createElement("h3");
   head.textContent = "Drill popup";
@@ -2999,15 +2996,17 @@ function renderVocabSettings() {
   const statusEl = actions.querySelector("#vocab-status");
   const commit = () => { saveState(); render(); };
 
-  panel.querySelector("#vocab-select").addEventListener("change", (e) => {
-    selectedVocabId = e.target.value;
-    renderVocabSettings();
-  });
-  panel.querySelector("#vocab-interval").addEventListener("change", (e) => {
-    comp.data.intervalSec = Math.min(300, Math.max(3, Number(e.target.value) || 10));
-    commit();
-    renderVocabSettings();
-  });
+  if (comp) {
+    panel.querySelector("#vocab-select").addEventListener("change", (e) => {
+      selectedVocabId = e.target.value;
+      renderVocabSettings();
+    });
+    panel.querySelector("#vocab-interval").addEventListener("change", (e) => {
+      comp.data.intervalSec = Math.min(300, Math.max(3, Number(e.target.value) || 10));
+      commit();
+      renderVocabSettings();
+    });
+  }
   panel.querySelector("#vocab-enabled").addEventListener("change", (e) => {
     v.enabled = e.target.checked;
     commit();
@@ -3055,11 +3054,18 @@ function renderVocabSettings() {
 
 // Drill-popup scheduler: Rust decides (enabled / snooze / quiet-hours /
 // cadence / no-stacking) and opens the window itself; the result is only a
-// status word, surfaced in the console for diagnostics.
+// status word, surfaced in the console for diagnostics. Popup-set timing is
+// mirrored into memory (no save) so full-state writes never clobber a snooze.
 setInterval(async () => {
   try {
     const res = await native.vocabTick();
     if (res && res !== "disabled" && res !== "too-soon") console.debug("[vocab] tick:", res);
+    const st = await native.vocabPopupState().catch(() => null);
+    if (st) {
+      const v = vocabConfig();
+      v.snoozeUntil = st.snooze_until || 0;
+      v.lastPopupAt = st.last_popup_at || 0;
+    }
   } catch (e) {
     console.debug("[vocab] tick failed:", e);
   }

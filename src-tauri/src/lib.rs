@@ -1090,6 +1090,7 @@ pub fn run() {
             close_vocab_popup,
             snooze_vocab_popup,
             clear_vocab_snooze,
+            vocab_popup_state,
             vocab_tick,
             pick_folder,
             pick_solution,
@@ -1220,7 +1221,9 @@ fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
                 rec.get(4)?.trim(),
                 rec.get(5)?.trim(),
             );
-            if id.is_empty() || en.is_empty() {
+            // All three languages are required: an empty translation would
+            // auto-match an empty input and close the drill instantly.
+            if id.is_empty() || en.is_empty() || es.is_empty() || de.is_empty() {
                 return None;
             }
             Some(VocabCard {
@@ -1292,10 +1295,14 @@ fn vocab_popup_lang() -> Result<String, String> {
     Ok(VOCAB_LANG.lock().unwrap().clone())
 }
 
-fn open_drill_window(app: &tauri::AppHandle, lang: &str) -> Result<&'static str, String> {
+fn open_drill_window(app: &tauri::AppHandle, lang: &str, focus_existing: bool) -> Result<&'static str, String> {
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     if let Some(w) = app.get_webview_window("drill") {
-        let _ = w.set_focus();
+        // Only grab focus on explicit user action (Preview button). The
+        // scheduler tick must never steal focus from another app.
+        if focus_existing {
+            let _ = w.set_focus();
+        }
         return Ok("already-open");
     }
     *VOCAB_LANG.lock().unwrap() = lang.to_string();
@@ -1328,7 +1335,7 @@ fn open_drill_window(app: &tauri::AppHandle, lang: &str) -> Result<&'static str,
 /// Preview button alike.
 #[tauri::command]
 async fn open_vocab_popup(app: tauri::AppHandle, lang: String) -> Result<String, String> {
-    open_drill_window(&app, &lang).map(|s| s.to_string())
+    open_drill_window(&app, &lang, true).map(|s| s.to_string())
 }
 
 /// Close the drill popup (called from the popup itself).
@@ -1354,6 +1361,28 @@ async fn snooze_vocab_popup(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn clear_vocab_snooze(app: tauri::AppHandle) -> Result<(), String> {
     write_vocab_keys(&app, &[("snoozeUntil", serde_json::Value::from(0))])
+}
+
+#[derive(serde::Serialize)]
+struct VocabPopupState {
+    snooze_until: u64,
+    last_popup_at: u64,
+}
+
+/// Live popup timing for the main window to mirror into memory: the file is
+/// the source of truth for snooze (written by the popup itself), the static
+/// for the session's last fire time. The main window merges these without
+/// saving, so its full-state writes can never clobber a popup-set snooze.
+#[tauri::command]
+fn vocab_popup_state(app: tauri::AppHandle) -> Result<VocabPopupState, String> {
+    let cfg = read_vocab_section(&app);
+    let snooze_until = cfg.get("snoozeUntil").and_then(|v| v.as_u64()).unwrap_or(0);
+    let file_last = cfg.get("lastPopupAt").and_then(|v| v.as_u64()).unwrap_or(0);
+    let live_last = *VOCAB_LAST_POPUP_AT.lock().unwrap();
+    Ok(VocabPopupState {
+        snooze_until,
+        last_popup_at: file_last.max(live_last),
+    })
 }
 
 fn in_quiet_hours(start: &str, end: &str) -> bool {
@@ -1409,12 +1438,20 @@ async fn vocab_tick(app: tauri::AppHandle) -> Result<String, String> {
         return Ok("quiet-hours".into());
     }
     let every_min = cfg.get("everyMin").and_then(|v| v.as_u64()).unwrap_or(30).max(1);
-    let last = *VOCAB_LAST_POPUP_AT.lock().unwrap();
+    // Seed the session cooldown from the persisted value once, so a restart
+    // doesn't immediately re-fire a popup that just showed.
+    let last = {
+        let mut slot = VOCAB_LAST_POPUP_AT.lock().unwrap();
+        if *slot == 0 {
+            *slot = cfg.get("lastPopupAt").and_then(|v| v.as_u64()).unwrap_or(0);
+        }
+        *slot
+    };
     if last > 0 && now < last + every_min * 60 {
         return Ok("too-soon".into());
     }
     let lang = cfg.get("lang").and_then(|v| v.as_str()).unwrap_or("es");
-    let status = open_drill_window(&app, lang)?;
+    let status = open_drill_window(&app, lang, false)?;
     if status == "opened" {
         *VOCAB_LAST_POPUP_AT.lock().unwrap() = now;
         let _ = write_vocab_keys(&app, &[("lastPopupAt", serde_json::Value::from(now))]);
