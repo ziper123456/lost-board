@@ -837,7 +837,6 @@ function vocabConfig() {
   if (!v.lang) v.lang = "es";
   if (v.quietStart === undefined) v.quietStart = "";
   if (v.quietEnd === undefined) v.quietEnd = "";
-  if (!v.vocabAppUrl) v.vocabAppUrl = "http://localhost:5173";
   return v;
 }
 
@@ -859,7 +858,6 @@ async function renderVocabBody(c, body) {
       <div class="vocab-en"></div>
       <div class="vocab-other"></div>
     </div>
-    <button class="btn ghost vocab-open" title="Open the full vocab-app">Open vocab-app</button>
   `;
   const enEl = body.querySelector(".vocab-en");
   const otherEl = body.querySelector(".vocab-other");
@@ -878,9 +876,6 @@ async function renderVocabBody(c, body) {
   show();
   const t = setInterval(show, intervalSec * 1000);
   addTimer(body, t);
-  body.querySelector(".vocab-open").addEventListener("click", () => {
-    native.openUrl(vocabConfig().vocabAppUrl);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2980,8 +2975,7 @@ function renderVocabSettings() {
   quiet.className = "item-row";
   quiet.innerHTML = `
     <label>Quiet from <input id="vocab-quiet-start" type="time" value="${escapeHtml(v.quietStart || "")}" /></label>
-    <label>to <input id="vocab-quiet-end" type="time" value="${escapeHtml(v.quietEnd || "")}" /></label>
-    <label>vocab-app <input id="vocab-app-url" type="text" placeholder="http://localhost:5173" value="${escapeHtml(v.vocabAppUrl || "")}" /></label>`;
+    <label>to <input id="vocab-quiet-end" type="time" value="${escapeHtml(v.quietEnd || "")}" /></label>`;
   panel.appendChild(quiet);
 
   const actions = document.createElement("div");
@@ -3025,10 +3019,6 @@ function renderVocabSettings() {
   });
   panel.querySelector("#vocab-quiet-end").addEventListener("change", (e) => {
     v.quietEnd = e.target.value;
-    commit();
-  });
-  panel.querySelector("#vocab-app-url").addEventListener("change", (e) => {
-    v.vocabAppUrl = e.target.value.trim() || "http://localhost:5173";
     commit();
   });
   actions.querySelector("#vocab-preview").addEventListener("click", async () => {

@@ -162,6 +162,7 @@ _(Work-laptop agent: append dated entries here.)_
 - 2026-10-08: new `src-tauri/capabilities/drill.json` (`windows: ["drill"]`, `core:default`) so the popup webview may `invoke`; `csv = "1"` + `chrono = "0.4"` deps added (CSV has quoted commas — hand-split would break; chrono for quiet-hours local time).
 - 2026-10-08: `focused(false)` kept per plan lean — manual focus test (§5 step 3 here, Phase 0 item 2) decides whether it stays.
 - 2026-10-08 (PR-review fixes, pre-merge): tick no longer focuses an already-open popup (`focus_existing` flag — only Preview focuses; fixes a 30s focus-theft loop); CSV load requires en+es+de non-empty (empty target auto-matched empty input); `lastPopupAt` static seeded from file on first tick (restarts honor cadence); new `vocab_popup_state` command mirrored into JS memory by the tick so settings commits can't clobber a popup-set snooze; Vocab tab renders tile-less via non-creating lookup (no resurrect, same rule as Projects).
+- 2026-10-08: FR-VOC-003 (vocab-app gateway button + URL setting) removed per user request — single-app use. Tile button, settings field, and state default deleted; spec marked dropped.
 
 ## 7. Risks & unknowns
 
