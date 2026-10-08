@@ -2507,6 +2507,12 @@ function ensureProjectComp() {
   if (!Array.isArray(comp.data.roots)) comp.data.roots = [];
   return comp;
 }
+// Non-creating lookup for event handlers — never resurrects a deleted tile.
+function findProjectComp() {
+  return state.compartments.find((c) => c.id === selectedProjectId && c.kind === "project")
+    ?? state.compartments.find((c) => c.kind === "project")
+    ?? null;
+}
 function commitProject(comp) {
   saveState();
   renderProjectsSettings();
@@ -2623,7 +2629,8 @@ function renderProjectsSettings() {
     panel.addEventListener("click", (e) => {
       const btn = e.target.closest(".pj-rm-root, .pj-scan, .pj-add-row, .pj-del");
       if (!btn) return;
-      const comp = ensureProjectComp();
+      const comp = findProjectComp();
+      if (!comp) return;
       const ri = Number(btn.dataset.ri);
       if (btn.classList.contains("pj-rm-root")) {
         comp.data.roots.splice(ri, 1);
