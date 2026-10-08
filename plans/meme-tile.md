@@ -147,8 +147,13 @@ Old states load fine (arrays default to empty via existing `|| []` guards).
 
 ## 8. Corrections log (filled at implementation)
 
-_(Work-laptop agent: append dated entries here.)_
-- (none yet)
+- 2026-10-08: added `import_image_file` (local file → cache, content-addressed by byte hash) + `load_cached_image(key)` beyond the §4a sketch — file-backed entries have no URL to re-fetch, so they need key-based resolve; URL entries re-resolve via `fetch_image_cached(sourceUrl)` (disk-cache hit, no network).
+- 2026-10-08: search ships Pinterest-only default, no Google/Bing presets (§4d allowed presets only if patterns verify — skipped for v1, engine URL stays editable in settings).
+- 2026-10-08: expanded-view shell built by JS (`buildMemeFocusShell` at boot) instead of static HTML — keeps the `index.html` diff to tab/panel/option only; overlay reuses the Settings CSS shell.
+- 2026-10-08: canvas PNG export via anchor download (plan's verify-in-webview item still open — manual test step 7; Rust-save fallback not built unless anchor fails).
+- 2026-10-08: anchor-download fallback REPLACED — export was invisible (silent webview download dir). New `save_meme_png` command (base64 + PNG-magic check, output-folder or per-export save dialog, returns exact path shown in status) + output-folder row (Browse/Open) atop the caption inputs, persisted as `state.memeOutputDir`. Invoke keys camelCase (`pngBase64`) per the spotify_jump lesson.
+- 2026-10-08: GIF support — caption-less exports save ORIGINAL bytes via new `save_meme_source` (cache-key, else URL re-download; GIF stays animated, JPG keeps quality). Captioned exports stay PNG with an honest "(static PNG — captions flatten GIFs)" note. Entries now store `ext` at add time for the note + future use.
+- 2026-10-08: captioned GIF export — new `save_meme_captioned_gif`: `gif`-crate decode with full disposal handling (Background/Previous honored on a running canvas), per-frame Impact-style captions via `imageproc` (outline = 8-direction black underlay + white fill, same wrap/uppercase rules as the canvas preview), re-encode with delays preserved + infinite repeat. Deps: `image` (gif), `imageproc`, `ab_glyph`, `gif`. Caption font = system Impact, Arial Bold fallback (Windows Fonts dir — no bundling); 500-frame cap. Spec AC-032 annotated (GIFs stay animated).
 
 ## 7. Risks & unknowns
 

@@ -422,7 +422,7 @@ Then a larger-than-Settings view opens with big preview, collection grid, add bo
 ### AC-032: Export PNG
 Given a captioned meme in the expanded view,
 When the user clicks Export,
-Then a PNG file is saved.
+Then a PNG file is saved. (GIF sources stay animated GIFs — captioned or not.)
 
 ### AC-033: Search box opens browser tab
 Given the expanded view with default engine,

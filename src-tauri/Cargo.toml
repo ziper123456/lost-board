@@ -31,6 +31,10 @@ tiny_http = "0.12"
 url = "2"
 csv = "1"
 chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["gif"] }
+imageproc = "0.25"
+ab_glyph = "0.2"
+gif = "0.13"
 
 [profile.release]
 codegen-units = 1

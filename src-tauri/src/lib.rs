@@ -410,6 +410,590 @@ async fn cache_favicon(app: tauri::AppHandle, host: String) -> Result<String, St
     Ok(format!("data:image/x-icon;base64,{b64}"))
 }
 
+const IMAGE_DIR: &str = "images";
+const MAX_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(data))
+}
+
+/// MIME from a cached file extension (only types this command ever stores).
+fn image_mime_for(ext: &str) -> &'static str {
+    match ext {
+        "jpg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+fn image_data_uri(ext: &str, bytes: &[u8]) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    format!("data:{};base64,{b64}", image_mime_for(ext))
+}
+
+/// Resolve an image extension: sniff the response Content-Type first
+/// (Pinterest URLs often lack usable extensions), fall back to the URL
+/// extension, reject anything that isn't an image.
+fn image_ext_for(content_type: &str, url: &str) -> Option<&'static str> {
+    match content_type {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "image/bmp" => Some("bmp"),
+        "image/avif" => Some("avif"),
+        "image/x-icon" => Some("ico"),
+        _ => {
+            let ext = url
+                .rsplit(['?', '#'])
+                .next()
+                .unwrap_or(url)
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match ext.as_str() {
+                "jpg" | "jpeg" => Some("jpg"),
+                "png" => Some("png"),
+                "gif" => Some("gif"),
+                "webp" => Some("webp"),
+                "svg" => Some("svg"),
+                "bmp" => Some("bmp"),
+                "avif" => Some("avif"),
+                "ico" => Some("ico"),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Fetch any image URL (meme templates, Pinterest direct links), cache the
+/// bytes under app-data `images/` keyed by SHA-256 of the URL, and return a
+/// data-URI. State holds the cache key (reference), never the bytes.
+/// Fetching through here (never remote `<img src>`) kills CORS, hotlink
+/// blocks, and URL rot after the first fetch.
+#[tauri::command]
+async fn fetch_image_cached(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    let url = url.trim().to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http(s) image URLs can be fetched".into());
+    }
+    let key = sha256_hex(url.as_bytes());
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for entry in rd.filter_map(Result::ok) {
+            let p = entry.path();
+            if p.file_stem().and_then(|s| s.to_str()) == Some(key.as_str()) {
+                let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_string();
+                return Ok(image_data_uri(&ext, &bytes));
+            }
+        }
+    }
+
+    let (ext, bytes) = download_image(&url).await?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
+    fs::write(dir.join(format!("{key}.{ext}")), &bytes)
+        .map_err(|e| format!("Failed to cache image: {e}"))?;
+    Ok(image_data_uri(&ext, &bytes))
+}
+
+/// Download + validate a remote image without caching: returns extension and
+/// bytes. Shared by fetch_image_cached (which also stores) and
+/// save_meme_source (export path).
+async fn download_image(url: &str) -> Result<(String, Vec<u8>), String> {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .header("User-Agent", "lost-board/0.1")
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("image request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("image HTTP {}", resp.status()));
+    }
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if !content_type.is_empty() && !content_type.starts_with("image/") {
+        return Err(format!("URL is not an image ({content_type})"));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("image read failed: {e}"))?
+        .to_vec();
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image exceeds the 15 MB limit".into());
+    }
+    let ext = image_ext_for(&content_type, url).ok_or("could not determine image type")?;
+    Ok((ext.to_string(), bytes))
+}
+
+#[derive(serde::Serialize)]
+struct CachedImageRef {
+    key: String,
+    uri: String,
+}
+
+/// Import a local image file (file browse / OS drop) into the image cache.
+/// Content-addressed by SHA-256 of the bytes; state stores the key only.
+#[tauri::command]
+async fn import_image_file(app: tauri::AppHandle, path: String) -> Result<CachedImageRef, String> {
+    let ext = Path::new(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let ext = match ext.as_str() {
+        "jpg" | "jpeg" => "jpg".to_string(),
+        "png" | "gif" | "webp" | "svg" | "bmp" | "avif" | "ico" => ext,
+        _ => return Err("not a supported image file".into()),
+    };
+    let bytes = fs::read(&path).map_err(|e| format!("Failed to read image: {e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("image exceeds the 15 MB limit".into());
+    }
+    let key = sha256_hex(&bytes);
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
+    fs::write(dir.join(format!("{key}.{ext}")), &bytes)
+        .map_err(|e| format!("Failed to cache image: {e}"))?;
+    Ok(CachedImageRef {
+        key,
+        uri: image_data_uri(&ext, &bytes),
+    })
+}
+
+/// Resolve a cache key to a data-URI (collection render path). File-backed
+/// entries re-fetch from `sourceUrl` on a miss via `fetch_image_cached`.
+#[tauri::command]
+async fn load_cached_image(app: tauri::AppHandle, key: String) -> Result<String, String> {
+    if key.is_empty() || !key.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("invalid cache key".into());
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for entry in rd.filter_map(Result::ok) {
+            let p = entry.path();
+            if p.file_stem().and_then(|s| s.to_str()) == Some(key.as_str()) {
+                let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_string();
+                return Ok(image_data_uri(&ext, &bytes));
+            }
+        }
+    }
+    Err("image not in cache".into())
+}
+
+/// Save an exported meme PNG (base64 payload from the canvas export). When
+/// `dir` names an existing folder the file lands there as `filename` — the
+/// caller shows the full path, so exports are never lost in a silent
+/// download folder. With an empty `dir`, a native save dialog asks each time.
+/// Returns the written path, or None when the dialog was cancelled.
+#[tauri::command]
+async fn save_meme_png(dir: String, filename: String, png_base64: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png_base64.trim())
+        .map_err(|e| format!("bad image data: {e}"))?;
+    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("payload is not a PNG image".into());
+    }
+    let safe = sanitize_meme_filename(&filename)?;
+    let dest = match resolve_meme_dest(&dir, &safe, "Save meme PNG", "PNG", &["png"]).await? {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    fs::write(&dest, &bytes).map_err(|e| format!("Failed to save PNG: {e}"))?;
+    Ok(Some(dest.to_string_lossy().into_owned()))
+}
+
+#[derive(serde::Serialize)]
+struct SavedMeme {
+    path: String,
+    ext: String,
+}
+
+/// Save the ORIGINAL source bytes of a collection entry (no re-encode): a GIF
+/// stays an animated GIF, a JPG stays a JPG. Used for caption-less exports;
+/// anything with caption text still goes through the PNG canvas render.
+/// Resolution order: disk cache by key, then remote download by URL (which
+/// also refreshes the cache). Returns path + extension, or None on cancel.
+#[tauri::command]
+async fn save_meme_source(
+    app: tauri::AppHandle,
+    dir: String,
+    stem: String,
+    cache_key: String,
+    source_url: String,
+) -> Result<Option<SavedMeme>, String> {
+    let (ext, bytes) = resolve_meme_source_bytes(&app, &cache_key, &source_url).await?;
+    let stem = sanitize_meme_stem(&stem)?;
+    let dest = match resolve_meme_dest(
+        &dir,
+        &format!("{stem}.{ext}"),
+        "Save meme",
+        "Images",
+        &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+    )
+    .await?
+    {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    fs::write(&dest, &bytes).map_err(|e| format!("Failed to save image: {e}"))?;
+    Ok(Some(SavedMeme {
+        path: dest.to_string_lossy().into_owned(),
+        ext,
+    }))
+}
+
+/// Shared resolution of a collection entry to its original (extension,
+/// bytes): disk cache by key first, then remote download by URL (which also
+/// refreshes the cache).
+async fn resolve_meme_source_bytes(
+    app: &tauri::AppHandle,
+    cache_key: &str,
+    source_url: &str,
+) -> Result<(String, Vec<u8>), String> {
+    let image_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(IMAGE_DIR);
+    if !cache_key.is_empty() && cache_key.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Ok(rd) = fs::read_dir(&image_dir) {
+            for entry in rd.filter_map(Result::ok) {
+                let p = entry.path();
+                if p.file_stem().and_then(|s| s.to_str()) == Some(cache_key) {
+                    let bytes = fs::read(&p).map_err(|e| format!("Failed to read cached image: {e}"))?;
+                    let ext = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("bin")
+                        .to_string();
+                    return Ok((ext, bytes));
+                }
+            }
+        }
+    }
+    if source_url.starts_with("http://") || source_url.starts_with("https://") {
+        if let Ok((ext, bytes)) = download_image(source_url.trim()).await {
+            let key = sha256_hex(source_url.trim().as_bytes());
+            fs::create_dir_all(&image_dir).map_err(|e| format!("Failed to create image dir: {e}"))?;
+            let _ = fs::write(image_dir.join(format!("{key}.{ext}")), &bytes);
+            return Ok((ext, bytes));
+        }
+    }
+    Err("original image unavailable (offline and uncached)".into())
+}
+
+fn sanitize_meme_stem(stem: &str) -> Result<String, String> {
+    let safe: String = stem
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() {
+        return Err("invalid file name".into());
+    }
+    Ok(safe)
+}
+
+/// Filename variant that additionally allows dots (for caller-built names
+/// like `meme-123.png` that already carry their extension).
+fn sanitize_meme_filename(name: &str) -> Result<String, String> {
+    let safe: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() || safe == ".png" {
+        return Err("invalid file name".into());
+    }
+    Ok(safe)
+}
+
+/// Resolve the export destination: fixed output dir, or a native save dialog.
+/// Returns None when the dialog was cancelled.
+async fn resolve_meme_dest(
+    dir: &str,
+    filename: &str,
+    dialog_title: &str,
+    filter_name: &str,
+    filter_exts: &[&str],
+) -> Result<Option<std::path::PathBuf>, String> {
+    if dir.trim().is_empty() {
+        match rfd::AsyncFileDialog::new()
+            .set_title(dialog_title)
+            .set_file_name(filename)
+            .add_filter(filter_name, filter_exts)
+            .save_file()
+            .await
+        {
+            Some(f) => Ok(Some(f.path().to_path_buf())),
+            None => Ok(None),
+        }
+    } else {
+        let d = std::path::PathBuf::from(dir.trim());
+        if !d.is_dir() {
+            return Err("output folder no longer exists — pick it again".into());
+        }
+        Ok(Some(d.join(filename)))
+    }
+}
+
+/// Load a Windows caption font (Impact preferred, bold Arial fallback).
+fn load_meme_font() -> Result<Vec<u8>, String> {
+    let windir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".to_string());
+    for name in ["impact.ttf", "arialbd.ttf"] {
+        let p = Path::new(&windir).join("Fonts").join(name);
+        if let Ok(bytes) = fs::read(&p) {
+            if !bytes.is_empty() {
+                return Ok(bytes);
+            }
+        }
+    }
+    Err("no caption font found (expected Impact or Arial Bold in Windows Fonts)".into())
+}
+
+/// Draw one Impact-style caption (white fill, black outline, word-wrapped,
+/// uppercased like the canvas preview) onto a composited GIF frame.
+fn draw_meme_caption(
+    img: &mut image::RgbaImage,
+    text: &str,
+    top_side: bool,
+    font: &ab_glyph::FontRef,
+) {
+    let clean = text.trim().to_uppercase();
+    if clean.is_empty() {
+        return;
+    }
+    let w = img.width();
+    let h = img.height();
+    let size = (w / 10).max(16);
+    let scale = ab_glyph::PxScale::from(size as f32);
+    let mut lines: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in clean.split_whitespace() {
+        let test = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        let (tw, _) = imageproc::drawing::text_size(scale, font, &test);
+        if tw > (w as f32 * 0.94) as u32 && !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+            line = word.to_string();
+        } else {
+            line = test;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    let black = image::Rgba([0, 0, 0, 255]);
+    let white = image::Rgba([255, 255, 255, 255]);
+    let d = (size / 14).max(2) as i32;
+    let step = size as i32 + d * 2;
+    for (i, ln) in lines.iter().enumerate() {
+        let (tw, _) = imageproc::drawing::text_size(scale, font, ln);
+        let x = (w as i32 - tw as i32) / 2;
+        let y = if top_side {
+            (size / 3) as i32 + step * i as i32
+        } else {
+            h as i32 - (size / 3) as i32 - step * (lines.len() - i) as i32
+        };
+        for (dx, dy) in [
+            (-d, -d),
+            (0, -d),
+            (d, -d),
+            (-d, 0),
+            (d, 0),
+            (-d, d),
+            (0, d),
+            (d, d),
+        ] {
+            imageproc::drawing::draw_text_mut(img, black, x + dx, y + dy, scale, font, ln);
+        }
+        imageproc::drawing::draw_text_mut(img, white, x, y, scale, font, ln);
+    }
+}
+
+/// Caption every frame of an animated GIF and re-encode it, preserving frame
+/// delays and disposal semantics (partial frames composited onto a running
+/// canvas, like a player would). Caps at 500 frames for sanity.
+fn caption_gif_frames(
+    bytes: &[u8],
+    top: &str,
+    bottom: &str,
+    font: &ab_glyph::FontRef,
+) -> Result<Vec<u8>, String> {
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut reader = opts
+        .read_info(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("GIF decode: {e}"))?;
+    let (gw, gh) = (reader.width() as u32, reader.height() as u32);
+    if gw == 0 || gh == 0 {
+        return Err("GIF has no dimensions".into());
+    }
+    let mut canvas = image::RgbaImage::new(gw, gh);
+    let mut out: Vec<image::Frame> = Vec::new();
+    let mut count = 0u32;
+    while let Some(frame) = reader
+        .read_next_frame()
+        .map_err(|e| format!("GIF frame: {e}"))?
+    {
+        count += 1;
+        if count > 500 {
+            return Err("GIF has too many frames (500+ cap)".into());
+        }
+        let (fw, fh) = (frame.width as u32, frame.height as u32);
+        let (fx, fy) = (frame.left as u32, frame.top as u32);
+        if fw == 0 || fh == 0 || frame.buffer.len() < (fw * fh * 4) as usize {
+            continue;
+        }
+        let snapshot = if frame.dispose == gif::DisposalMethod::Previous {
+            Some(canvas.clone())
+        } else {
+            None
+        };
+        if let Some(sub) = image::RgbaImage::from_raw(fw, fh, frame.buffer.to_vec()) {
+            let cx = fx.min(gw.saturating_sub(1)) as i64;
+            let cy = fy.min(gh.saturating_sub(1)) as i64;
+            image::imageops::overlay(&mut canvas, &sub, cx, cy);
+        }
+        let mut composed = canvas.clone();
+        draw_meme_caption(&mut composed, top, true, font);
+        draw_meme_caption(&mut composed, bottom, false, font);
+        let delay = image::Delay::from_numer_denom_ms(frame.delay as u32 * 10, 1);
+        out.push(image::Frame::from_parts(composed, 0, 0, delay));
+        match frame.dispose {
+            gif::DisposalMethod::Background => {
+                let clear = image::Rgba([0, 0, 0, 0]);
+                for y in fy..(fy + fh).min(gh) {
+                    for x in fx..(fx + fw).min(gw) {
+                        canvas.put_pixel(x, y, clear);
+                    }
+                }
+            }
+            gif::DisposalMethod::Previous => {
+                if let Some(s) = snapshot {
+                    canvas = s;
+                }
+            }
+            _ => {}
+        }
+    }
+    if out.is_empty() {
+        return Err("GIF has no frames".into());
+    }
+    let mut buf = Vec::new();
+    {
+        let mut enc = image::codecs::gif::GifEncoder::new(&mut buf);
+        enc.set_repeat(image::codecs::gif::Repeat::Infinite)
+            .map_err(|e| format!("GIF encode: {e}"))?;
+        enc.encode_frames(out)
+            .map_err(|e| format!("GIF encode: {e}"))?;
+    }
+    Ok(buf)
+}
+
+/// Save a CAPTIONED animated GIF: decode the source, overlay Impact-style
+/// captions on every frame (delays + disposal preserved), re-encode. Falls
+/// back to the static PNG path in the frontend when this fails.
+#[tauri::command]
+async fn save_meme_captioned_gif(
+    app: tauri::AppHandle,
+    dir: String,
+    stem: String,
+    cache_key: String,
+    source_url: String,
+    top: String,
+    bottom: String,
+) -> Result<Option<SavedMeme>, String> {
+    let (ext, bytes) = resolve_meme_source_bytes(&app, &cache_key, &source_url).await?;
+    if ext != "gif" {
+        return Err("source is not a GIF".into());
+    }
+    if top.trim().is_empty() && bottom.trim().is_empty() {
+        return Err("no caption text".into());
+    }
+    let font_bytes = load_meme_font()?;
+    let stem = sanitize_meme_stem(&stem)?;
+    // Resolve the destination (dialog) BEFORE the heavy CPU work so a
+    // cancellation returns fast instead of waiting out the encode.
+    let dest = match resolve_meme_dest(&dir, &format!("{stem}.gif"), "Save meme GIF", "GIF", &["gif"]).await? {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    // Decode + caption + re-encode is pure CPU (up to 500 frames of text
+    // rasterization + quantization): keep it off the async runtime workers.
+    let top_owned = top.clone();
+    let bottom_owned = bottom.clone();
+    let gif_bytes = tokio::task::spawn_blocking(move || {
+        let font = ab_glyph::FontRef::try_from_slice(&font_bytes)
+            .map_err(|e| format!("caption font: {e}"))?;
+        caption_gif_frames(&bytes, &top_owned, &bottom_owned, &font)
+    })
+    .await
+    .map_err(|e| format!("GIF worker: {e}"))??;
+    fs::write(&dest, &gif_bytes).map_err(|e| format!("Failed to save GIF: {e}"))?;
+    Ok(Some(SavedMeme {
+        path: dest.to_string_lossy().into_owned(),
+        ext: "gif".into(),
+    }))
+}
+
 const KEYRING_SERVICE: &str = "lost-board";
 const DEEPL_KEY_USER: &str = "deepl_api_key";
 
@@ -1101,6 +1685,12 @@ pub fn run() {
             open_url,
             fetch_rss,
             cache_favicon,
+            fetch_image_cached,
+            import_image_file,
+            load_cached_image,
+            save_meme_png,
+            save_meme_source,
+            save_meme_captioned_gif,
             set_deepl_key,
             deepl_key_status,
             clear_deepl_key,
