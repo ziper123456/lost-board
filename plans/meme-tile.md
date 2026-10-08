@@ -151,6 +151,7 @@ Old states load fine (arrays default to empty via existing `|| []` guards).
 - 2026-10-08: search ships Pinterest-only default, no Google/Bing presets (§4d allowed presets only if patterns verify — skipped for v1, engine URL stays editable in settings).
 - 2026-10-08: expanded-view shell built by JS (`buildMemeFocusShell` at boot) instead of static HTML — keeps the `index.html` diff to tab/panel/option only; overlay reuses the Settings CSS shell.
 - 2026-10-08: canvas PNG export via anchor download (plan's verify-in-webview item still open — manual test step 7; Rust-save fallback not built unless anchor fails).
+- 2026-10-08: anchor-download fallback REPLACED — export was invisible (silent webview download dir). New `save_meme_png` command (base64 + PNG-magic check, output-folder or per-export save dialog, returns exact path shown in status) + output-folder row (Browse/Open) atop the caption inputs, persisted as `state.memeOutputDir`. Invoke keys camelCase (`pngBase64`) per the spotify_jump lesson.
 
 ## 7. Risks & unknowns
 

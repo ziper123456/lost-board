@@ -268,6 +268,12 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("load_cached_image", { key });
     return "";
   },
+  async saveMemePng(dir, filename, pngBase64) {
+    // Rust params are (dir, filename, png_base64): camelCase keys, same
+    // lesson as spotify_jump <- { contextUri, trackUri }.
+    if (window.__TAURI__) return invoke("save_meme_png", { dir, filename, pngBase64 });
+    return null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -3549,6 +3555,11 @@ function buildMemeFocusShell() {
         </div>
         <div class="meme-editor">
           <div class="item-row">
+            <label>Output folder <span id="meme-output-path" class="muted"></span></label>
+            <button class="btn ghost" id="meme-output-browse">Browse…</button>
+            <button class="btn ghost" id="meme-output-open">Open</button>
+          </div>
+          <div class="item-row">
             <label>Top <input id="meme-cap-top" type="text" placeholder="TOP TEXT" /></label>
             <label>Bottom <input id="meme-cap-bottom" type="text" placeholder="BOTTOM TEXT" /></label>
           </div>
@@ -3574,6 +3585,34 @@ function buildMemeFocusShell() {
   document.body.appendChild(sec);
 
   sec.querySelector("#meme-focus-close").addEventListener("click", closeFocus);
+  const outPath = sec.querySelector("#meme-output-path");
+  const syncOutPath = () => {
+    outPath.textContent = state.memeOutputDir || "(asks every time)";
+    outPath.title = state.memeOutputDir || "";
+  };
+  syncOutPath();
+  sec.querySelector("#meme-output-browse").addEventListener("click", async () => {
+    try {
+      const p = await native.pickFolder();
+      if (!p) return;
+      state.memeOutputDir = p;
+      saveState();
+      syncOutPath();
+    } catch (e) {
+      sec.querySelector(".meme-focus-status").textContent = `folder failed: ${e.message || e}`;
+    }
+  });
+  sec.querySelector("#meme-output-open").addEventListener("click", async () => {
+    if (!state.memeOutputDir) {
+      sec.querySelector(".meme-focus-status").textContent = "no output folder set — browse one first";
+      return;
+    }
+    try {
+      await native.openFolder(state.memeOutputDir);
+    } catch (e) {
+      sec.querySelector(".meme-focus-status").textContent = `open failed: ${e.message || e}`;
+    }
+  });
   const capTop = sec.querySelector("#meme-cap-top");
   const capBottom = sec.querySelector("#meme-cap-bottom");
   const syncCaps = () => {
@@ -3586,8 +3625,11 @@ function buildMemeFocusShell() {
     const statusEl = sec.querySelector(".meme-focus-status");
     statusEl.textContent = "exporting…";
     try {
-      await exportMemePng(memeFocusUri, capTop.value, capBottom.value);
-      statusEl.textContent = "saved — check your downloads";
+      const pngBase64 = await exportMemePng(memeFocusUri, capTop.value, capBottom.value);
+      const filename = `meme-${Date.now()}.png`;
+      const dest = await native.saveMemePng(state.memeOutputDir || "", filename, pngBase64);
+      statusEl.textContent = dest ? `saved: ${dest}` : "save cancelled";
+      statusEl.title = dest || "";
     } catch (e) {
       statusEl.textContent = `export failed: ${e.message || e}`;
     }
@@ -3712,15 +3754,18 @@ async function exportMemePng(imgSrc, top, bottom) {
   };
   drawCaption(top, true);
   drawCaption(bottom, false);
+  // Return base64 (no data-URI prefix): the Rust save command validates the
+  // PNG magic bytes and writes the file, reporting the exact path.
   const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
   if (!blob) throw new Error("canvas export failed");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "meme.png";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  const buf = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 const KIND_DEFAULTS = {

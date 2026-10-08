@@ -615,6 +615,55 @@ async fn load_cached_image(app: tauri::AppHandle, key: String) -> Result<String,
     Err("image not in cache".into())
 }
 
+/// Save an exported meme PNG (base64 payload from the canvas export). When
+/// `dir` names an existing folder the file lands there as `filename` — the
+/// caller shows the full path, so exports are never lost in a silent
+/// download folder. With an empty `dir`, a native save dialog asks each time.
+/// Returns the written path, or None when the dialog was cancelled.
+#[tauri::command]
+async fn save_meme_png(dir: String, filename: String, png_base64: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png_base64.trim())
+        .map_err(|e| format!("bad image data: {e}"))?;
+    if bytes.len() < 8 || &bytes[..8] != b"\x89PNG\r\n\x1a\n" {
+        return Err("payload is not a PNG image".into());
+    }
+    let safe: String = filename
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if safe.is_empty() || safe == ".png" {
+        return Err("invalid file name".into());
+    }
+    let dest = if dir.trim().is_empty() {
+        match rfd::AsyncFileDialog::new()
+            .set_title("Save meme PNG")
+            .set_file_name(&safe)
+            .add_filter("PNG", &["png"])
+            .save_file()
+            .await
+        {
+            Some(f) => f.path().to_path_buf(),
+            None => return Ok(None),
+        }
+    } else {
+        let d = std::path::PathBuf::from(dir.trim());
+        if !d.is_dir() {
+            return Err("output folder no longer exists — pick it again".into());
+        }
+        d.join(&safe)
+    };
+    fs::write(&dest, &bytes).map_err(|e| format!("Failed to save PNG: {e}"))?;
+    Ok(Some(dest.to_string_lossy().into_owned()))
+}
+
 const KEYRING_SERVICE: &str = "lost-board";
 const DEEPL_KEY_USER: &str = "deepl_api_key";
 
@@ -1309,6 +1358,7 @@ pub fn run() {
             fetch_image_cached,
             import_image_file,
             load_cached_image,
+            save_meme_png,
             set_deepl_key,
             deepl_key_status,
             clear_deepl_key,

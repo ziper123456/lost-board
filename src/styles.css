@@ -721,6 +721,7 @@ input[type="text"], input[type="number"], input[type="password"], select {
   border: 1px dashed var(--border); border-radius: 8px; padding: 14px;
   text-align: center; color: var(--muted); font-size: 0.82rem;
 }
+#meme-output-path { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
 .meme-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: 8px; overflow-y: auto; min-height: 80px; max-height: 30vh; padding: 2px;
