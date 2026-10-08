@@ -952,15 +952,20 @@ async function renderSpotifyBody(c, body) {
       const current = await native.spotifyNowPlaying().catch(() => null);
       const ctxUri = current?.context_uri || "";
       const ctxType = current?.context_type || "";
-      if (ctxUri && (ctxType === "album" || ctxType === "playlist")) {
+      // Fast path: try a direct jump whenever there is a context. Spotify
+      // accepts it for album/playlist (and sometimes more); any rejection
+      // falls through to the paced skip loop below, so attempting is safe.
+      if (ctxUri) {
         try {
           await native.spotifyJump(ctxUri, uri);
           lastTitle = null; // track will change -> force queue refresh
           await refresh(true);
           return;
-        } catch {
-          // Track not in context (or similar) — fall through to skips.
+        } catch (e) {
+          setQueueStatus(`Jumping… (direct ${ctxType || "?" } refused, stepping)`);
         }
+      } else {
+        setQueueStatus("Jumping… (no playback context, stepping)");
       }
       const q = await native.spotifyQueue();
       const idx = q.findIndex((s) => s.uri && s.uri === uri);
