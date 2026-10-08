@@ -219,6 +219,14 @@ async openFolder(path) {
   async saveState(nextState) {
     if (window.__TAURI__) return invoke("save_state", { stateJson: JSON.stringify(nextState) });
   },
+  async exportConfig(filename) {
+    if (window.__TAURI__) return invoke("export_config", { filename });
+    return null;
+  },
+  async importConfig() {
+    if (window.__TAURI__) return invoke("import_config");
+    return null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1361,6 +1369,7 @@ function activateTab(tabName) {
   if (tabName === "frame") renderFrameSettings();
   if (tabName === "spotify") renderSpotifySettings();
   if (tabName === "projects") renderProjectsSettings();
+  if (tabName === "config") renderConfigSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -2180,6 +2189,80 @@ function renderSystemSettings() {
   panel.querySelector("#system-select").addEventListener("change", (e) => {
     selectedSystemId = e.target.value;
     renderSystemSettings();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Config export/import (two-machine setup). The state file holds no secrets
+// (keys/tokens live in each machine's OS secret store), so exports are safe
+// to carry over. Invalid imports are rejected; the current setup is backed
+// up to .bak before a valid import replaces it.
+// ---------------------------------------------------------------------------
+function renderConfigSettings() {
+  const panel = document.getElementById("config-list");
+  if (!panel) return;
+  panel.innerHTML = "";
+
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `
+    <button class="btn primary" id="config-export">Export…</button>
+    <button class="btn ghost" id="config-import">Import…</button>
+    <span id="config-status" class="muted"></span>`;
+  panel.appendChild(row);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">Exports never contain API keys or tokens — re-enter them on the other machine. This machine: <span id="config-keys"></span></span>`;
+  panel.appendChild(note);
+
+  const statusEl = row.querySelector("#config-status");
+  const keysEl = note.querySelector("#config-keys");
+  (async () => {
+    try {
+      const deepl = await native.deeplKeyStatus().catch(() => false);
+      const spot = await native.spotifyConnected().catch(() => false);
+      keysEl.textContent = `DeepL ${deepl ? "key set" : "no key"}, Spotify ${spot ? "connected" : "not connected"}`;
+    } catch {
+      keysEl.textContent = "";
+    }
+  })();
+
+  row.querySelector("#config-export").addEventListener("click", async () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const filename = `lost-board-config-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+    statusEl.textContent = "choosing file…";
+    try {
+      const dest = await native.exportConfig(filename);
+      statusEl.textContent = dest ? `exported: ${dest}` : "export cancelled";
+    } catch (e) {
+      statusEl.textContent = `export failed: ${e.message || e}`;
+    }
+  });
+  row.querySelector("#config-import").addEventListener("click", async () => {
+    statusEl.textContent = "choosing file…";
+    try {
+      const json = await native.importConfig();
+      if (!json) {
+        statusEl.textContent = "import cancelled";
+        return;
+      }
+      state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(json) };
+      saveState(); // backend already wrote the file; this syncs the browser fallback
+      zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
+      updateZoomUI();
+      applyAppearance();
+      document.getElementById("set-cols").value = state.columns;
+      document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
+      document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
+      document.getElementById("set-wall").checked = state.wall === true;
+      render();
+      renderConfigSettings();
+      panel.querySelector("#config-status").textContent = "imported — previous setup kept as .bak";
+    } catch (e) {
+      statusEl.textContent = `import failed: ${e}`;
+    }
   });
 }
 
