@@ -1038,6 +1038,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_state,
             save_state,
+            export_config,
+            import_config,
             pick_folder,
             pick_solution,
             pick_icon,
@@ -1175,4 +1177,66 @@ fn state_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map(|dir| dir.join(STATE_FILE_NAME))
         .map_err(|e| format!("Failed to locate app-data directory: {e}"))
+}
+
+/// Export the current dashboard configuration to a user-chosen `.json` file.
+/// Secrets are never in the state file (they live in each machine's OS secret
+/// store), so the export contains no credentials by construction.
+#[tauri::command]
+async fn export_config(app: tauri::AppHandle, filename: String) -> Result<Option<String>, String> {
+    let path = state_file_path(&app)?;
+    if !path.exists() {
+        return Err("No saved configuration to export yet".into());
+    }
+    let contents = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read dashboard state: {e}"))?;
+    let dest = rfd::AsyncFileDialog::new()
+        .set_title("Export dashboard configuration")
+        .set_file_name(&filename)
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await;
+    let dest = match dest {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    fs::write(dest.path(), contents)
+        .map_err(|e| format!("Failed to write export file: {e}"))?;
+    Ok(Some(dest.path().to_string_lossy().into_owned()))
+}
+
+/// Import a dashboard configuration file: validate it, back up the current
+/// state to `.bak`, then replace it. An invalid file is rejected and the
+/// current setup is left untouched. Returns the imported JSON so the frontend
+/// can adopt it without re-reading the file.
+#[tauri::command]
+async fn import_config(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let src = rfd::AsyncFileDialog::new()
+        .set_title("Import dashboard configuration")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .await;
+    let src = match src {
+        Some(f) => f,
+        None => return Ok(None),
+    };
+    let bytes = fs::read(src.path())
+        .map_err(|e| format!("Failed to read import file: {e}"))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| "Import file is not valid text".to_string())?;
+    if !validate_state(&text) {
+        return Err("Not a valid lost-board configuration file — current setup unchanged".into());
+    }
+    let path = state_file_path(&app)?;
+    if path.exists() {
+        let backup = path.with_extension("json.bak");
+        fs::copy(&path, &backup)
+            .map_err(|e| format!("Failed to back up current configuration: {e}"))?;
+    } else if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create app-data directory: {e}"))?;
+    }
+    fs::write(&path, &text)
+        .map_err(|e| format!("Failed to save imported configuration: {e}"))?;
+    Ok(Some(text))
 }

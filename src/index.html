@@ -53,6 +53,7 @@
           <button class="tab" data-tab="projects">Projects</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="healthcheck">Healthcheck</button>
+          <button class="tab" data-tab="config">Config</button>
         </nav>
 
         <div class="settings-body">
@@ -158,6 +159,10 @@
             <div id="project-list"></div>
           </div>
           <div class="tab-panel" data-panel="healthcheck"><div id="healthcheck-list"></div></div>
+          <div class="tab-panel" data-panel="config">
+            <p>Move this dashboard to another machine: export a file here, import it there. API keys and tokens stay in each machine's own secret store and are never exported.</p>
+            <div id="config-list"></div>
+          </div>
         </div>
       </div>
     </section>
