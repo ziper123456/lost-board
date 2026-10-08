@@ -189,7 +189,7 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-001** The tile shall display a trilingual card (English + Spanish + German) and
   auto-advance to the next card every N seconds (per-tile setting).
 - **FR-VOC-002** Rotation shall pause while the tile is collapsed and resume when expanded.
-- **FR-VOC-003** The tile shall offer an action opening the full vocab-app (gateway, not replacement).
+- **FR-VOC-003** ~~The tile shall offer an action opening the full vocab-app (gateway, not replacement)~~ — **dropped** 2026-10-08 (single-app use; no second app to gateway to).
 
 **Drill popup (active):**
 

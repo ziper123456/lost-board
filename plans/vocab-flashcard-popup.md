@@ -155,7 +155,14 @@ Recommend a dedicated **Vocab tab** (two independent configs live here):
 ## 8. Corrections log (filled at implementation)
 
 _(Work-laptop agent: append dated entries here.)_
-- (none yet)
+- 2026-10-08: `WebviewWindowBuilder::new(manager, label, url)` confirmed (Tauri 2.12.1); `position`/`inner_size` take **logical** pixels — physical monitor geometry is converted via `scale_factor()`. `focused/decorations/resizable/always_on_top/skip_taskbar` all exist as sketched.
+- 2026-10-08: deviation from §4d — popup window is created **Rust-side** (`open_vocab_popup` command, `WebviewWindowBuilder`), not frontend-direct via `__TAURI__.webviewWindow`. Reason: deterministic, no JS-namespace or creation-permission questions; the popup itself still uses plain `invoke`.
+- 2026-10-08: deviation from §4d — snooze round-trip uses **Rust commands + state file** (`snooze_vocab_popup` writes `vocab.snoozeUntil`; `vocab_tick` reads it), not `localStorage` + `storage` event. Reason: sidesteps the cross-window storage-sharing unknown entirely; restart persistence falls out for free.
+- 2026-10-08: deviation from §4c — popup language passed via **`vocab_popup_lang` command backed by a process static**, not URL query params. Reason: avoids `WebviewUrl::App` query-string uncertainty.
+- 2026-10-08: new `src-tauri/capabilities/drill.json` (`windows: ["drill"]`, `core:default`) so the popup webview may `invoke`; `csv = "1"` + `chrono = "0.4"` deps added (CSV has quoted commas — hand-split would break; chrono for quiet-hours local time).
+- 2026-10-08: `focused(false)` kept per plan lean — manual focus test (§5 step 3 here, Phase 0 item 2) decides whether it stays.
+- 2026-10-08 (PR-review fixes, pre-merge): tick no longer focuses an already-open popup (`focus_existing` flag — only Preview focuses; fixes a 30s focus-theft loop); CSV load requires en+es+de non-empty (empty target auto-matched empty input); `lastPopupAt` static seeded from file on first tick (restarts honor cadence); new `vocab_popup_state` command mirrored into JS memory by the tick so settings commits can't clobber a popup-set snooze; Vocab tab renders tile-less via non-creating lookup (no resurrect, same rule as Projects).
+- 2026-10-08: FR-VOC-003 (vocab-app gateway button + URL setting) removed per user request — single-app use. Tile button, settings field, and state default deleted; spec marked dropped.
 
 ## 7. Risks & unknowns
 

@@ -237,6 +237,25 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("autostart_enabled");
     return false;
   },
+  async readVocabCards(count) {
+    if (window.__TAURI__) return invoke("read_vocab_cards", { count });
+    return [];
+  },
+  async openVocabPopup(lang) {
+    if (window.__TAURI__) return invoke("open_vocab_popup", { lang });
+    return "disabled";
+  },
+  async vocabTick() {
+    if (window.__TAURI__) return invoke("vocab_tick");
+    return "disabled";
+  },
+  async clearVocabSnooze() {
+    if (window.__TAURI__) return invoke("clear_vocab_snooze");
+  },
+  async vocabPopupState() {
+    if (window.__TAURI__) return invoke("vocab_popup_state");
+    return null;
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -673,6 +692,8 @@ async function renderCompartmentBody(c, body) {
     renderSpotifyBody(c, body);
   } else if (c.kind === "project") {
     renderProjectsBody(c, body);
+  } else if (c.kind === "vocab") {
+    renderVocabBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -801,6 +822,60 @@ async function renderFrameBody(c, body) {
     return;
   }
   body.innerHTML = `<img class="frame-img" style="object-fit:${escapeHtml(fit)}" src="${escapeHtml(src)}" alt="" />`;
+}
+
+// ---------------------------------------------------------------------------
+// Vocab flashcard tile (passive exposure). Rotates trilingual cards from the
+// bundled CSV; the drill popup (active recall) lives in drill.html and is
+// driven Rust-side via vocab_tick(). One word per popup (spec FR-VOC-005).
+// ---------------------------------------------------------------------------
+function vocabConfig() {
+  state.vocab = state.vocab || {};
+  const v = state.vocab;
+  if (v.enabled === undefined) v.enabled = false;
+  if (!v.everyMin) v.everyMin = 30;
+  if (!v.lang) v.lang = "es";
+  if (v.quietStart === undefined) v.quietStart = "";
+  if (v.quietEnd === undefined) v.quietEnd = "";
+  return v;
+}
+
+async function renderVocabBody(c, body) {
+  const intervalSec = Math.max(3, Number(c.data?.intervalSec) || 10);
+  let cards = [];
+  try {
+    cards = await native.readVocabCards(20);
+  } catch {
+    cards = [];
+  }
+  if (!body.isConnected) return;
+  if (!cards.length) {
+    body.innerHTML = `<div class="muted">No vocabulary cards — check Settings > Vocab.</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="vocab-card">
+      <div class="vocab-en"></div>
+      <div class="vocab-other"></div>
+    </div>
+  `;
+  const enEl = body.querySelector(".vocab-en");
+  const otherEl = body.querySelector(".vocab-other");
+  let i = 0;
+  const show = () => {
+    if (!body.isConnected) return;
+    const card = cards[i % cards.length];
+    enEl.textContent = card.en;
+    otherEl.textContent = `${card.es} • ${card.de}`;
+    i += 1;
+    if (i % cards.length === 0) {
+      // Refresh the batch every full cycle so rotation never goes stale.
+      native.readVocabCards(20).then((fresh) => { if (fresh.length) cards = fresh; }).catch(() => {});
+    }
+  };
+  show();
+  const t = setInterval(show, intervalSec * 1000);
+  addTimer(body, t);
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,6 +1496,7 @@ function activateTab(tabName) {
   if (tabName === "spotify") renderSpotifySettings();
   if (tabName === "projects") renderProjectsSettings();
   if (tabName === "config") renderConfigSettings();
+  if (tabName === "vocab") renderVocabSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -1436,6 +1512,7 @@ const KIND_TAB = {
   frame: "frame",
   spotify: "spotify",
   project: "projects",
+  vocab: "vocab",
 };
 
 function openTileSettings(id) {
@@ -1452,6 +1529,7 @@ function openTileSettings(id) {
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
   if (comp.kind === "project") selectedProjectId = id;
+  if (comp.kind === "vocab") selectedVocabId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -1627,6 +1705,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "frame") renderFrameSettings();
   if (comp.kind === "spotify") renderSpotifySettings();
   if (comp.kind === "project") renderProjectsSettings();
+  if (comp.kind === "vocab") renderVocabSettings();
 }
 
 function ensureLauncher() {
@@ -2829,6 +2908,159 @@ function renderProjectsSettings() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Vocab settings editor: flashcard tile selector + rotation, and the drill
+// popup config (master switch, cadence, language, quiet hours, vocab-app
+// target, snooze state). Popup scheduling itself runs Rust-side via a 30s
+// vocab_tick() from the main window; the Preview button opens one on demand
+// (also the manual placement/focus test hook).
+// ---------------------------------------------------------------------------
+let selectedVocabId = null;
+// Non-creating lookup for the settings tab — opening Vocab settings must
+// never resurrect a deleted tile (same rule as the Projects tab). The drill
+// popup config below is global and works with zero tiles.
+function findVocabComp() {
+  return state.compartments.find((c) => c.id === selectedVocabId && c.kind === "vocab")
+    ?? state.compartments.find((c) => c.kind === "vocab")
+    ?? null;
+}
+function renderVocabSettings() {
+  const panel = document.getElementById("vocab-list");
+  if (!panel) return;
+  const comp = findVocabComp();
+  const comps = state.compartments.filter((c) => c.kind === "vocab");
+  const v = vocabConfig();
+
+  panel.innerHTML = "";
+  if (comp) {
+    const selectorRow = document.createElement("div");
+    selectorRow.className = "item-row";
+    selectorRow.innerHTML = `
+      <label>Tile</label>
+      <select id="vocab-select">
+        ${comps
+          .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+          .join("")}
+      </select>
+      <label>Rotate every <input id="vocab-interval" type="number" min="3" max="300" value="${Number(comp.data.intervalSec) || 10}" />s</label>`;
+    panel.appendChild(selectorRow);
+    appendCollapsibleRow(panel, comp);
+    appendAppearanceRow(panel, comp);
+  } else {
+    const hint = document.createElement("div");
+    hint.className = "item-row";
+    hint.innerHTML = `<span class="muted">No Vocab tile yet — add one from Grid &gt; Add a tile. The drill popup below works without a tile.</span>`;
+    panel.appendChild(hint);
+  }
+
+  const head = document.createElement("h3");
+  head.textContent = "Drill popup";
+  panel.appendChild(head);
+
+  const pop = document.createElement("div");
+  pop.className = "item-row";
+  pop.innerHTML = `
+    <label>Enabled <input id="vocab-enabled" type="checkbox" ${v.enabled ? "checked" : ""} /></label>
+    <label>Every <input id="vocab-every" type="number" min="1" max="240" value="${Number(v.everyMin) || 30}" />min</label>
+    <label>Language
+      <select id="vocab-lang">
+        <option value="es" ${v.lang === "es" ? "selected" : ""}>Spanish</option>
+        <option value="de" ${v.lang === "de" ? "selected" : ""}>German</option>
+        <option value="both" ${v.lang === "both" ? "selected" : ""}>Both</option>
+      </select>
+    </label>`;
+  panel.appendChild(pop);
+
+  const quiet = document.createElement("div");
+  quiet.className = "item-row";
+  quiet.innerHTML = `
+    <label>Quiet from <input id="vocab-quiet-start" type="time" value="${escapeHtml(v.quietStart || "")}" /></label>
+    <label>to <input id="vocab-quiet-end" type="time" value="${escapeHtml(v.quietEnd || "")}" /></label>`;
+  panel.appendChild(quiet);
+
+  const actions = document.createElement("div");
+  actions.className = "item-row";
+  const snoozed = (v.snoozeUntil || 0) > Date.now() / 1000;
+  actions.innerHTML = `
+    <button class="btn ghost" id="vocab-preview">Preview popup</button>
+    <button class="btn ghost" id="vocab-clear-snooze" ${snoozed ? "" : "disabled"}>Clear snooze</button>
+    <span id="vocab-status" class="muted">${snoozed ? "snoozed" : ""}</span>`;
+  panel.appendChild(actions);
+
+  const statusEl = actions.querySelector("#vocab-status");
+  const commit = () => { saveState(); render(); };
+
+  if (comp) {
+    panel.querySelector("#vocab-select").addEventListener("change", (e) => {
+      selectedVocabId = e.target.value;
+      renderVocabSettings();
+    });
+    panel.querySelector("#vocab-interval").addEventListener("change", (e) => {
+      comp.data.intervalSec = Math.min(300, Math.max(3, Number(e.target.value) || 10));
+      commit();
+      renderVocabSettings();
+    });
+  }
+  panel.querySelector("#vocab-enabled").addEventListener("change", (e) => {
+    v.enabled = e.target.checked;
+    commit();
+  });
+  panel.querySelector("#vocab-every").addEventListener("change", (e) => {
+    v.everyMin = Math.min(240, Math.max(1, Number(e.target.value) || 30));
+    commit();
+  });
+  panel.querySelector("#vocab-lang").addEventListener("change", (e) => {
+    v.lang = e.target.value;
+    commit();
+  });
+  panel.querySelector("#vocab-quiet-start").addEventListener("change", (e) => {
+    v.quietStart = e.target.value;
+    commit();
+  });
+  panel.querySelector("#vocab-quiet-end").addEventListener("change", (e) => {
+    v.quietEnd = e.target.value;
+    commit();
+  });
+  actions.querySelector("#vocab-preview").addEventListener("click", async () => {
+    statusEl.textContent = "opening…";
+    try {
+      const res = await native.openVocabPopup(v.lang || "es");
+      statusEl.textContent = res === "already-open" ? "already open" : "opened";
+    } catch (e) {
+      statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+  actions.querySelector("#vocab-clear-snooze").addEventListener("click", async () => {
+    try {
+      await native.clearVocabSnooze();
+      v.snoozeUntil = 0;
+      commit();
+      renderVocabSettings();
+    } catch (e) {
+      statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+}
+
+// Drill-popup scheduler: Rust decides (enabled / snooze / quiet-hours /
+// cadence / no-stacking) and opens the window itself; the result is only a
+// status word, surfaced in the console for diagnostics. Popup-set timing is
+// mirrored into memory (no save) so full-state writes never clobber a snooze.
+setInterval(async () => {
+  try {
+    const res = await native.vocabTick();
+    if (res && res !== "disabled" && res !== "too-soon") console.debug("[vocab] tick:", res);
+    const st = await native.vocabPopupState().catch(() => null);
+    if (st) {
+      const v = vocabConfig();
+      v.snoozeUntil = st.snooze_until || 0;
+      v.lastPopupAt = st.last_popup_at || 0;
+    }
+  } catch (e) {
+    console.debug("[vocab] tick failed:", e);
+  }
+}, 30000);
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Files", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -2839,6 +3071,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
+  vocab: { title: "Vocab", data: { intervalSec: 10 } },
   project: { title: "Projects", data: { roots: [] } },
 };
 
