@@ -204,6 +204,9 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-008** Every popup shall offer Dismiss and Snooze-30min; the system shall never stack
   popups (no second popup while one is open); a quiet-hours window and a master enable/disable
   switch shall be configurable.
+- **FR-VOC-009** When speech is enabled on a tile, each card cycle shall speak the three
+  languages in order (English, then Spanish, then German) via the Web Speech API, each in
+  its per-language configured voice (default voice when unchosen or unavailable).
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (next up — not yet built)
 
@@ -393,6 +396,12 @@ Then the correct answer is revealed for manual dismissal.
 Given an open drill popup,
 When the user clicks Snooze-30min (or while any popup is open),
 Then no new popup appears for 30 minutes (and never a second popup while one is open).
+
+### AC-034: Tile speech
+Given a Vocab tile with speech enabled and per-language voices chosen,
+When a card cycle shows,
+Then English is spoken, then Spanish, then German, each in its configured voice;
+advancing the card cancels in-flight speech, and collapsing the tile silences it.
 
 ### AC-027: Meme rotation pool
 Given top-100 fetched plus two curated images,

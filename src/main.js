@@ -297,6 +297,10 @@ const scalerEl = document.getElementById("grid-scaler");
 // clear a single body's timers (e.g. the preview panel) without nuking others.
 const compartmentTimers = new Map();
 
+// Bodies of vocab tiles with speech enabled. Tracked so teardown (collapse,
+// remove, re-render) also stops any in-flight utterance via clearBodyTimers.
+const vocabSpeakingBodies = new Set();
+
 function addTimer(body, t) {
   if (!compartmentTimers.has(body)) compartmentTimers.set(body, []);
   compartmentTimers.get(body).push(t);
@@ -306,6 +310,10 @@ function clearBodyTimers(body) {
   if (arr) {
     arr.forEach(clearInterval);
     compartmentTimers.delete(body);
+  }
+  if (vocabSpeakingBodies.has(body)) {
+    vocabSpeakingBodies.delete(body);
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
 }
 
@@ -870,6 +878,8 @@ function vocabConfig() {
 
 async function renderVocabBody(c, body) {
   const intervalSec = Math.max(3, Number(c.data?.intervalSec) || 10);
+  const speakOn = c.data?.speak === true && "speechSynthesis" in window;
+  const voiceURIs = c.data?.voices || {};
   let cards = [];
   try {
     cards = await native.readVocabCards(20);
@@ -877,6 +887,8 @@ async function renderVocabBody(c, body) {
     cards = [];
   }
   if (!body.isConnected) return;
+  if (speakOn) vocabSpeakingBodies.add(body);
+  else vocabSpeakingBodies.delete(body);
   if (!cards.length) {
     body.innerHTML = `<div class="muted">No vocabulary cards — check Settings > Vocab.</div>`;
     return;
@@ -896,6 +908,7 @@ async function renderVocabBody(c, body) {
     enEl.textContent = card.en;
     otherEl.textContent = `${card.es} • ${card.de}`;
     i += 1;
+    if (speakOn) speakVocabCard(body, card, voiceURIs);
     if (i % cards.length === 0) {
       // Refresh the batch every full cycle so rotation never goes stale.
       native.readVocabCards(20).then((fresh) => { if (fresh.length) cards = fresh; }).catch(() => {});
@@ -904,6 +917,77 @@ async function renderVocabBody(c, body) {
   show();
   const t = setInterval(show, intervalSec * 1000);
   addTimer(body, t);
+}
+
+// Web Speech voices resolve async in the webview; cache the promise so tile
+// and settings share one load.
+let speechVoicesPromise = null;
+function getSpeechVoices() {
+  if (!("speechSynthesis" in window)) return Promise.resolve([]);
+  if (!speechVoicesPromise) {
+    speechVoicesPromise = new Promise((resolve) => {
+      let done = false;
+      const take = () => {
+        if (done) return;
+        const list = window.speechSynthesis.getVoices();
+        if (list.length) {
+          done = true;
+          resolve(list);
+        }
+      };
+      take();
+      window.speechSynthesis.addEventListener("voiceschanged", take);
+      setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve(window.speechSynthesis.getVoices());
+        }
+      }, 2500);
+    });
+  }
+  return speechVoicesPromise;
+}
+
+function pickSpeechVoice(voices, voiceURI, langPrefix) {
+  if (voiceURI) {
+    const exact = voices.find((v) => v.voiceURI === voiceURI);
+    if (exact) return exact;
+  }
+  const pref = (langPrefix || "").toLowerCase();
+  return voices.find((v) => (v.lang || "").toLowerCase().startsWith(pref)) || null;
+}
+
+// Speak one card EN -> ES -> DE. Generation-guarded per tile body so a stale
+// chain (advance / teardown race) can never talk over the current card.
+function speakVocabCard(body, card, voiceURIs) {
+  if (!("speechSynthesis" in window)) return;
+  const synth = window.speechSynthesis;
+  const gen = (body._vocabSpeakGen = (body._vocabSpeakGen || 0) + 1);
+  synth.cancel();
+  getSpeechVoices()
+    .then(async (voices) => {
+      if (!body.isConnected || body._vocabSpeakGen !== gen) return;
+      const parts = [
+        { text: card.en, lang: "en-US", uri: voiceURIs?.en },
+        { text: card.es, lang: "es-ES", uri: voiceURIs?.es },
+        { text: card.de, lang: "de-DE", uri: voiceURIs?.de },
+      ];
+      for (const p of parts) {
+        if (!body.isConnected || body._vocabSpeakGen !== gen) return;
+        if (!p.text) continue;
+        await new Promise((done) => {
+          const u = new SpeechSynthesisUtterance(p.text);
+          u.lang = p.lang;
+          u.rate = 0.95;
+          const v = pickSpeechVoice(voices, p.uri, p.lang.slice(0, 2));
+          if (v) u.voice = v;
+          u.onend = done;
+          u.onerror = done;
+          synth.speak(u);
+        });
+      }
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -3130,6 +3214,54 @@ function renderVocabSettings() {
     panel.appendChild(selectorRow);
     appendCollapsibleRow(panel, comp);
     appendAppearanceRow(panel, comp);
+
+    const voices = comp.data.voices || {};
+    const voiceRow = document.createElement("div");
+    voiceRow.className = "item-row";
+    voiceRow.innerHTML = `
+      <label>Voice enable <input id="vocab-speak" type="checkbox" ${comp.data.speak ? "checked" : ""} title="Speak each card EN, then ES, then DE" /></label>
+      <label>English <select id="vocab-voice-en" data-lang="en"><option value="">Default</option></select></label>
+      <label>Spanish <select id="vocab-voice-es" data-lang="es"><option value="">Default</option></select></label>
+      <label>German <select id="vocab-voice-de" data-lang="de"><option value="">Default</option></select></label>`;
+    panel.appendChild(voiceRow);
+    const fillVoiceSelects = (list) => {
+      if (!voiceRow.isConnected) return;
+      for (const slot of ["en", "es", "de"]) {
+        const sel = voiceRow.querySelector(`#vocab-voice-${slot}`);
+        const current = (comp.data.voices || {})[slot] || "";
+        const matches = list.filter((vv) => (vv.lang || "").toLowerCase().startsWith(slot));
+        const rest = list.filter((vv) => !(vv.lang || "").toLowerCase().startsWith(slot));
+        sel.innerHTML = `<option value="">Default</option>` + [...matches, ...rest]
+          .map((vv) => `<option value="${escapeHtml(vv.voiceURI)}" ${vv.voiceURI === current ? "selected" : ""}>${escapeHtml(vv.name)} (${escapeHtml(vv.lang)})</option>`)
+          .join("");
+      }
+    };
+    getSpeechVoices().then(fillVoiceSelects).catch(() => {});
+    if (!("speechSynthesis" in window)) {
+      voiceRow.querySelector("#vocab-speak").disabled = true;
+      const noTts = document.createElement("div");
+      noTts.className = "item-row";
+      noTts.innerHTML = `<span class="muted">Speech synthesis is unavailable in this browser.</span>`;
+      panel.appendChild(noTts);
+    } else {
+      const tip = document.createElement("div");
+      tip.className = "item-row";
+      tip.innerHTML = `<span class="muted">Tip: enable speech on one tile only; missing ES/DE voices need Windows language packs.</span>`;
+      panel.appendChild(tip);
+    }
+    voiceRow.querySelector("#vocab-speak").addEventListener("change", (e) => {
+      comp.data.speak = e.target.checked;
+      saveState();
+      render();
+    });
+    for (const slot of ["en", "es", "de"]) {
+      voiceRow.querySelector(`#vocab-voice-${slot}`).addEventListener("change", (e) => {
+        comp.data.voices = comp.data.voices || {};
+        comp.data.voices[slot] = e.target.value;
+        saveState();
+        render();
+      });
+    }
   } else {
     const hint = document.createElement("div");
     hint.className = "item-row";
