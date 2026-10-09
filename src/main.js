@@ -1274,10 +1274,34 @@ async function renderSpotifyBody(c, body) {
 
   const bgEl = body.querySelector(".spot-bg");
   const titleEl = body.querySelector(".spot-title");
+  const fillEl = body.querySelector(".spot-fill");
   let playing = false;
   let shuffleOn = false;
   let repeatMode = "off";
   let lastTitle = null;
+  // Progress is interpolated locally from an anchor (progress_ms + wall clock)
+  // instead of re-reading the API every tick, so the bar moves smoothly and
+  // the now-playing endpoint is hit far less often.
+  let anchorProgressMs = 0;
+  let anchorAt = 0;
+  let durationMs = 0;
+  let trackPlaying = false;
+  let endRefreshFired = false;
+  const renderProgress = () => {
+    if (!body.isConnected || !durationMs) {
+      fillEl.style.width = "0%";
+      return;
+    }
+    const elapsed = trackPlaying ? performance.now() - anchorAt : 0;
+    const cur = Math.min(durationMs, anchorProgressMs + elapsed);
+    fillEl.style.width = `${(cur / durationMs) * 100}%`;
+    // Song should have ended locally: pull fresh state once so the next track
+    // appears promptly without polling the API on a fast cadence.
+    if (trackPlaying && !endRefreshFired && cur >= durationMs - 250) {
+      endRefreshFired = true;
+      refresh(true);
+    }
+  };
   const refresh = async (forceQueue) => {
     let track = null;
     try {
@@ -1290,13 +1314,21 @@ async function renderSpotifyBody(c, body) {
       titleEl.textContent = "Nothing playing";
       body.querySelector(".spot-artist").textContent = "";
       body.querySelector(".spot-album").textContent = "";
+      durationMs = 0;
+      fillEl.style.width = "0%";
       return;
     }
     bgEl.style.backgroundImage = track.art ? `url("${track.art}")` : "";
     titleEl.textContent = track.title;
     body.querySelector(".spot-artist").textContent = track.artist;
     body.querySelector(".spot-album").textContent = track.album;
-    body.querySelector(".spot-fill").style.width = track.duration_ms ? `${(track.progress_ms / track.duration_ms) * 100}%` : "0%";
+    // Re-anchor progress from the API sample; local interpolation fills the gaps.
+    anchorProgressMs = track.progress_ms || 0;
+    durationMs = track.duration_ms || 0;
+    trackPlaying = !!track.playing;
+    anchorAt = performance.now();
+    endRefreshFired = false;
+    renderProgress();
     playing = track.playing;
     body.querySelector(".spot-play").innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
     // Sync shuffle / repeat buttons with the player state.
@@ -1372,8 +1404,13 @@ async function renderSpotifyBody(c, body) {
   });
 
   await refresh(true);
-  const t = setInterval(() => refresh(false), 3000);
+  // Metadata (track/queue/shuffle/repeat) poll — slower now that the progress
+  // bar advances locally; end-of-track triggers an extra refresh via renderProgress.
+  const t = setInterval(() => refresh(false), 5000);
   addTimer(body, t);
+  // Local progress interpolation — smooth, no API traffic.
+  const pt = setInterval(renderProgress, 250);
+  addTimer(body, pt);
   // Jump to a queue song. Fast path: one PUT /play with context+offset when
   // playing from an album/playlist. Fallback: paced skip-forward loop that
   // stops on rate-limit (429) instead of hammering through.
