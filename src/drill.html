@@ -100,10 +100,6 @@
       const cats = Array.isArray(cfg.cats) ? cfg.cats : [];
       const cards = await invoke("read_vocab_cards", { count: 1, categories: cats });
       const card = cards[0];
-      if (!card) {
-        errorEl.textContent = "No cards match the selected categories — clear the filter in Settings > Vocab.";
-        return;
-      }
       promptEl.textContent = card.en;
       promptEl.title = card.en;
       if (lang === "both") {

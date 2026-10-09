@@ -3390,6 +3390,8 @@ function renderVocabSettings() {
     <label>to <input id="vocab-quiet-end" type="time" value="${escapeHtml(v.quietEnd || "")}" /></label>`;
   panel.appendChild(quiet);
 
+  const commit = () => { saveState(); render(); };
+
   const catHead = document.createElement("div");
   catHead.className = "item-row";
   catHead.innerHTML = `<label>Categories</label><span class="muted">popup only — empty = all</span>`;
@@ -3458,7 +3460,6 @@ function renderVocabSettings() {
   panel.appendChild(actions);
 
   const statusEl = actions.querySelector("#vocab-status");
-  const commit = () => { saveState(); render(); };
 
   if (comp) {
     panel.querySelector("#vocab-select").addEventListener("change", (e) => {
