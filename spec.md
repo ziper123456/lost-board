@@ -193,12 +193,15 @@ shuffle independently (different words in each is variety, not a bug).
 
 **Drill popup (active):**
 
-- **FR-VOC-004** When popups are enabled, the system shall show a drill popup bottom-right of
-  the primary monitor every M minutes (setting).
+- **FR-VOC-004** When popups are enabled, the system shall show a drill popup every M
+  minutes (setting) at the configured 3x3 placement preset (default bottom-right
+  of the primary monitor).
 - **FR-VOC-005** Each popup shall present exactly one English word with an input for the target
-  language (popup language setting: ES / DE / Both, mirroring vocab-app modes).
+  language (popup language setting: ES / DE / Both, mirroring vocab-app modes), drawn from
+  the selected categories when a category filter is set (popup-only; empty filter = all cards).
 - **FR-VOC-006** Typing shall auto-check on match (case- and diacritic-insensitive, port of
-  vocab-app matching); max 2 attempts per word, then the answer is revealed.
+  vocab-app matching); max 2 attempts per word, then the answer is revealed — or immediately
+  via the reveal button.
 - **FR-VOC-007** On a correct answer the popup shall show a brief success state and auto-close
   (~1.5s); on reveal-after-fail the user dismisses manually.
 - **FR-VOC-008** Every popup shall offer Dismiss and Snooze-30min; the system shall never stack

@@ -239,13 +239,17 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("autostart_enabled");
     return false;
   },
-  async readVocabCards(count) {
-    if (window.__TAURI__) return invoke("read_vocab_cards", { count });
+  async readVocabCards(count, categories) {
+    if (window.__TAURI__) return invoke("read_vocab_cards", { count, categories: categories || [] });
     return [];
   },
-  async openVocabPopup(lang) {
-    if (window.__TAURI__) return invoke("open_vocab_popup", { lang });
+  async openVocabPopup(lang, categories, position) {
+    if (window.__TAURI__) return invoke("open_vocab_popup", { lang, categories: categories || [], position: position || "bottom-right" });
     return "disabled";
+  },
+  async vocabCategories() {
+    if (window.__TAURI__) return invoke("vocab_categories");
+    return [];
   },
   async vocabTick() {
     if (window.__TAURI__) return invoke("vocab_tick");
@@ -875,6 +879,8 @@ function vocabConfig() {
   if (!v.lang) v.lang = "es";
   if (v.quietStart === undefined) v.quietStart = "";
   if (v.quietEnd === undefined) v.quietEnd = "";
+  if (!Array.isArray(v.drillCats)) v.drillCats = [];
+  if (!v.popupPosition) v.popupPosition = "bottom-right";
   return v;
 }
 
@@ -3384,6 +3390,64 @@ function renderVocabSettings() {
     <label>to <input id="vocab-quiet-end" type="time" value="${escapeHtml(v.quietEnd || "")}" /></label>`;
   panel.appendChild(quiet);
 
+  const catHead = document.createElement("div");
+  catHead.className = "item-row";
+  catHead.innerHTML = `<label>Categories</label><span class="muted">popup only — empty = all</span>`;
+  panel.appendChild(catHead);
+  const catBox = document.createElement("div");
+  catBox.className = "vocab-cats";
+  catBox.innerHTML = `<span class="muted">loading…</span>`;
+  panel.appendChild(catBox);
+  native.vocabCategories().then((cats) => {
+    if (!catBox.isConnected) return;
+    if (!cats.length) {
+      catBox.innerHTML = `<span class="muted">no categories found</span>`;
+      return;
+    }
+    const sel = new Set(v.drillCats || []);
+    catBox.innerHTML = cats
+      .map((c) => `<label class="vocab-cat"><input type="checkbox" data-cat="${escapeHtml(c.name)}" ${sel.has(c.name) ? "checked" : ""} />${escapeHtml(c.name)} <span class="muted">(${c.count})</span></label>`)
+      .join("");
+    catBox.querySelectorAll("input[type=checkbox]").forEach((box) =>
+      box.addEventListener("change", () => {
+        v.drillCats = [...catBox.querySelectorAll("input[type=checkbox]:checked")].map((b) => b.dataset.cat);
+        commit();
+      })
+    );
+  }).catch(() => {
+    if (catBox.isConnected) catBox.innerHTML = `<span class="muted">couldn't load categories</span>`;
+  });
+
+  const posRow = document.createElement("div");
+  posRow.className = "item-row";
+  posRow.innerHTML = `<label>Popup position</label><div class="vocab-pos-grid" role="radiogroup" aria-label="Drill popup position"></div>`;
+  panel.appendChild(posRow);
+  const posGrid = posRow.querySelector(".vocab-pos-grid");
+  const POSITIONS = [
+    ["top-left", "top-center", "top-right"],
+    ["center-left", "center", "center-right"],
+    ["bottom-left", "bottom-center", "bottom-right"],
+  ];
+  for (const row of POSITIONS) {
+    for (const pos of row) {
+      const b = document.createElement("button");
+      b.className = "btn ghost vocab-pos" + (pos === (v.popupPosition || "bottom-right") ? " active" : "");
+      b.title = pos;
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", pos === (v.popupPosition || "bottom-right") ? "true" : "false");
+      b.addEventListener("click", () => {
+        v.popupPosition = pos;
+        commit();
+        posGrid.querySelectorAll(".vocab-pos").forEach((x) => {
+          const on = x.title === pos;
+          x.classList.toggle("active", on);
+          x.setAttribute("aria-checked", on ? "true" : "false");
+        });
+      });
+      posGrid.appendChild(b);
+    }
+  }
+
   const actions = document.createElement("div");
   actions.className = "item-row";
   const snoozed = (v.snoozeUntil || 0) > Date.now() / 1000;
@@ -3430,7 +3494,7 @@ function renderVocabSettings() {
   actions.querySelector("#vocab-preview").addEventListener("click", async () => {
     statusEl.textContent = "opening…";
     try {
-      const res = await native.openVocabPopup(v.lang || "es");
+      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right");
       statusEl.textContent = res === "already-open" ? "already open" : "opened";
     } catch (e) {
       statusEl.textContent = `failed: ${e.message || e}`;

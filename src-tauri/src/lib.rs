@@ -1669,7 +1669,8 @@ pub fn run() {
             set_autostart,
             autostart_enabled,
             read_vocab_cards,
-            vocab_popup_lang,
+            vocab_categories,
+            vocab_popup_config,
             open_vocab_popup,
             close_vocab_popup,
             snooze_vocab_popup,
@@ -1760,10 +1761,26 @@ struct VocabCard {
     en: String,
     es: String,
     de: String,
+    cats: Vec<String>,
+}
+
+#[derive(serde::Serialize, Clone, Default)]
+struct VocabPopupConfig {
+    lang: String,
+    cats: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct VocabCategory {
+    name: String,
+    count: usize,
 }
 
 static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
-static VOCAB_LANG: StdMutex<String> = StdMutex::new(String::new());
+static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig {
+    lang: String::new(),
+    cats: Vec::new(),
+});
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
 fn now_secs() -> u64 {
@@ -1771,6 +1788,24 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Normalize a raw `categories` CSV field into clean category names: split on
+/// commas, strip stray brackets/quotes/whitespace baked into the snapshot
+/// (`["Adjectives"]`, `"Beginner"`), drop empties, dedupe preserving order.
+fn normalize_vocab_cats(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in raw.split(',') {
+        let clean = tok
+            .trim()
+            .trim_matches(|c| c == '[' || c == ']' || c == '"' || c == '\'')
+            .trim()
+            .to_string();
+        if !clean.is_empty() && !out.iter().any(|c| c == &clean) {
+            out.push(clean);
+        }
+    }
+    out
 }
 
 fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
@@ -1821,6 +1856,7 @@ fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
                 en: en.to_string(),
                 es: es.to_string(),
                 de: de.to_string(),
+                cats: normalize_vocab_cats(rec.get(1).unwrap_or("")),
             })
         })
         .collect()
@@ -1828,20 +1864,51 @@ fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
 
 /// Return `count` random cards (shuffled each call; tile and popup draw
 /// independently by design — different words in each is variety, not a bug).
+/// A non-empty `categories` filter restricts to cards in ANY of them (the
+/// drill popup's topic filter); empty means all cards (tile rotation).
 #[tauri::command]
-fn read_vocab_cards(app: tauri::AppHandle, count: usize) -> Result<Vec<VocabCard>, String> {
+fn read_vocab_cards(
+    app: tauri::AppHandle,
+    count: usize,
+    categories: Vec<String>,
+) -> Result<Vec<VocabCard>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     if all.is_empty() {
         return Err("no vocabulary cards available".into());
     }
     use rand::seq::SliceRandom;
     let mut rng = rand::thread_rng();
-    let mut idx: Vec<usize> = (0..all.len()).collect();
+    let mut idx: Vec<usize> = (0..all.len())
+        .filter(|&i| {
+            categories.is_empty() || all[i].cats.iter().any(|c| categories.contains(c))
+        })
+        .collect();
+    if idx.is_empty() {
+        return Err("no cards match the selected categories".into());
+    }
     idx.shuffle(&mut rng);
+    let n = count.max(1).min(idx.len());
     Ok(idx
         .into_iter()
-        .take(count.max(1).min(all.len()))
+        .take(n)
         .map(|i| all[i].clone())
+        .collect())
+}
+
+/// Normalized category list with per-category card counts, for the settings
+/// checkbox UI. Computed from the same normalized values stored per card.
+#[tauri::command]
+fn vocab_categories(app: tauri::AppHandle) -> Result<Vec<VocabCategory>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for card in all.iter() {
+        for c in card.cats.iter() {
+            *counts.entry(c.clone()).or_insert(0) += 1;
+        }
+    }
+    Ok(counts
+        .into_iter()
+        .map(|(name, count)| VocabCategory { name, count })
         .collect())
 }
 
@@ -1878,14 +1945,58 @@ fn write_vocab_keys(app: &tauri::AppHandle, keys: &[(&str, serde_json::Value)]) 
         .map_err(|e| format!("Failed to save vocab state: {e}"))
 }
 
-/// Language the next popup drills ("es" | "de" | "both"), stored at open time
-/// so drill.html needs no URL-query parsing.
+/// Drill language + category filter, stored at open time so drill.html needs
+/// no URL-query parsing. (Replaces the earlier lang-only command.)
 #[tauri::command]
-fn vocab_popup_lang() -> Result<String, String> {
-    Ok(VOCAB_LANG.lock().unwrap().clone())
+fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
+    Ok(VOCAB_POPUP.lock().unwrap().clone())
 }
 
-fn open_drill_window(app: &tauri::AppHandle, lang: &str, focus_existing: bool) -> Result<&'static str, String> {
+/// Map a 3x3 placement preset to logical-pixel coordinates on the primary
+/// monitor. Accepts either word order ("center-right" / "right-center").
+/// Unknown values fall back to bottom-right (the spec default).
+fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) -> (f64, f64) {
+    const W: f64 = 360.0;
+    const H: f64 = 240.0;
+    const M: f64 = 16.0;
+    let hx = if preset.contains("left") {
+        0
+    } else if preset.contains("right") {
+        2
+    } else if preset.contains("center") {
+        1
+    } else {
+        2
+    };
+    let vy = if preset.starts_with("top") {
+        0
+    } else if preset.starts_with("bottom") {
+        2
+    } else if preset.contains("center") {
+        1
+    } else {
+        2
+    };
+    let x = match hx {
+        0 => mon_x + M,
+        2 => mon_x + mon_w - W - M,
+        _ => mon_x + (mon_w - W) / 2.0,
+    };
+    let y = match vy {
+        0 => mon_y + M,
+        2 => mon_y + mon_h - H - M,
+        _ => mon_y + (mon_h - H) / 2.0,
+    };
+    (x, y)
+}
+
+fn open_drill_window(
+    app: &tauri::AppHandle,
+    lang: &str,
+    cats: &[String],
+    position: &str,
+    focus_existing: bool,
+) -> Result<&'static str, String> {
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     if let Some(w) = app.get_webview_window("drill") {
         // Only grab focus on explicit user action (Preview button). The
@@ -1895,21 +2006,26 @@ fn open_drill_window(app: &tauri::AppHandle, lang: &str, focus_existing: bool) -
         }
         return Ok("already-open");
     }
-    *VOCAB_LANG.lock().unwrap() = lang.to_string();
-    // Bottom-right of the primary monitor, converted to logical pixels.
+    *VOCAB_POPUP.lock().unwrap() = VocabPopupConfig {
+        lang: lang.to_string(),
+        cats: cats.to_vec(),
+    };
+    // Placement preset on the primary monitor, converted to logical pixels.
     let mon = app
         .primary_monitor()
         .map_err(|e| format!("monitor: {e}"))?
         .ok_or("no primary monitor")?;
     let scale = mon.scale_factor().max(1.0);
-    const W: f64 = 360.0;
-    const H: f64 = 240.0;
-    const M: f64 = 16.0;
-    let x = (mon.position().x as f64 + mon.size().width as f64) / scale - W - M;
-    let y = (mon.position().y as f64 + mon.size().height as f64) / scale - H - M;
+    let (x, y) = drill_position(
+        position,
+        mon.position().x as f64 / scale,
+        mon.position().y as f64 / scale,
+        mon.size().width as f64 / scale,
+        mon.size().height as f64 / scale,
+    );
     WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(W, H)
+        .inner_size(360.0, 240.0)
         .position(x, y)
         .decorations(false)
         .resizable(false)
@@ -1922,10 +2038,16 @@ fn open_drill_window(app: &tauri::AppHandle, lang: &str, focus_existing: bool) -
 }
 
 /// Open (or focus) the drill popup. Used by the scheduler and the settings
-/// Preview button alike.
+/// Preview button alike. Categories filter the drilled cards (popup-only);
+/// position is a 3x3 preset (default bottom-right).
 #[tauri::command]
-async fn open_vocab_popup(app: tauri::AppHandle, lang: String) -> Result<String, String> {
-    open_drill_window(&app, &lang, true).map(|s| s.to_string())
+async fn open_vocab_popup(
+    app: tauri::AppHandle,
+    lang: String,
+    categories: Vec<String>,
+    position: String,
+) -> Result<String, String> {
+    open_drill_window(&app, &lang, &categories, &position, true).map(|s| s.to_string())
 }
 
 /// Close the drill popup (called from the popup itself).
@@ -2041,7 +2163,20 @@ async fn vocab_tick(app: tauri::AppHandle) -> Result<String, String> {
         return Ok("too-soon".into());
     }
     let lang = cfg.get("lang").and_then(|v| v.as_str()).unwrap_or("es");
-    let status = open_drill_window(&app, lang, false)?;
+    let cats: Vec<String> = cfg
+        .get("drillCats")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let position = cfg
+        .get("popupPosition")
+        .and_then(|v| v.as_str())
+        .unwrap_or("bottom-right");
+    let status = open_drill_window(&app, lang, &cats, position, false)?;
     if status == "opened" {
         *VOCAB_LAST_POPUP_AT.lock().unwrap() = now;
         let _ = write_vocab_keys(&app, &[("lastPopupAt", serde_json::Value::from(now))]);
