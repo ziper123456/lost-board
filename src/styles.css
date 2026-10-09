@@ -491,10 +491,11 @@ html, body {
 .spot-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .spot-artist { font-size: 0.8rem; color: var(--text); opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spot-album { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.spot-progress { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.spot-progress-hit { padding: 5px 0; cursor: pointer; touch-action: none; }
+.spot-progress { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; }
 .spot-fill { height: 100%; background: var(--accent); border-radius: 2px; }
 /* Controls: transport buttons left, volume slider right */
-.spot-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; }
+.spot-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; flex-wrap: wrap; }
 .spot-controls-left { display: flex; gap: 6px; }
 .spot-controls .btn.icon-btn {
   width: 32px;
@@ -506,8 +507,8 @@ html, body {
 .spot-controls .btn.icon-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
 .spot-controls .btn.icon-btn.active { color: var(--accent); border-color: var(--accent); }
 .spot-controls .btn.icon-btn.active-smart { color: #1ed760; border-color: #1ed760; }
-.spot-volume { display: flex; align-items: center; }
-.spot-vol { width: 130px; accent-color: var(--accent); }
+.spot-volume { display: flex; align-items: center; flex: 1 1 80px; min-width: 0; justify-content: flex-end; }
+.spot-vol { width: 100%; max-width: 130px; min-width: 0; accent-color: var(--accent); }
 .spot-queue { margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.15); padding-top: 6px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .spot-queue-title { font-size: 0.72rem; font-weight: 700; color: var(--text); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; position: sticky; top: 0; background: rgba(10, 10, 14, 0.85); padding: 2px 0; z-index: 1; }
 .spot-queue-item {
