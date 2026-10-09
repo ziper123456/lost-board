@@ -1481,6 +1481,27 @@ async fn spotify_skip(next: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Seek to a position (ms) on the active device. Used by the tile's
+/// click/drag on the progress bar.
+#[tauri::command]
+async fn spotify_seek(position_ms: u64) -> Result<(), String> {
+    let token = spotify_access_token().await?;
+    let url = format!("https://api.spotify.com/v1/me/player/seek?position_ms={position_ms}");
+    let resp = reqwest::Client::new()
+        .put(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("seek request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
 /// Set volume on the active device (0-100).
 #[tauri::command]
 async fn spotify_volume(percent: u8) -> Result<(), String> {
@@ -1711,6 +1732,7 @@ pub fn run() {
             spotify_shuffle,
             spotify_repeat,
             spotify_volume,
+            spotify_seek,
             spotify_queue,
             get_system_stats,
         ])

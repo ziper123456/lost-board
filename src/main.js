@@ -209,6 +209,9 @@ async openFolder(path) {
   async spotifyVolume(percent) {
     if (window.__TAURI__) return invoke("spotify_volume", { percent });
   },
+  async spotifySeek(positionMs) {
+    if (window.__TAURI__) return invoke("spotify_seek", { positionMs });
+  },
   async spotifyQueue() {
     if (window.__TAURI__) return invoke("spotify_queue");
     return [];
@@ -1253,7 +1256,7 @@ async function renderSpotifyBody(c, body) {
           <div class="spot-title"></div>
           <div class="spot-artist"></div>
           <div class="spot-album"></div>
-          <div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div>
+          <div class="spot-progress-hit"><div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div></div>
         </div>
       </div>
       <div class="spot-controls">
@@ -1287,7 +1290,9 @@ async function renderSpotifyBody(c, body) {
   let durationMs = 0;
   let trackPlaying = false;
   let endRefreshFired = false;
+  let seeking = false;
   const renderProgress = () => {
+    if (seeking) return; // don't fight the user's drag
     if (!body.isConnected || !durationMs) {
       fillEl.style.width = "0%";
       return;
@@ -1398,6 +1403,40 @@ async function renderSpotifyBody(c, body) {
   body.querySelector(".spot-vol").addEventListener("change", async (e) => {
     try {
       await native.spotifyVolume(Number(e.target.value));
+    } catch (err) {
+      alert(`Spotify: ${err.message || err}`);
+    }
+  });
+
+  // Seek: click/drag the progress bar to jump to a position. During the drag
+  // the fill previews the target; on release we seek the device and re-anchor
+  // the local interpolator so the bar continues from the new spot.
+  const progressEl = body.querySelector(".spot-progress-hit");
+  const fracFromEvent = (e) => {
+    const r = progressEl.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  };
+  progressEl.addEventListener("pointerdown", (e) => {
+    if (!durationMs) return;
+    seeking = true;
+    try { progressEl.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    fillEl.style.width = `${fracFromEvent(e) * 100}%`;
+  });
+  progressEl.addEventListener("pointermove", (e) => {
+    if (!seeking) return;
+    fillEl.style.width = `${fracFromEvent(e) * 100}%`;
+  });
+  progressEl.addEventListener("pointerup", async (e) => {
+    if (!seeking) return;
+    seeking = false;
+    const f = fracFromEvent(e);
+    const posMs = Math.round(f * durationMs);
+    anchorProgressMs = posMs;
+    anchorAt = performance.now();
+    endRefreshFired = false;
+    fillEl.style.width = `${f * 100}%`;
+    try {
+      await native.spotifySeek(posMs);
     } catch (err) {
       alert(`Spotify: ${err.message || err}`);
     }
