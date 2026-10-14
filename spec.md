@@ -269,8 +269,8 @@ auth, custom images are user-supplied, captioning is fully local.
   Design tab shall offer one-click **presets** (Default, Glass, Neon, Soft, Terminal).
 - **FR-DSN-003** Typography shall offer an offline **font picker** (installed families +
   generic categories + a custom family field).
-- **FR-DSN-004** (Phase 2, pending) Per-tile decoration shall extend to tile border
-  color/width, radius, shadow and background gradient.
+- **FR-DSN-004** Per-tile decoration extends to tile border color/width, radius, shadow,
+  background gradient and font size/weight.
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
