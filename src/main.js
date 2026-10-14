@@ -116,6 +116,24 @@ function applyAppearance() {
     "--board-bg",
     d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
   );
+  // Push the computed tokens to the drill popup (separate window, own stylesheet).
+  if (window.__TAURI__) {
+    const popupCss =
+      ":root{" +
+      `--bg:${v("bg", t.bg)};` +
+      `--panel:${v("panel", t.panel)};` +
+      `--panel-2:${v("panel2", t.panel2)};` +
+      `--border:${v("borderColor", t.border)};` +
+      `--text:${v("text", t.text)};` +
+      `--muted:${v("muted", t.muted)};` +
+      `--accent:${v("accent", t.accent)};` +
+      `--radius:${radiusGlobal}px;` +
+      `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
+      `--font-size:${v("fontBase", 16)}px;` +
+      `--board-bg:${d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"};` +
+      "}";
+    void native.setPopupTheme(popupCss).catch(() => {});
+  }
 }
 
 // Set of collapsed tiles currently showing their floating body overlay.
@@ -318,6 +336,13 @@ async openFolder(path) {
   async vocabSrsEnabled() {
     if (window.__TAURI__) return invoke("vocab_srs_enabled");
     return false;
+  },
+  async vocabSrsStats(categories) {
+    if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [] });
+    return null;
+  },
+  async setPopupTheme(css) {
+    if (window.__TAURI__) return invoke("set_popup_theme", { css });
   },
   async vocabTick() {
     if (window.__TAURI__) return invoke("vocab_tick");
@@ -4057,6 +4082,25 @@ function renderVocabSettings() {
     <button class="btn ghost" id="vocab-srs-reset">Reset progress</button>
     <span id="vocab-srs-status" class="muted"></span>`;
   panel.appendChild(srsRow);
+  const srsProg = document.createElement("div");
+  srsProg.className = "item-row";
+  srsProg.innerHTML = `<span class="muted" id="vocab-srs-progress">…</span>`;
+  panel.appendChild(srsProg);
+  const progEl = srsProg.querySelector("#vocab-srs-progress");
+  const loadStats = () =>
+    native
+      .vocabSrsStats(v.drillCats || [])
+      .then((s) => {
+        if (!s) {
+          progEl.textContent = "";
+          return;
+        }
+        progEl.textContent = `Progress: ${s.seen}/${s.total} seen · ${s.due} due now · ${s.new} new`;
+      })
+      .catch(() => {
+        progEl.textContent = "";
+      });
+  loadStats();
   const srsChk = srsRow.querySelector("#vocab-srs");
   const srsStatus = srsRow.querySelector("#vocab-srs-status");
   native.vocabSrsEnabled().then((on) => { srsChk.checked = on === true; }).catch(() => {});
@@ -4074,6 +4118,7 @@ function renderVocabSettings() {
     try {
       await native.vocabResetSrs();
       srsStatus.textContent = "progress cleared";
+      loadStats();
       render();
     } catch (err) {
       srsStatus.textContent = `failed: ${err.message || err}`;

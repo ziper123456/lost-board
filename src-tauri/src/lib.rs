@@ -1697,6 +1697,9 @@ pub fn run() {
             vocab_reset_srs,
             vocab_set_srs,
             vocab_srs_enabled,
+            vocab_srs_stats,
+            set_popup_theme,
+            get_popup_theme,
             vocab_popup_config,
             open_vocab_popup,
             close_vocab_popup,
@@ -2140,6 +2143,59 @@ fn vocab_set_srs(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
 #[tauri::command]
 fn vocab_srs_enabled(app: tauri::AppHandle) -> bool {
     srs_enabled(&app)
+}
+
+#[derive(serde::Serialize)]
+struct SrsStats {
+    total: usize,
+    due: usize,
+    seen: usize,
+    new: usize,
+}
+
+/// Review progress for the settings tab: total / due now / seen / never-reviewed.
+#[tauri::command]
+fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<SrsStats, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let matching = vocab_matching(all, &categories);
+    let now = now_secs();
+    let map = srs_map(&app);
+    let mut due = 0;
+    let mut seen = 0;
+    let mut new = 0;
+    for c in &matching {
+        if map.contains_key(&c.id) {
+            seen += 1;
+            if get_srs(&map, &c.id).due <= now {
+                due += 1;
+            }
+        } else {
+            new += 1;
+            due += 1;
+        }
+    }
+    Ok(SrsStats {
+        total: matching.len(),
+        due,
+        seen,
+        new,
+    })
+}
+
+// The drill is a separate window with its own stylesheet, so it can't read the
+// main window's CSS variables. The main window pushes its computed theme tokens
+// here (a `:root{...}` string) and the popup pulls them on load, so the popup is
+// decorated like the rest of the board.
+static POPUP_THEME: StdMutex<String> = StdMutex::new(String::new());
+
+#[tauri::command]
+fn set_popup_theme(css: String) {
+    *POPUP_THEME.lock().unwrap() = css;
+}
+
+#[tauri::command]
+fn get_popup_theme() -> String {
+    POPUP_THEME.lock().unwrap().clone()
 }
 
 /// Drill language + category filter, stored at open time so drill.html needs

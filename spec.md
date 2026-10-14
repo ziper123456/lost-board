@@ -216,6 +216,9 @@ shuffle independently (different words in each is variety, not a bug).
   (never graded). Grading is honest — reveal = fail. Toggleable in Settings; progress resettable.
 - **FR-VOC-011** The tile shall show a "due today" count.
 - **FR-VOC-012** SM-2 intervals shall be capped (no interval explosion).
+- **FR-VOC-013** The Vocab settings tab shall show review **progress** (seen/total, due now,
+  new). The drill popup shall follow the active **theme + design tokens** (colours, font,
+  radius) so it is decorated like the tiles.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
