@@ -19,7 +19,7 @@ button, input, select, textarea { font-family: inherit; }
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--board-bg, var(--bg));
   color: var(--text);
   font-family: var(--font, "Segoe UI", system-ui, sans-serif);
   overflow: hidden;
@@ -108,7 +108,7 @@ html { font-size: var(--font-size, 16px); }
   height: 100%;
   overflow: auto;
   position: relative;
-  background: var(--bg);
+  background: var(--board-bg, var(--bg));
 }
 /* Scaler sizes the scrollable area to the scaled grid; the grid itself is
    CSS-transform-scaled so tiles/text/buttons all zoom uniformly. */
@@ -181,7 +181,7 @@ html { font-size: var(--font-size, 16px); }
   gap: 2px;
   flex: 0 0 auto;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--transition, 0.12s) ease;
 }
 .compartment:hover .header-actions,
 .compartment:focus-within .header-actions {
@@ -468,8 +468,8 @@ html { font-size: var(--font-size, 16px); }
 }
 .wea-name { font-weight: 600; font-size: 0.92rem; }
 .wea-clock {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 1.05rem;
+  font-family: var(--font, "Segoe UI", system-ui, sans-serif);
+  font-size: 1.05em;
   font-weight: 700;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
@@ -976,3 +976,9 @@ input[type="color"] {
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
 input[type="color"]:hover { border-color: var(--accent); }
+
+/* Heading weight token: only set when the user overrides it, so the per-element
+   fallbacks preserve the current weights by default. */
+.comp-title, .news-feed-title, .spot-title, .bmk-name, .wea-name { font-weight: var(--heading-weight, 600); }
+.cal-title, .vocab-en, .spot-queue-title { font-weight: var(--heading-weight, 700); }
+.wea-temp { font-weight: var(--heading-weight, 800); }

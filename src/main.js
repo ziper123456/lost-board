@@ -89,7 +89,7 @@ function applyAppearance() {
   const radiusGlobal = v("radiusGlobal", state.cornerRadius != null ? state.cornerRadius : 10);
   root.setProperty("--radius", `${radiusGlobal}px`);
   root.setProperty("--btn-radius", px("radiusButton", 6));
-  root.setProperty("--input-radius", px("radiusInput", 8));
+  root.setProperty("--input-radius", px("radiusInput", 6));
   root.setProperty("--tile-radius", px("radiusTile", radiusGlobal));
   root.setProperty("--btn-bg", v("btnBg", "var(--panel-2)"));
   root.setProperty("--btn-text", v("btnText", "var(--text)"));
@@ -103,12 +103,19 @@ function applyAppearance() {
   root.setProperty("--tile-shadow", v("tileShadow", "none"));
   root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
   root.setProperty("--font-size", px("fontBase", 16));
-  root.setProperty("--heading-weight", String(v("headingWeight", 600)));
   root.setProperty("--scroll-thumb", v("scrollThumb", "var(--panel-2)"));
-  root.setProperty("--transition", `${v("transitionMs", 150)}ms`);
-  // Optional board background gradient (replaces the flat --bg fill).
-  document.body.style.background =
-    d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "";
+  // Heading weight / transition are only set when overridden, so their per-element
+  // CSS fallbacks preserve the current look until the user changes them.
+  if (d.headingWeight != null) root.setProperty("--heading-weight", String(d.headingWeight));
+  else root.removeProperty("--heading-weight");
+  if (d.transitionMs != null) root.setProperty("--transition", `${d.transitionMs}ms`);
+  else root.removeProperty("--transition");
+  // Board background: a gradient token consumed by html/body + .dashboard,
+  // falling back to the flat --bg colour.
+  root.setProperty(
+    "--board-bg",
+    d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
+  );
 }
 
 // Set of collapsed tiles currently showing their floating body overlay.
@@ -4851,7 +4858,11 @@ function renderDesignSettings() {
   if (!panel) return;
   state.design = state.design || {};
   panel.innerHTML = "";
-  const apply = () => { applyAppearance(); saveState(); };
+  // Live apply on every input, but debounce the (IPC) save so dragging a slider
+  // doesn't spam save_state. Discrete changes save immediately.
+  let saveT = 0;
+  const apply = () => { applyAppearance(); clearTimeout(saveT); saveT = setTimeout(saveState, 300); };
+  const applyNow = () => { applyAppearance(); saveState(); };
   const heading = (text) => {
     const h = document.createElement("h3");
     h.textContent = text;
@@ -4865,7 +4876,7 @@ function renderDesignSettings() {
       <button class="btn ghost d-reset" title="Reset">✕</button>`;
     panel.appendChild(row);
     row.querySelector(".d-input").addEventListener("input", (e) => { state.design[key] = e.target.value; apply(); });
-    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; apply(); renderDesignSettings(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
   };
   const numRow = (label, key, min, max, step, unit, fallback) => {
     const cur = state.design[key] != null ? state.design[key] : fallback;
@@ -4878,7 +4889,7 @@ function renderDesignSettings() {
     panel.appendChild(row);
     const val = row.querySelector(".d-val");
     row.querySelector(".d-input").addEventListener("input", (e) => { state.design[key] = Number(e.target.value); val.textContent = `${e.target.value}${unit}`; apply(); });
-    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; apply(); renderDesignSettings(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
   };
   const selectRow = (label, key, options, fallback) => {
     const cur = state.design[key] != null ? state.design[key] : fallback;
@@ -4888,8 +4899,8 @@ function renderDesignSettings() {
       <select class="d-input">${options.map(([l, v]) => `<option value="${escapeHtml(v)}" ${v === cur ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select>
       <button class="btn ghost d-reset" title="Reset">✕</button>`;
     panel.appendChild(row);
-    row.querySelector(".d-input").addEventListener("change", (e) => { state.design[key] = e.target.value; apply(); });
-    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; apply(); renderDesignSettings(); });
+    row.querySelector(".d-input").addEventListener("change", (e) => { state.design[key] = e.target.value; applyNow(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
   };
 
   // Presets
@@ -4902,7 +4913,7 @@ function renderDesignSettings() {
     b.addEventListener("click", () => {
       const p = DESIGN_PRESETS[b.dataset.p];
       state.design = p ? { ...p } : {};
-      apply();
+      applyNow();
       renderDesignSettings();
     })
   );
@@ -4922,7 +4933,7 @@ function renderDesignSettings() {
       delete state.design.bgFrom;
       delete state.design.bgTo;
     }
-    apply();
+    applyNow();
     renderDesignSettings();
   });
   if (gradOn) {
@@ -4965,14 +4976,14 @@ function renderDesignSettings() {
       return;
     }
     state.design.font = e.target.value;
-    apply();
+    applyNow();
     renderDesignSettings();
   });
   customFontRow.querySelector(".d-custom-font").addEventListener("change", (e) => {
     const val = e.target.value.trim();
-    if (val) { state.design.font = val; apply(); }
+    if (val) { state.design.font = val; applyNow(); }
   });
-  fontRow.querySelector(".d-reset").addEventListener("click", () => { delete state.design.font; apply(); renderDesignSettings(); });
+  fontRow.querySelector(".d-reset").addEventListener("click", () => { delete state.design.font; applyNow(); renderDesignSettings(); });
   numRow("Base size", "fontBase", 11, 22, 1, "px", 16);
   numRow("Heading weight", "headingWeight", 400, 800, 50, "", 600);
 
