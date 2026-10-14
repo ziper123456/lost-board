@@ -1,6 +1,6 @@
 # Implementation Plan — Vocab spaced repetition (SRS)
 
-> ✅ **Status: built (branch feat/vocab-srs).** Phase 1 (SM-2 core). Phase 2 (bidirectional) pending.
+> ✅ **Status: built and merged (PR #43).** Phase 1 (SM-2 core). Phase 2 (bidirectional) dropped by request.
 
 ## 1. Goal
 
@@ -37,3 +37,4 @@ intervals, honest grading, SM-2 with an interval cap.
 - 2026-10-14: project's first unit tests added (`cargo test --lib`, 3 passing) for the SM-2 scheduler.
 - 2026-10-14: progress visibility (`vocab_srs_stats` → Settings progress line) + themed drill popup (theme tokens pushed from the main window via `set_popup_theme`, pulled by the popup via `get_popup_theme`). FR-VOC-013.
 - 2026-10-14: review fix (High) — `save_state` now merges Rust-managed `vocab` keys (`srs`, `srsEnabled`, `snoozeUntil`, `lastPopupAt`) from the on-disk file before writing, so a main-window save can't clobber drill-written SRS progress. SRS map parsed once in the due/stats scans. 5 `cargo test --lib` tests pass.
+- 2026-10-14: Phase 2 (bidirectional EN↔ES/DE cards) **dropped** by request — the drill stays one-directional (EN → target); avoids multiplying the review queue on the ~10k deck.
