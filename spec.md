@@ -246,6 +246,20 @@ auth, custom images are user-supplied, captioning is fully local.
   (default: Pinterest `https://www.pinterest.com/search/pins/?q={q}&rs=typed`; engine URL
   configurable with a `{q}` placeholder).
 
+### 2.15 Calendar tile: lunar calendar + moon phase + holidays
+
+- **FR-CAL-001** The tile shall show a month grid (week starts Monday by default, Sunday optional)
+  with adjacent-month days dimmed and the current day highlighted.
+- **FR-CAL-002** Each day shall show the solar date plus the **Vietnamese lunar (âm lịch)**
+  day/month (leap months marked), computed for the UTC+7 reference (`src/lunar.js`).
+- **FR-CAL-003** Weekday/month labels shall be bilingual **Spanish/German** (e.g. `Sáb/Sam`, `Marzo/März`).
+- **FR-CAL-004** When enabled, a per-day **moon-phase** glyph shall be shown (`src/lunar.js`).
+- **FR-CAL-005** Public holidays shall be highlightable per country (Vietnam; Germany incl.
+  Rheinland-Pfalz; Pakistan fixed-date), toggled in Settings; hovering a highlighted day shows
+  the native holiday name plus its ES/DE translation when available. Holidays are computed offline
+  in `src/holidays.js` (Vietnamese lunar dates + Gregorian Easter computus). Islamic Pakistan
+  holidays are deferred (need a Hijri conversion).
+
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
 ~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).
@@ -405,6 +419,19 @@ Given a Vocab tile with speech enabled and per-language voices chosen,
 When a card cycle shows,
 Then English is spoken, then Spanish, then German, each in its configured voice;
 advancing the card cancels in-flight speech, and collapsing the tile silences it.
+
+### AC-035: Calendar grid + lunar date
+Given a Calendar tile, when it renders, then a Monday-first month grid shows the current day
+highlighted, adjacent-month days dimmed, and each day carries its Vietnamese lunar day/month
+(leap months marked).
+
+### AC-036: Moon phase + bilingual labels
+Given the calendar with moon phase enabled, then each day shows a moon-phase glyph, and the
+weekday/month labels read bilingual ES/DE.
+
+### AC-037: Holiday highlights
+Given Vietnam/Germany/Pakistan holiday toggles enabled, then matching days are highlighted and
+hovering one shows the native holiday name with its ES/DE translation when available.
 
 ### AC-027: Meme rotation pool
 Given top-100 fetched plus two curated images,

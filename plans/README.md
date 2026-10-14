@@ -25,6 +25,7 @@ Read the relevant file before implementing.
 | Background mode (tray + autostart + always-on-bottom) | [`background-mode.md`](background-mode.md) ✅ PR #30 | `spec.md` §2.12, AC-018..020 |
 | Vocab flashcard tile + drill popup + TTS | [`vocab-flashcard-popup.md`](vocab-flashcard-popup.md) ✅ PRs #31, #33 | `spec.md` §2.13, AC-021..026, AC-034 |
 | Meme tile (rotation + captioning + expanded view) | [`meme-tile.md`](meme-tile.md) ✅ PR #32 | `spec.md` §2.14, AC-027..033 |
+| Calendar tile (lunar + moon phase + holidays) | [`calendar-tile.md`](calendar-tile.md) ✅ | `spec.md` §2.15, AC-035..037 |
 | Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) ✅ PR #29 | `spec.md` §2.9/§7 (dropped) |
 | Spotify queue-jump fast path | Issue #18 ✅ PR #24 | `spec.md` FR-SPT-007 |
 | Projects tile resurrect fix | Issue #19 ✅ PR #22 | — (bugfix) |
