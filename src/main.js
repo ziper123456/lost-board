@@ -4542,15 +4542,17 @@ function renderCalendarBody(c, body) {
     const [tld, tlm] = window.Lunar.fromDate(today, CAL_TZ);
     const tphase = window.Lunar.moonPhase(tld);
     body.innerHTML = `
-      <div class="cal-head">
-        <button class="btn ghost icon-btn cal-prev" title="Previous month">‹</button>
-        <span class="cal-title">${CAL_MONTHS[viewM][0]}/${CAL_MONTHS[viewM][1]} ${viewY}</span>
-        <button class="btn ghost icon-btn cal-next" title="Next month">›</button>
-        <button class="btn ghost cal-today">Hoy/Heute</button>
+      <div class="cal-root">
+        <div class="cal-head">
+          <button class="btn ghost icon-btn cal-prev" title="Previous month">‹</button>
+          <span class="cal-title">${CAL_MONTHS[viewM][0]}/${CAL_MONTHS[viewM][1]} ${viewY}</span>
+          <button class="btn ghost icon-btn cal-next" title="Next month">›</button>
+          <button class="btn ghost cal-today">Hoy/Heute</button>
+        </div>
+        <div class="cal-today-line">${tphase.emoji} ${tld}/${tlm} · ${escapeHtml(tphase.es)} / ${escapeHtml(tphase.de)}</div>
+        <div class="cal-week">${dayNames.map(([es, de]) => `<span class="cal-wd">${es}/${de}</span>`).join("")}</div>
+        <div class="cal-grid">${cells}</div>
       </div>
-      <div class="cal-today-line">${tphase.emoji} ${tld}/${tlm} · ${escapeHtml(tphase.es)} / ${escapeHtml(tphase.de)}</div>
-      <div class="cal-week">${dayNames.map(([es, de]) => `<span class="cal-wd">${es}/${de}</span>`).join("")}</div>
-      <div class="cal-grid">${cells}</div>
     `;
     body.querySelector(".cal-prev").addEventListener("click", () => { viewM--; if (viewM < 0) { viewM = 11; viewY--; } paint(); });
     body.querySelector(".cal-next").addEventListener("click", () => { viewM++; if (viewM > 11) { viewM = 0; viewY++; } paint(); });
