@@ -4514,8 +4514,9 @@ dashboard.addEventListener("mousedown", (e) => {
 });
 
 // Right-click: tile menu on a tile (or its collapsed overlay), add-tile menu
-// on empty grid space.
+// on empty grid space. Text fields keep their native (cut/copy/paste) menu.
 dashboard.addEventListener("contextmenu", (e) => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
   const tile = e.target.closest(".compartment, .compartment-overlay");
   e.preventDefault();
   if (tile && tile.dataset.id) {
