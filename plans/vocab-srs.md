@@ -35,3 +35,4 @@ intervals, honest grading, SM-2 with an interval cap.
 
 - 2026-10-14: Phase 1 built. Phase 2 (bidirectional en↔es↔de cards, per clawic) pending.
 - 2026-10-14: project's first unit tests added (`cargo test --lib`, 3 passing) for the SM-2 scheduler.
+- 2026-10-14: progress visibility (`vocab_srs_stats` → Settings progress line) + themed drill popup (theme tokens pushed from the main window via `set_popup_theme`, pulled by the popup via `get_popup_theme`). FR-VOC-013.
