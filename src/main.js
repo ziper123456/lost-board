@@ -4499,14 +4499,18 @@ function calendarOpts(c) {
 }
 
 function renderCalendarBody(c, body) {
+  if (!window.Lunar || !window.Holidays) {
+    body.innerHTML = `<div class="muted">Calendar engine unavailable.</div>`;
+    return;
+  }
   const opts = calendarOpts(c);
   const dayNames = opts.weekStart === "sun" ? CAL_DAYS_SUN : CAL_DAYS_MON;
-  const today = new Date();
-  let viewY = today.getFullYear();
-  let viewM = today.getMonth();
+  let viewY = new Date().getFullYear();
+  let viewM = new Date().getMonth();
 
   const paint = () => {
     if (!body.isConnected) return;
+    const today = new Date(); // recomputed each paint so midnight rollover works
     const first = new Date(viewY, viewM, 1);
     const startIdx = (first.getDay() + (opts.weekStart === "sun" ? 0 : 6)) % 7;
     const gridStart = new Date(viewY, viewM, 1 - startIdx);
@@ -4560,12 +4564,15 @@ function renderCalendarBody(c, body) {
   };
   paint();
 
-  // Move the "today" highlight at midnight (once a minute is plenty).
+  // Move the "today" highlight at midnight (once a minute is plenty). Repaint in
+  // place — a full render() wouldn't rebuild this tile (its body signature is
+  // unchanged when only the date moves).
   let startDay = new Date().toDateString();
   const t = setInterval(() => {
-    if (new Date().toDateString() !== startDay) {
-      startDay = new Date().toDateString();
-      render();
+    const k = new Date().toDateString();
+    if (k !== startDay) {
+      startDay = k;
+      paint();
     }
   }, 60000);
   addTimer(body, t);

@@ -81,6 +81,7 @@
     };
     const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
     const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    const easterByYear = new Map();
     while (cur <= last) {
       const m = cur.getMonth() + 1;
       const d = cur.getDate();
@@ -94,8 +95,9 @@
       }
       if (o.germany) {
         for (const h of DE_SOLAR) if (h.m === m && h.d === d) push(cur, h);
-        const e = easter(cur.getFullYear());
-        const off = dayNum(cur) - dayNum(e);
+        const yr = cur.getFullYear();
+        if (!easterByYear.has(yr)) easterByYear.set(yr, dayNum(easter(yr)));
+        const off = dayNum(cur) - easterByYear.get(yr);
         for (const h of DE_MOVABLE) if (h.off === off) push(cur, h);
       }
       if (o.pakistan) {

@@ -146,38 +146,6 @@
     return [lunarDay, lunarMonth, lunarYear, lunarLeap];
   }
 
-  // Number of days (29 or 30) in a lunar month.
-  function lunarMonthDays(lunarMonth, lunarYear, timeZone) {
-    const tz = timeZone == null ? 7 : timeZone;
-    // Month 11 of the given lunar year; find its start, then the next start.
-    const a11 = lunarMonth11(lunarYear, tz);
-    const k = INT((a11 - 2415021.076998695) / 29.530588853 + 0.5);
-    // Reconstruct start of the requested lunar month within the year.
-    // Simpler: count from a known reference — use the month-start offsets.
-    const startThis = lunarMonthStartJd(lunarMonth, lunarYear, tz);
-    const next = lunarMonthStartNextJd(lunarMonth, lunarYear, tz, k, a11);
-    return next - startThis;
-  }
-
-  function lunarMonthStartJd(lunarMonth, lunarYear, timeZone) {
-    // Find the Julian day of the 1st of the given lunar month/year.
-    const a11 = lunarMonth11(lunarYear, timeZone);
-    const k = INT((a11 - 2415021.076998695) / 29.530588853 + 0.5);
-    // lunarMonth 11 is the "a11" month; map month -> offset in new moons.
-    for (let i = 0; i < 14; i++) {
-      const jd = newMoonDay(k + i, timeZone);
-      const [ld, lm, ly] = solarToLunar(...jdToDate(jd), timeZone);
-      if (lm === lunarMonth && ly === lunarYear && ld === 1) return jd;
-    }
-    return a11;
-  }
-
-  function lunarMonthStartNextJd(lunarMonth, lunarYear, timeZone, k, a11) {
-    const start = lunarMonthStartJd(lunarMonth, lunarYear, timeZone);
-    const kk = INT((start - 2415021.076998695) / 29.530588853 + 0.5);
-    return newMoonDay(kk + 1, timeZone);
-  }
-
   const MOON_EMOJI = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
   const MOON_NAMES = [
     { es: "Luna nueva", de: "Neumond" },
@@ -201,5 +169,5 @@
     return solarToLunar(date.getDate(), date.getMonth() + 1, date.getFullYear(), timeZone);
   }
 
-  window.Lunar = { solarToLunar, fromDate, moonPhase, lunarMonthDays, MOON_EMOJI };
+  window.Lunar = { solarToLunar, fromDate, moonPhase, MOON_EMOJI };
 })();
