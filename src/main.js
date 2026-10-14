@@ -483,11 +483,14 @@ function startTileRename(c, el) {
 }
 
 function removeTile(c) {
-  if (!window.confirm(`Remove the "${c.title}" tile?`)) return;
-  state.compartments = state.compartments.filter((x) => x.id !== c.id);
-  openTiles.delete(c.id);
-  saveState();
-  render();
+  showConfirmPopup(`Are you sure you want to delete "${c.title}" tile?`, {
+    onConfirm: () => {
+      state.compartments = state.compartments.filter((x) => x.id !== c.id);
+      openTiles.delete(c.id);
+      saveState();
+      render();
+    },
+  });
 }
 
 function duplicateTile(c) {
@@ -521,12 +524,22 @@ function wireHeader(rec, c) {
 // --- Right-click context menu --------------------------------------------
 // One floating menu reused for tiles (actions) and the empty grid (add tile).
 let ctxMenuEl = null;
+let ctxMenuPos = null; // last opened position, so a confirm lands in place
 
 function closeCtxMenu() {
   if (ctxMenuEl) {
     ctxMenuEl.remove();
     ctxMenuEl = null;
   }
+}
+
+// Place a floating popup at (x, y), clamped so it never spills off-screen.
+function positionCtxMenu(el, x, y) {
+  const r = el.getBoundingClientRect();
+  const px = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+  const py = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+  el.style.left = `${px}px`;
+  el.style.top = `${py}px`;
 }
 
 function showCtxMenu(items, clientX, clientY) {
@@ -561,13 +574,50 @@ function showCtxMenu(items, clientX, clientY) {
     menu.appendChild(b);
   }
   document.body.appendChild(menu);
-  // Position at the cursor, clamped so it never spills off-screen.
-  const r = menu.getBoundingClientRect();
-  const x = Math.max(8, Math.min(clientX, window.innerWidth - r.width - 8));
-  const y = Math.max(8, Math.min(clientY, window.innerHeight - r.height - 8));
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
+  positionCtxMenu(menu, clientX, clientY);
   ctxMenuEl = menu;
+  ctxMenuPos = { x: clientX, y: clientY };
+}
+
+// Small in-app confirmation (replaces window.confirm). Styled like the context
+// menu, positioned where it was opened, focused on Cancel so a stray Enter is
+// safe. Confirm runs onConfirm; Cancel / outside-click / Escape dismiss.
+function showConfirmPopup(message, { x, y, confirmLabel = "Remove", onConfirm } = {}) {
+  closeCtxMenu();
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu confirm-popup";
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-modal", "true");
+  const msg = document.createElement("div");
+  msg.className = "confirm-msg";
+  msg.textContent = message;
+  const actions = document.createElement("div");
+  actions.className = "confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn ghost";
+  cancel.textContent = "Cancel";
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = "btn danger";
+  confirm.textContent = confirmLabel;
+  actions.append(cancel, confirm);
+  pop.append(msg, actions);
+  document.body.appendChild(pop);
+  const px = x ?? ctxMenuPos?.x ?? window.innerWidth / 2;
+  const py = y ?? ctxMenuPos?.y ?? window.innerHeight / 2;
+  positionCtxMenu(pop, px, py);
+  ctxMenuEl = pop;
+  cancel.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeCtxMenu();
+  });
+  confirm.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeCtxMenu();
+    onConfirm?.();
+  });
+  cancel.focus();
 }
 
 function openTileMenu(clientX, clientY, compId) {
