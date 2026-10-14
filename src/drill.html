@@ -70,6 +70,16 @@
 
   let targets = [];   // accepted answers in order
   let attempts = 0;
+  let answered = false;   // grade recorded already?
+  let gradeable = false;  // only grade cards that were actually due
+  let cardId = "";
+
+  // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
+  function record(grade) {
+    if (answered || !gradeable || !cardId) return;
+    answered = true;
+    invoke("vocab_record_review", { cardId, grade }).catch(() => {});
+  }
 
   function checkBoth() {
     // "both" mode: two inputs must both match (mirrors vocab-app Both mode).
@@ -82,6 +92,7 @@
     if (done) {
       inputEl.classList.remove("bad");
       inputEl.classList.add("ok");
+      record(attempts === 0 ? "good" : "hard");
       setTimeout(close, 1500);
       return;
     }
@@ -91,6 +102,7 @@
   function revealNow() {
     revealEl.textContent = "Answer: " + targets.join(" / ");
     document.querySelectorAll(".answer input").forEach((i) => i.classList.add("bad"));
+    record("again");
   }
 
   async function boot() {
@@ -98,8 +110,14 @@
       const cfg = await invoke("vocab_popup_config").catch(() => ({ lang: "es", cats: [] }));
       const lang = cfg.lang || "es";
       const cats = Array.isArray(cfg.cats) ? cfg.cats : [];
-      const cards = await invoke("read_vocab_cards", { count: 1, categories: cats });
-      const card = cards[0];
+      const dueRes = await invoke("vocab_due_card", { categories: cats });
+      if (!dueRes || !dueRes.card) {
+        errorEl.textContent = "No cards available — clear the category filter in Settings > Vocab.";
+        return;
+      }
+      const card = dueRes.card;
+      cardId = card.id;
+      gradeable = dueRes.due === true; // only grade cards that were due
       promptEl.textContent = card.en;
       promptEl.title = card.en;
       if (lang === "both") {

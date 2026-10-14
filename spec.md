@@ -210,6 +210,12 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-009** When speech is enabled on a tile, each card cycle shall speak the three
   languages in order (English, then Spanish, then German) via the Web Speech API, each in
   its per-language configured voice (default voice when unchosen or unavailable).
+- **FR-VOC-010** The drill and tile shall support **spaced repetition** (SM-2): each card
+  carries review state (due/interval/ease/reps/lapses) persisted by id; the drill shows a
+  **due** card when one exists (graded) and falls back to a random card for passive exposure
+  (never graded). Grading is honest — reveal = fail. Toggleable in Settings; progress resettable.
+- **FR-VOC-011** The tile shall show a "due today" count.
+- **FR-VOC-012** SM-2 intervals shall be capped (no interval explosion).
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 

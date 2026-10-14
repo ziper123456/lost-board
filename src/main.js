@@ -301,6 +301,24 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_categories");
     return [];
   },
+  async vocabDueCard(categories) {
+    if (window.__TAURI__) return invoke("vocab_due_card", { categories: categories || [] });
+    return null;
+  },
+  async vocabDueCount(categories) {
+    if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [] });
+    return 0;
+  },
+  async vocabResetSrs() {
+    if (window.__TAURI__) return invoke("vocab_reset_srs");
+  },
+  async vocabSetSrs(enabled) {
+    if (window.__TAURI__) return invoke("vocab_set_srs", { enabled });
+  },
+  async vocabSrsEnabled() {
+    if (window.__TAURI__) return invoke("vocab_srs_enabled");
+    return false;
+  },
   async vocabTick() {
     if (window.__TAURI__) return invoke("vocab_tick");
     return "disabled";
@@ -1194,6 +1212,12 @@ async function renderVocabBody(c, body) {
   } catch {
     cards = [];
   }
+  let due = 0;
+  try {
+    due = await native.vocabDueCount([]);
+  } catch {
+    due = 0;
+  }
   if (!body.isConnected) return;
   if (speakOn) vocabSpeakingBodies.add(body);
   else vocabSpeakingBodies.delete(body);
@@ -1202,6 +1226,7 @@ async function renderVocabBody(c, body) {
     return;
   }
   body.innerHTML = `
+    ${due > 0 ? `<div class="vocab-due muted" title="Cards due for review">Due today: ${due}</div>` : ""}
     <div class="vocab-card">
       <div class="vocab-en"></div>
       <div class="vocab-other"></div>
@@ -4018,6 +4043,40 @@ function renderVocabSettings() {
       renderVocabSettings();
     } catch (e) {
       statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+
+  // Spaced repetition: schedule reviews instead of random order (SM-2).
+  const srsHead = document.createElement("h3");
+  srsHead.textContent = "Spaced repetition";
+  panel.appendChild(srsHead);
+  const srsRow = document.createElement("div");
+  srsRow.className = "item-row";
+  srsRow.innerHTML = `
+    <label>Smart scheduling <input type="checkbox" id="vocab-srs" title="Review cards on an expanding schedule (SM-2)" /></label>
+    <button class="btn ghost" id="vocab-srs-reset">Reset progress</button>
+    <span id="vocab-srs-status" class="muted"></span>`;
+  panel.appendChild(srsRow);
+  const srsChk = srsRow.querySelector("#vocab-srs");
+  const srsStatus = srsRow.querySelector("#vocab-srs-status");
+  native.vocabSrsEnabled().then((on) => { srsChk.checked = on === true; }).catch(() => {});
+  srsChk.addEventListener("change", async (e) => {
+    try {
+      await native.vocabSetSrs(e.target.checked);
+      render();
+    } catch (err) {
+      srsStatus.textContent = `failed: ${err.message || err}`;
+      srsChk.checked = !e.target.checked;
+    }
+  });
+  srsRow.querySelector("#vocab-srs-reset").addEventListener("click", async () => {
+    srsStatus.textContent = "resetting…";
+    try {
+      await native.vocabResetSrs();
+      srsStatus.textContent = "progress cleared";
+      render();
+    } catch (err) {
+      srsStatus.textContent = `failed: ${err.message || err}`;
     }
   });
 }
