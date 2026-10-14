@@ -44,6 +44,7 @@
   }
   .row button:hover { border-color: var(--accent, #4c4c5a); }
   .error { font-size: 0.78rem; color: var(--red, #d64949); margin-top: 6px; }
+  .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -54,6 +55,7 @@
   <div class="prompt" id="prompt">…</div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
+  <div class="drill-progress" id="progress"></div>
   <div class="row">
     <button id="btn-dismiss">Dismiss</button>
     <button id="btn-snooze" title="No popups for 30 minutes">Snooze 30 min</button>
@@ -132,6 +134,17 @@
       gradeable = dueRes.due === true; // only grade cards that were due
       promptEl.textContent = card.en;
       promptEl.title = card.en;
+      // Show review progress in the popup itself.
+      try {
+        const [due, stats] = await Promise.all([
+          invoke("vocab_due_count", { categories: cats }),
+          invoke("vocab_srs_stats", { categories: cats }),
+        ]);
+        const progEl = document.getElementById("progress");
+        if (progEl && stats) {
+          progEl.textContent = `Due today: ${due} · ${stats.seen}/${stats.total} seen`;
+        }
+      } catch { /* progress is optional */ }
       if (lang === "both") {
         labelEl.textContent = "Translate to Spanish + German";
         const wrap = document.querySelector(".answer");
