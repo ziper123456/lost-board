@@ -1,6 +1,6 @@
 # Implementation Plan — UI overhaul: design-token system
 
-> 🚧 **Status: Phase 1 built (branch feat/design-tokens).** Phases 2–3 pending.
+> 🚧 **Status: Phase 1 + Phase 2 built (branch feat/design-tokens).** Phase 3 pending.
 
 ## 1. Goal
 
@@ -29,8 +29,9 @@ preview, per-token reset and one-click **presets**, layered *over* the existing 
 1. **Phase 1 (built):** `state.design`, `applyAppearance` overlay, `styles.css` token
    refactor for the priority components (buttons, tiles, borders, radius, rows/inputs,
    typography, scrollbars, background gradient), Design tab + presets + font picker.
-2. **Phase 2 (pending):** per-tile decoration — tile border color/width, radius, shadow
-   and background gradient as per-tile CSS vars on `.compartment`.
+2. **Phase 2 (built):** per-tile decoration — tile border color/width, radius, shadow
+   and background gradient, emitted as per-tile CSS vars on `.compartment` (removed when
+   unset so they fall back to the design/theme token).
 3. **Phase 3 (optional):** Custom CSS escape hatch (advanced).
 
 ## 4. Corrections log
