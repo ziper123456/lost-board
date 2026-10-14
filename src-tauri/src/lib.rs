@@ -2024,6 +2024,14 @@ fn get_srs(map: &serde_json::Map<String, serde_json::Value>, id: &str) -> SrsEnt
         .unwrap_or_default()
 }
 
+/// Deserialize the whole SRS map once (avoids a JSON parse per card in the
+/// due/stats scans).
+fn parse_srs(map: &serde_json::Map<String, serde_json::Value>) -> std::collections::HashMap<String, SrsEntry> {
+    map.iter()
+        .filter_map(|(k, v)| serde_json::from_value::<SrsEntry>(v.clone()).ok().map(|e| (k.clone(), e)))
+        .collect()
+}
+
 fn write_srs_entry(app: &tauri::AppHandle, id: &str, entry: &SrsEntry) -> Result<(), String> {
     let mut map = srs_map(app);
     map.insert(
@@ -2081,11 +2089,11 @@ fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>) -> Result<Opti
     use rand::seq::SliceRandom;
     let now = now_secs();
     if srs_enabled(&app) {
-        let map = srs_map(&app);
+        let typed = parse_srs(&srs_map(&app));
         let mut due: Vec<&VocabCard> = matching
             .iter()
             .copied()
-            .filter(|c| get_srs(&map, &c.id).due <= now)
+            .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
             .collect();
         if !due.is_empty() {
             due.shuffle(&mut rand::thread_rng());
@@ -2120,10 +2128,10 @@ fn vocab_due_count(app: tauri::AppHandle, categories: Vec<String>) -> Result<usi
     }
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let now = now_secs();
-    let map = srs_map(&app);
+    let typed = parse_srs(&srs_map(&app));
     Ok(vocab_matching(all, &categories)
         .iter()
-        .filter(|c| get_srs(&map, &c.id).due <= now)
+        .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
         .count())
 }
 
@@ -2159,19 +2167,22 @@ fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<Srs
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let matching = vocab_matching(all, &categories);
     let now = now_secs();
-    let map = srs_map(&app);
+    let typed = parse_srs(&srs_map(&app));
     let mut due = 0;
     let mut seen = 0;
     let mut new = 0;
     for c in &matching {
-        if map.contains_key(&c.id) {
-            seen += 1;
-            if get_srs(&map, &c.id).due <= now {
+        match typed.get(&c.id) {
+            Some(e) => {
+                seen += 1;
+                if e.due <= now {
+                    due += 1;
+                }
+            }
+            None => {
+                new += 1;
                 due += 1;
             }
-        } else {
-            new += 1;
-            due += 1;
         }
     }
     Ok(SrsStats {
@@ -2528,8 +2539,41 @@ fn save_state(app: tauri::AppHandle, state_json: String) -> Result<(), String> {
     let parent = path.parent().ok_or("Dashboard state has no parent directory")?;
     fs::create_dir_all(parent)
         .map_err(|e| format!("Failed to create app-data directory: {e}"))?;
-    fs::write(&path, state_json)
-        .map_err(|e| format!("Failed to save dashboard state: {e}"))
+    // Preserve Rust-managed `vocab` keys (see `preserve_rust_vocab_keys`).
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let merged = preserve_rust_vocab_keys(&state_json, &existing);
+    fs::write(&path, merged).map_err(|e| format!("Failed to save dashboard state: {e}"))
+}
+
+/// Merge Rust-managed `vocab` keys from the on-disk state into an incoming
+/// full-state payload. SRS progress and popup timing are written by the drill
+/// window and are not tracked by the main window's in-memory state, so a
+/// full-state save must not regress them. Returns the payload unchanged when
+/// either side can't be parsed.
+fn preserve_rust_vocab_keys(state_json: &str, existing: &str) -> String {
+    let mut v: serde_json::Value = match serde_json::from_str(state_json) {
+        Ok(v) => v,
+        Err(_) => return state_json.to_string(),
+    };
+    let old: serde_json::Value = match serde_json::from_str(existing) {
+        Ok(v) => v,
+        Err(_) => return state_json.to_string(),
+    };
+    if let Some(old_vocab) = old.get("vocab").and_then(|x| x.as_object()) {
+        if let Some(obj) = v.as_object_mut() {
+            let vocab = obj
+                .entry("vocab")
+                .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+            if let Some(vobj) = vocab.as_object_mut() {
+                for k in ["srs", "srsEnabled", "snoozeUntil", "lastPopupAt"] {
+                    if let Some(val) = old_vocab.get(k) {
+                        vobj.insert(k.to_string(), val.clone());
+                    }
+                }
+            }
+        }
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| state_json.to_string())
 }
 
 fn state_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -2640,5 +2684,30 @@ mod srs_tests {
         let seed = SrsEntry { reps: 10, ivl: 700, ease: 3.0, due: now, lapses: 0 };
         let e = sm2_next(seed, 5, now);
         assert!(e.ivl <= 730, "interval must be capped, got {}", e.ivl);
+    }
+
+    #[test]
+    fn preserves_rust_vocab_keys_on_save() {
+        // Main-window payload lacks srs/srsEnabled; the on-disk file has them.
+        let payload = r#"{"columns":12,"compartments":[],"vocab":{"enabled":true,"everyMin":30}}"#;
+        let existing = r#"{"columns":12,"compartments":[],"vocab":{"srs":{"a":{"due":5,"ivl":1,"ease":2.5,"reps":1,"lapses":0}},"srsEnabled":true,"snoozeUntil":99}}"#;
+        let merged = preserve_rust_vocab_keys(payload, existing);
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["vocab"]["srs"]["a"]["due"].as_u64(), Some(5));
+        assert_eq!(v["vocab"]["srsEnabled"].as_bool(), Some(true));
+        assert_eq!(v["vocab"]["snoozeUntil"].as_u64(), Some(99));
+        assert_eq!(v["vocab"]["enabled"].as_bool(), Some(true)); // payload's own key kept
+        assert_eq!(v["vocab"]["everyMin"].as_u64(), Some(30));
+    }
+
+    #[test]
+    fn preserve_is_safe_without_existing_or_valid_json() {
+        let payload = r#"{"columns":12,"compartments":[]}"#;
+        // No on-disk file at all.
+        let merged = preserve_rust_vocab_keys(payload, "");
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert!(v["vocab"].is_null(), "no vocab added when there was none");
+        // Garbage existing content must fail open, not corrupt.
+        assert_eq!(preserve_rust_vocab_keys(payload, "not json"), payload);
     }
 }
