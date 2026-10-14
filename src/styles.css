@@ -920,3 +920,8 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .cal-lunar { font-size: 0.58rem; color: var(--muted); line-height: 1.1; white-space: nowrap; }
 .cal-cell.holiday .cal-lunar, .cal-cell.holiday .cal-solar { color: var(--text); }
 .cal-moon { font-size: 0.6rem; }
+
+/* Per-tile decoration controls (Phase 2) */
+.td-grad-fields { display: inline-flex; align-items: center; gap: 6px; }
+.td-grad-fields input[type="number"] { width: 56px; }
+.item-row .td-reset { padding: 2px 7px; }

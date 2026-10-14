@@ -811,6 +811,23 @@ function render() {
     // Per-tile colors (CSS variables consumed by the header/body).
     rec.el.style.setProperty("--tile-header", c.headerColor || "transparent");
     rec.el.style.setProperty("--tile-content", c.contentColor || "transparent");
+    // Per-tile decoration. Only set a variable when the tile defines it, so an
+    // unset one falls back to the global/design token (remset to avoid an empty
+    // value, which would invalidate the declaration instead of using the fallback).
+    const setTileVar = (name, val) => {
+      if (val) rec.el.style.setProperty(name, val);
+      else rec.el.style.removeProperty(name);
+    };
+    setTileVar("--tile-border", c.borderColor || "");
+    setTileVar("--tile-border-w", c.borderWidth != null ? `${c.borderWidth}px` : "");
+    setTileVar("--tile-radius", c.radius != null ? `${c.radius}px` : "");
+    setTileVar("--tile-shadow", c.shadow || "");
+    setTileVar(
+      "--tile-bg",
+      c.bgFrom && c.bgTo
+        ? `linear-gradient(${c.bgAngle != null ? c.bgAngle : 135}deg, ${c.bgFrom}, ${c.bgTo})`
+        : c.tileBg || ""
+    );
 
     // Header — rebuild only when title / collapse / collapsible changed.
     const hs = tileHeaderSig(c);
@@ -2414,6 +2431,98 @@ function appendAppearanceRow(panel, comp) {
     commit();
     renderTabPanel(comp);
   });
+
+  appendDecorationRow(panel, comp);
+}
+
+// Per-tile decoration (Phase 2): border color/width, radius, shadow and a
+// background gradient. Each control writes to the tile object and re-renders so
+// render() pushes the values as per-tile CSS variables.
+function appendDecorationRow(panel, comp) {
+  const commit = () => { saveState(); render(); };
+
+  const bRow = document.createElement("div");
+  bRow.className = "item-row";
+  bRow.innerHTML = `
+    <label>Tile border</label>
+    <input type="color" class="td-border" value="${comp.borderColor || "#2c2c36"}" />
+    <button class="btn ghost td-reset" data-k="borderColor" title="Reset">✕</button>
+    <label>Width <input type="number" class="td-bw" min="0" max="6" step="1" placeholder="1" value="${comp.borderWidth != null ? comp.borderWidth : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="borderWidth" title="Reset">✕</button>`;
+  panel.appendChild(bRow);
+
+  const rRow = document.createElement("div");
+  rRow.className = "item-row";
+  rRow.innerHTML = `
+    <label>Tile radius <input type="number" class="td-radius" min="0" max="40" step="1" placeholder="theme" value="${comp.radius != null ? comp.radius : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="radius" title="Reset">✕</button>
+    <label>Shadow
+      <select class="td-shadow">
+        <option value="">Theme default</option>
+        ${DESIGN_SHADOWS.map(([l, v]) => `<option value="${escapeHtml(v)}" ${comp.shadow === v ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+    </label>
+    <button class="btn ghost td-reset" data-k="shadow" title="Reset">✕</button>`;
+  panel.appendChild(rRow);
+
+  const gradOn = !!(comp.bgFrom && comp.bgTo);
+  const gRow = document.createElement("div");
+  gRow.className = "item-row";
+  gRow.innerHTML = `
+    <label>Tile gradient <input type="checkbox" class="td-grad-on" ${gradOn ? "checked" : ""} /></label>
+    <span class="td-grad-fields" ${gradOn ? "" : "hidden"}>
+      <input type="color" class="td-grad-from" value="${comp.bgFrom || "#1a1a20"}" />
+      <input type="color" class="td-grad-to" value="${comp.bgTo || "#2a1a4a"}" />
+      <input type="number" class="td-grad-angle" min="0" max="360" step="5" value="${comp.bgAngle != null ? comp.bgAngle : 135}" />
+    </span>
+    <button class="btn ghost td-reset" data-k="grad" title="Reset">✕</button>`;
+  panel.appendChild(gRow);
+
+  bRow.querySelector(".td-border").addEventListener("input", (e) => { comp.borderColor = e.target.value; commit(); });
+  bRow.querySelector(".td-bw").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.borderWidth; else comp.borderWidth = Number(v);
+    commit();
+  });
+  rRow.querySelector(".td-radius").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.radius; else comp.radius = Number(v);
+    commit();
+  });
+  rRow.querySelector(".td-shadow").addEventListener("change", (e) => {
+    if (e.target.value) comp.shadow = e.target.value; else delete comp.shadow;
+    commit();
+  });
+  const gradFields = gRow.querySelector(".td-grad-fields");
+  gRow.querySelector(".td-grad-on").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      comp.bgFrom = comp.bgFrom || "#1a1a20";
+      comp.bgTo = comp.bgTo || "#2a1a4a";
+      gradFields.hidden = false;
+    } else {
+      delete comp.bgFrom;
+      delete comp.bgTo;
+      gradFields.hidden = true;
+    }
+    commit();
+  });
+  gRow.querySelector(".td-grad-from").addEventListener("input", (e) => { comp.bgFrom = e.target.value; commit(); });
+  gRow.querySelector(".td-grad-to").addEventListener("input", (e) => { comp.bgTo = e.target.value; commit(); });
+  gRow.querySelector(".td-grad-angle").addEventListener("input", (e) => { comp.bgAngle = Number(e.target.value); commit(); });
+
+  panel.querySelectorAll(".td-reset").forEach((b) =>
+    b.addEventListener("click", () => {
+      const k = b.dataset.k;
+      if (k === "grad") {
+        delete comp.bgFrom; delete comp.bgTo; delete comp.bgAngle;
+      } else {
+        delete comp[k];
+      }
+      saveState();
+      render();
+      renderTabPanel(comp);
+    })
+  );
 }
 
 function renderTabPanel(comp) {
