@@ -12,6 +12,9 @@
 }
 
 * { box-sizing: border-box; }
+/* Form controls don't inherit the page font by default — make them follow the
+   global/per-tile font tokens. */
+button, input, select, textarea { font-family: inherit; }
 
 html, body {
   margin: 0;
@@ -206,7 +209,7 @@ html { font-size: var(--font-size, 16px); }
   border-radius: var(--radius, 10px) var(--radius, 10px) 0 0;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
-.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); position: relative; }
+.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); position: relative; font-size: var(--tile-font-size, inherit); font-weight: var(--tile-font-weight, inherit); }
 .compartment.drag-over,
 .compartment-overlay.drag-over {
   border-color: var(--accent);
@@ -487,7 +490,7 @@ html { font-size: var(--font-size, 16px); }
 .news-feed { margin-bottom: 10px; }
 .news-feed-title {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.85em;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -503,7 +506,7 @@ html { font-size: var(--font-size, 16px); }
   color: var(--text);
   padding: 5px 0;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.82em;
   line-height: 1.3;
   overflow: hidden;
 }

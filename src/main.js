@@ -822,6 +822,8 @@ function render() {
     setTileVar("--tile-border-w", c.borderWidth != null ? `${c.borderWidth}px` : "");
     setTileVar("--tile-radius", c.radius != null ? `${c.radius}px` : "");
     setTileVar("--tile-shadow", c.shadow || "");
+    setTileVar("--tile-font-size", c.fontSize != null ? `${c.fontSize}px` : "");
+    setTileVar("--tile-font-weight", c.fontWeight != null ? String(c.fontWeight) : "");
     setTileVar(
       "--tile-bg",
       c.bgFrom && c.bgTo
@@ -2465,6 +2467,20 @@ function appendDecorationRow(panel, comp) {
     <button class="btn ghost td-reset" data-k="shadow" title="Reset">✕</button>`;
   panel.appendChild(rRow);
 
+  const fRow = document.createElement("div");
+  fRow.className = "item-row";
+  fRow.innerHTML = `
+    <label>Font size <input type="number" class="td-fsize" min="8" max="32" step="1" placeholder="theme" value="${comp.fontSize != null ? comp.fontSize : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="fontSize" title="Reset">✕</button>
+    <label>Weight
+      <select class="td-fweight">
+        <option value="">Theme default</option>
+        ${[["Normal", 400], ["Medium", 500], ["Semi-bold", 600], ["Bold", 700]].map(([l, v]) => `<option value="${v}" ${comp.fontWeight === v ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+    </label>
+    <button class="btn ghost td-reset" data-k="fontWeight" title="Reset">✕</button>`;
+  panel.appendChild(fRow);
+
   const gradOn = !!(comp.bgFrom && comp.bgTo);
   const gRow = document.createElement("div");
   gRow.className = "item-row";
@@ -2491,6 +2507,15 @@ function appendDecorationRow(panel, comp) {
   });
   rRow.querySelector(".td-shadow").addEventListener("change", (e) => {
     if (e.target.value) comp.shadow = e.target.value; else delete comp.shadow;
+    commit();
+  });
+  fRow.querySelector(".td-fsize").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.fontSize; else comp.fontSize = Number(v);
+    commit();
+  });
+  fRow.querySelector(".td-fweight").addEventListener("change", (e) => {
+    if (e.target.value) comp.fontWeight = Number(e.target.value); else delete comp.fontWeight;
     commit();
   });
   const gradFields = gRow.querySelector(".td-grad-fields");
