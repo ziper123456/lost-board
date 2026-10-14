@@ -4,12 +4,15 @@
 <meta charset="UTF-8" />
 <title>Vocab drill</title>
 <style>
+  /* Themed via tokens pushed from the main window (get_popup_theme) so the popup
+     is decorated like the rest of the board; fallbacks keep the default look. */
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #141419;
-    color: #e8e8ee;
+    font-family: var(--font, system-ui, -apple-system, "Segoe UI", sans-serif);
+    font-size: var(--font-size, 16px);
+    background: var(--board-bg, var(--bg, #141419));
+    color: var(--text, #e8e8ee);
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -17,30 +20,31 @@
     user-select: none;
   }
   .prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .prompt-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.6px; color: #8b8b98; }
+  .prompt-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted, #8b8b98); }
   #btn-reveal {
-    background: none; border: none; color: #8b8b98; cursor: pointer;
+    background: none; border: none; color: var(--muted, #8b8b98); cursor: pointer;
     font-size: 1rem; line-height: 1; padding: 2px 4px; border-radius: 6px;
   }
-  #btn-reveal:hover { color: #e8e8ee; background: #23232c; }
+  #btn-reveal:hover { color: var(--text, #e8e8ee); background: var(--panel-2, #23232c); }
   .prompt { font-size: 1.5rem; font-weight: 700; margin: 2px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .answer { display: flex; gap: 8px; align-items: center; }
   .answer input {
     flex: 1; min-width: 0;
-    background: #1e1e26; border: 1px solid #3a3a48; color: #e8e8ee;
-    border-radius: 8px; padding: 8px 10px; font-size: 0.95rem; outline: none;
+    background: var(--panel-2, #1e1e26); border: 1px solid var(--border, #3a3a48); color: var(--text, #e8e8ee);
+    border-radius: var(--radius, 8px); padding: 8px 10px; font-size: 0.95rem; outline: none;
   }
-  .answer input:focus { border-color: #4f8ff7; }
-  .answer input.ok { border-color: #2fae5f; background: #14301f; }
-  .answer input.bad { border-color: #d64949; background: #331616; }
-  .reveal { font-size: 0.85rem; color: #f0c674; min-height: 1.2em; margin-top: 6px; }
+  .answer input:focus { border-color: var(--accent, #4f8ff7); }
+  .answer input.ok { border-color: var(--green, #2fae5f); background: rgba(47, 174, 95, 0.16); }
+  .answer input.bad { border-color: var(--red, #d64949); background: rgba(214, 73, 73, 0.16); }
+  .reveal { font-size: 0.85rem; color: var(--amber, #f0c674); min-height: 1.2em; margin-top: 6px; }
   .row { display: flex; gap: 8px; margin-top: auto; padding-top: 10px; }
   .row button {
-    flex: 1; background: #23232c; color: #cfcfda; border: 1px solid #3a3a48;
-    border-radius: 8px; padding: 7px 0; font-size: 0.8rem; cursor: pointer;
+    flex: 1; background: var(--panel-2, #23232c); color: var(--text, #cfcfda); border: 1px solid var(--border, #3a3a48);
+    border-radius: var(--radius, 8px); padding: 7px 0; font-size: 0.8rem; cursor: pointer;
   }
-  .row button:hover { background: #2c2c38; }
-  .error { font-size: 0.78rem; color: #d64949; margin-top: 6px; }
+  .row button:hover { border-color: var(--accent, #4c4c5a); }
+  .error { font-size: 0.78rem; color: var(--red, #d64949); margin-top: 6px; }
+  .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -51,6 +55,7 @@
   <div class="prompt" id="prompt">…</div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
+  <div class="drill-progress" id="progress"></div>
   <div class="row">
     <button id="btn-dismiss">Dismiss</button>
     <button id="btn-snooze" title="No popups for 30 minutes">Snooze 30 min</button>
@@ -70,6 +75,16 @@
 
   let targets = [];   // accepted answers in order
   let attempts = 0;
+  let answered = false;   // grade recorded already?
+  let gradeable = false;  // only grade cards that were actually due
+  let cardId = "";
+
+  // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
+  function record(grade) {
+    if (answered || !gradeable || !cardId) return;
+    answered = true;
+    invoke("vocab_record_review", { cardId, grade }).catch(() => {});
+  }
 
   function checkBoth() {
     // "both" mode: two inputs must both match (mirrors vocab-app Both mode).
@@ -82,6 +97,7 @@
     if (done) {
       inputEl.classList.remove("bad");
       inputEl.classList.add("ok");
+      record(attempts === 0 ? "good" : "hard");
       setTimeout(close, 1500);
       return;
     }
@@ -91,17 +107,44 @@
   function revealNow() {
     revealEl.textContent = "Answer: " + targets.join(" / ");
     document.querySelectorAll(".answer input").forEach((i) => i.classList.add("bad"));
+    record("again");
   }
 
   async function boot() {
+    // Pull the board's theme tokens so the popup is decorated like the tiles.
+    try {
+      const themeCss = await invoke("get_popup_theme");
+      if (themeCss) {
+        const s = document.createElement("style");
+        s.textContent = themeCss;
+        document.head.appendChild(s);
+      }
+    } catch { /* keep the fallback look */ }
     try {
       const cfg = await invoke("vocab_popup_config").catch(() => ({ lang: "es", cats: [] }));
       const lang = cfg.lang || "es";
       const cats = Array.isArray(cfg.cats) ? cfg.cats : [];
-      const cards = await invoke("read_vocab_cards", { count: 1, categories: cats });
-      const card = cards[0];
+      const dueRes = await invoke("vocab_due_card", { categories: cats });
+      if (!dueRes || !dueRes.card) {
+        errorEl.textContent = "No cards available — clear the category filter in Settings > Vocab.";
+        return;
+      }
+      const card = dueRes.card;
+      cardId = card.id;
+      gradeable = dueRes.due === true; // only grade cards that were due
       promptEl.textContent = card.en;
       promptEl.title = card.en;
+      // Show review progress in the popup itself.
+      try {
+        const [due, stats] = await Promise.all([
+          invoke("vocab_due_count", { categories: cats }),
+          invoke("vocab_srs_stats", { categories: cats }),
+        ]);
+        const progEl = document.getElementById("progress");
+        if (progEl && stats) {
+          progEl.textContent = `Due today: ${due} · ${stats.seen}/${stats.total} seen`;
+        }
+      } catch { /* progress is optional */ }
       if (lang === "both") {
         labelEl.textContent = "Translate to Spanish + German";
         const wrap = document.querySelector(".answer");

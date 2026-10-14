@@ -1691,6 +1691,15 @@ pub fn run() {
             autostart_enabled,
             read_vocab_cards,
             vocab_categories,
+            vocab_due_card,
+            vocab_record_review,
+            vocab_due_count,
+            vocab_reset_srs,
+            vocab_set_srs,
+            vocab_srs_enabled,
+            vocab_srs_stats,
+            set_popup_theme,
+            get_popup_theme,
             vocab_popup_config,
             open_vocab_popup,
             close_vocab_popup,
@@ -1965,6 +1974,239 @@ fn write_vocab_keys(app: &tauri::AppHandle, keys: &[(&str, serde_json::Value)]) 
     }
     fs::write(&path, serde_json::to_string(&v).map_err(|e| format!("serialize: {e}"))?)
         .map_err(|e| format!("Failed to save vocab state: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Spaced repetition (SM-2) for the vocab drill. Per-card state lives in the
+// state file under `vocab.srs` (keyed by card id) so both the drill window and
+// the tile read one source of truth. Design follows the spaced-repetition
+// methodology: expanding intervals, honest grading (reveal = fail), and an
+// interval cap to guard SM-2's "interval explosion".
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct SrsEntry {
+    #[serde(default)]
+    due: u64, // unix seconds; 0 = never reviewed (due immediately)
+    #[serde(default)]
+    ivl: i64, // interval in days
+    #[serde(default)]
+    ease: f64, // 0 = unset (defaults to 2.5)
+    #[serde(default)]
+    reps: u32,
+    #[serde(default)]
+    lapses: u32,
+}
+
+#[derive(serde::Serialize)]
+struct DueCard {
+    card: VocabCard,
+    due: bool,
+}
+
+fn srs_map(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    read_vocab_section(app)
+        .get("srs")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn srs_enabled(app: &tauri::AppHandle) -> bool {
+    read_vocab_section(app)
+        .get("srsEnabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+fn get_srs(map: &serde_json::Map<String, serde_json::Value>, id: &str) -> SrsEntry {
+    map.get(id)
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Deserialize the whole SRS map once (avoids a JSON parse per card in the
+/// due/stats scans).
+fn parse_srs(map: &serde_json::Map<String, serde_json::Value>) -> std::collections::HashMap<String, SrsEntry> {
+    map.iter()
+        .filter_map(|(k, v)| serde_json::from_value::<SrsEntry>(v.clone()).ok().map(|e| (k.clone(), e)))
+        .collect()
+}
+
+fn write_srs_entry(app: &tauri::AppHandle, id: &str, entry: &SrsEntry) -> Result<(), String> {
+    let mut map = srs_map(app);
+    map.insert(
+        id.to_string(),
+        serde_json::to_value(entry).map_err(|e| format!("serialize srs: {e}"))?,
+    );
+    write_vocab_keys(app, &[("srs", serde_json::Value::Object(map))])
+}
+
+/// Canonical SM-2: quality 0–5; <3 fails (relearn soon), else expanding interval
+/// by an ease factor. Capped at 730 days so ease never explodes the interval.
+fn sm2_next(mut e: SrsEntry, quality: u32, now: u64) -> SrsEntry {
+    let q = quality.min(5);
+    if e.ease < 1.3 {
+        e.ease = 2.5;
+    }
+    if q < 3 {
+        e.lapses += 1;
+        e.reps = 0;
+        e.ivl = 0;
+        e.ease = (e.ease - 0.2).max(1.3);
+        e.due = now + 10 * 60; // relearn in ~10 minutes
+    } else {
+        e.reps += 1;
+        e.ivl = if e.reps == 1 {
+            1
+        } else if e.reps == 2 {
+            6
+        } else {
+            ((e.ivl.max(1) as f64) * e.ease).round() as i64
+        };
+        e.ivl = e.ivl.min(730);
+        e.ease = (e.ease + (0.1 - (5 - q) as f64 * (0.08 + (5 - q) as f64 * 0.02))).clamp(1.3, 3.0);
+        e.due = now + (e.ivl as u64) * 86_400;
+    }
+    e
+}
+
+fn vocab_matching<'a>(all: &'a [VocabCard], categories: &[String]) -> Vec<&'a VocabCard> {
+    all.iter()
+        .filter(|c| categories.is_empty() || c.cats.iter().any(|x| categories.contains(x)))
+        .collect()
+}
+
+/// One card for the drill: a due card (graded) when any are due, otherwise a
+/// random card flagged `due:false` for passive exposure (never graded — the
+/// methodology says don't pre-empt the schedule).
+#[tauri::command]
+fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>) -> Result<Option<DueCard>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let matching = vocab_matching(all, &categories);
+    if matching.is_empty() {
+        return Ok(None);
+    }
+    use rand::seq::SliceRandom;
+    let now = now_secs();
+    if srs_enabled(&app) {
+        let typed = parse_srs(&srs_map(&app));
+        let mut due: Vec<&VocabCard> = matching
+            .iter()
+            .copied()
+            .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
+            .collect();
+        if !due.is_empty() {
+            due.shuffle(&mut rand::thread_rng());
+            return Ok(Some(DueCard { card: due[0].clone(), due: true }));
+        }
+    }
+    let mut m = matching.clone();
+    m.shuffle(&mut rand::thread_rng());
+    Ok(Some(DueCard { card: m[0].clone(), due: false }))
+}
+
+/// Record a graded review. `grade` is again | hard | good | easy.
+#[tauri::command]
+fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) -> Result<(), String> {
+    let q = match grade.as_str() {
+        "again" => 2,
+        "hard" => 3,
+        "good" => 4,
+        "easy" => 5,
+        _ => 4,
+    };
+    let map = srs_map(&app);
+    let next = sm2_next(get_srs(&map, &card_id), q, now_secs());
+    write_srs_entry(&app, &card_id, &next)
+}
+
+/// How many cards are due right now (for the tile badge). 0 when SRS is off.
+#[tauri::command]
+fn vocab_due_count(app: tauri::AppHandle, categories: Vec<String>) -> Result<usize, String> {
+    if !srs_enabled(&app) {
+        return Ok(0);
+    }
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let now = now_secs();
+    let typed = parse_srs(&srs_map(&app));
+    Ok(vocab_matching(all, &categories)
+        .iter()
+        .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
+        .count())
+}
+
+/// Clear all review history.
+#[tauri::command]
+fn vocab_reset_srs(app: tauri::AppHandle) -> Result<(), String> {
+    write_vocab_keys(&app, &[("srs", serde_json::Value::Object(serde_json::Map::new()))])
+}
+
+/// Toggle spaced repetition on/off.
+#[tauri::command]
+fn vocab_set_srs(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    write_vocab_keys(&app, &[("srsEnabled", serde_json::Value::from(enabled))])
+}
+
+/// Whether spaced repetition is currently enabled.
+#[tauri::command]
+fn vocab_srs_enabled(app: tauri::AppHandle) -> bool {
+    srs_enabled(&app)
+}
+
+#[derive(serde::Serialize)]
+struct SrsStats {
+    total: usize,
+    due: usize,
+    seen: usize,
+    new: usize,
+}
+
+/// Review progress for the settings tab: total / due now / seen / never-reviewed.
+#[tauri::command]
+fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<SrsStats, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let matching = vocab_matching(all, &categories);
+    let now = now_secs();
+    let typed = parse_srs(&srs_map(&app));
+    let mut due = 0;
+    let mut seen = 0;
+    let mut new = 0;
+    for c in &matching {
+        match typed.get(&c.id) {
+            Some(e) => {
+                seen += 1;
+                if e.due <= now {
+                    due += 1;
+                }
+            }
+            None => {
+                new += 1;
+                due += 1;
+            }
+        }
+    }
+    Ok(SrsStats {
+        total: matching.len(),
+        due,
+        seen,
+        new,
+    })
+}
+
+// The drill is a separate window with its own stylesheet, so it can't read the
+// main window's CSS variables. The main window pushes its computed theme tokens
+// here (a `:root{...}` string) and the popup pulls them on load, so the popup is
+// decorated like the rest of the board.
+static POPUP_THEME: StdMutex<String> = StdMutex::new(String::new());
+
+#[tauri::command]
+fn set_popup_theme(css: String) {
+    *POPUP_THEME.lock().unwrap() = css;
+}
+
+#[tauri::command]
+fn get_popup_theme() -> String {
+    POPUP_THEME.lock().unwrap().clone()
 }
 
 /// Drill language + category filter, stored at open time so drill.html needs
@@ -2297,8 +2539,41 @@ fn save_state(app: tauri::AppHandle, state_json: String) -> Result<(), String> {
     let parent = path.parent().ok_or("Dashboard state has no parent directory")?;
     fs::create_dir_all(parent)
         .map_err(|e| format!("Failed to create app-data directory: {e}"))?;
-    fs::write(&path, state_json)
-        .map_err(|e| format!("Failed to save dashboard state: {e}"))
+    // Preserve Rust-managed `vocab` keys (see `preserve_rust_vocab_keys`).
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let merged = preserve_rust_vocab_keys(&state_json, &existing);
+    fs::write(&path, merged).map_err(|e| format!("Failed to save dashboard state: {e}"))
+}
+
+/// Merge Rust-managed `vocab` keys from the on-disk state into an incoming
+/// full-state payload. SRS progress and popup timing are written by the drill
+/// window and are not tracked by the main window's in-memory state, so a
+/// full-state save must not regress them. Returns the payload unchanged when
+/// either side can't be parsed.
+fn preserve_rust_vocab_keys(state_json: &str, existing: &str) -> String {
+    let mut v: serde_json::Value = match serde_json::from_str(state_json) {
+        Ok(v) => v,
+        Err(_) => return state_json.to_string(),
+    };
+    let old: serde_json::Value = match serde_json::from_str(existing) {
+        Ok(v) => v,
+        Err(_) => return state_json.to_string(),
+    };
+    if let Some(old_vocab) = old.get("vocab").and_then(|x| x.as_object()) {
+        if let Some(obj) = v.as_object_mut() {
+            let vocab = obj
+                .entry("vocab")
+                .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+            if let Some(vobj) = vocab.as_object_mut() {
+                for k in ["srs", "srsEnabled", "snoozeUntil", "lastPopupAt"] {
+                    if let Some(val) = old_vocab.get(k) {
+                        vobj.insert(k.to_string(), val.clone());
+                    }
+                }
+            }
+        }
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| state_json.to_string())
 }
 
 fn state_file_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -2368,4 +2643,71 @@ async fn import_config(app: tauri::AppHandle) -> Result<Option<String>, String> 
     fs::write(&path, &text)
         .map_err(|e| format!("Failed to save imported configuration: {e}"))?;
     Ok(Some(text))
+}
+
+#[cfg(test)]
+mod srs_tests {
+    use super::*;
+
+    #[test]
+    fn sm2_new_card_expands_intervals() {
+        let now = 1_000_000u64;
+        let e1 = sm2_next(SrsEntry::default(), 4, now);
+        assert_eq!(e1.reps, 1);
+        assert_eq!(e1.ivl, 1);
+        assert_eq!(e1.due, now + 86_400);
+
+        let e2 = sm2_next(e1, 4, now);
+        assert_eq!(e2.reps, 2);
+        assert_eq!(e2.ivl, 6);
+
+        let e3 = sm2_next(e2, 4, now);
+        assert!(e3.ivl > 6, "interval must expand past 6 days, got {}", e3.ivl);
+        assert!(e3.due > now);
+    }
+
+    #[test]
+    fn sm2_fail_relearns_soon_and_lowers_ease() {
+        let now = 1_000_000u64;
+        let seed = SrsEntry { reps: 3, ivl: 30, ease: 2.5, due: now, lapses: 0 };
+        let e = sm2_next(seed, 2, now);
+        assert_eq!(e.reps, 0);
+        assert_eq!(e.ivl, 0);
+        assert_eq!(e.lapses, 1);
+        assert_eq!(e.due, now + 600);
+        assert!(e.ease < 2.5);
+    }
+
+    #[test]
+    fn sm2_interval_is_capped() {
+        let now = 1_000_000u64;
+        let seed = SrsEntry { reps: 10, ivl: 700, ease: 3.0, due: now, lapses: 0 };
+        let e = sm2_next(seed, 5, now);
+        assert!(e.ivl <= 730, "interval must be capped, got {}", e.ivl);
+    }
+
+    #[test]
+    fn preserves_rust_vocab_keys_on_save() {
+        // Main-window payload lacks srs/srsEnabled; the on-disk file has them.
+        let payload = r#"{"columns":12,"compartments":[],"vocab":{"enabled":true,"everyMin":30}}"#;
+        let existing = r#"{"columns":12,"compartments":[],"vocab":{"srs":{"a":{"due":5,"ivl":1,"ease":2.5,"reps":1,"lapses":0}},"srsEnabled":true,"snoozeUntil":99}}"#;
+        let merged = preserve_rust_vocab_keys(payload, existing);
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["vocab"]["srs"]["a"]["due"].as_u64(), Some(5));
+        assert_eq!(v["vocab"]["srsEnabled"].as_bool(), Some(true));
+        assert_eq!(v["vocab"]["snoozeUntil"].as_u64(), Some(99));
+        assert_eq!(v["vocab"]["enabled"].as_bool(), Some(true)); // payload's own key kept
+        assert_eq!(v["vocab"]["everyMin"].as_u64(), Some(30));
+    }
+
+    #[test]
+    fn preserve_is_safe_without_existing_or_valid_json() {
+        let payload = r#"{"columns":12,"compartments":[]}"#;
+        // No on-disk file at all.
+        let merged = preserve_rust_vocab_keys(payload, "");
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert!(v["vocab"].is_null(), "no vocab added when there was none");
+        // Garbage existing content must fail open, not corrupt.
+        assert_eq!(preserve_rust_vocab_keys(payload, "not json"), payload);
+    }
 }

@@ -116,6 +116,24 @@ function applyAppearance() {
     "--board-bg",
     d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
   );
+  // Push the computed tokens to the drill popup (separate window, own stylesheet).
+  if (window.__TAURI__) {
+    const popupCss =
+      ":root{" +
+      `--bg:${v("bg", t.bg)};` +
+      `--panel:${v("panel", t.panel)};` +
+      `--panel-2:${v("panel2", t.panel2)};` +
+      `--border:${v("borderColor", t.border)};` +
+      `--text:${v("text", t.text)};` +
+      `--muted:${v("muted", t.muted)};` +
+      `--accent:${v("accent", t.accent)};` +
+      `--radius:${radiusGlobal}px;` +
+      `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
+      `--font-size:${v("fontBase", 16)}px;` +
+      `--board-bg:${d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"};` +
+      "}";
+    void native.setPopupTheme(popupCss).catch(() => {});
+  }
 }
 
 // Set of collapsed tiles currently showing their floating body overlay.
@@ -300,6 +318,31 @@ async openFolder(path) {
   async vocabCategories() {
     if (window.__TAURI__) return invoke("vocab_categories");
     return [];
+  },
+  async vocabDueCard(categories) {
+    if (window.__TAURI__) return invoke("vocab_due_card", { categories: categories || [] });
+    return null;
+  },
+  async vocabDueCount(categories) {
+    if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [] });
+    return 0;
+  },
+  async vocabResetSrs() {
+    if (window.__TAURI__) return invoke("vocab_reset_srs");
+  },
+  async vocabSetSrs(enabled) {
+    if (window.__TAURI__) return invoke("vocab_set_srs", { enabled });
+  },
+  async vocabSrsEnabled() {
+    if (window.__TAURI__) return invoke("vocab_srs_enabled");
+    return false;
+  },
+  async vocabSrsStats(categories) {
+    if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [] });
+    return null;
+  },
+  async setPopupTheme(css) {
+    if (window.__TAURI__) return invoke("set_popup_theme", { css });
   },
   async vocabTick() {
     if (window.__TAURI__) return invoke("vocab_tick");
@@ -1194,6 +1237,12 @@ async function renderVocabBody(c, body) {
   } catch {
     cards = [];
   }
+  let due = 0;
+  try {
+    due = await native.vocabDueCount([]);
+  } catch {
+    due = 0;
+  }
   if (!body.isConnected) return;
   if (speakOn) vocabSpeakingBodies.add(body);
   else vocabSpeakingBodies.delete(body);
@@ -1202,6 +1251,7 @@ async function renderVocabBody(c, body) {
     return;
   }
   body.innerHTML = `
+    ${due > 0 ? `<div class="vocab-due muted" title="Cards due for review">Due today: ${due}</div>` : ""}
     <div class="vocab-card">
       <div class="vocab-en"></div>
       <div class="vocab-other"></div>
@@ -4018,6 +4068,60 @@ function renderVocabSettings() {
       renderVocabSettings();
     } catch (e) {
       statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+
+  // Spaced repetition: schedule reviews instead of random order (SM-2).
+  const srsHead = document.createElement("h3");
+  srsHead.textContent = "Spaced repetition";
+  panel.appendChild(srsHead);
+  const srsRow = document.createElement("div");
+  srsRow.className = "item-row";
+  srsRow.innerHTML = `
+    <label>Smart scheduling <input type="checkbox" id="vocab-srs" title="Review cards on an expanding schedule (SM-2)" /></label>
+    <button class="btn ghost" id="vocab-srs-reset">Reset progress</button>
+    <span id="vocab-srs-status" class="muted"></span>`;
+  panel.appendChild(srsRow);
+  const srsProg = document.createElement("div");
+  srsProg.className = "item-row";
+  srsProg.innerHTML = `<span class="muted" id="vocab-srs-progress">…</span>`;
+  panel.appendChild(srsProg);
+  const progEl = srsProg.querySelector("#vocab-srs-progress");
+  const loadStats = () =>
+    native
+      .vocabSrsStats(v.drillCats || [])
+      .then((s) => {
+        if (!s) {
+          progEl.textContent = "";
+          return;
+        }
+        progEl.textContent = `Progress: ${s.seen}/${s.total} seen · ${s.due} due now · ${s.new} new`;
+      })
+      .catch(() => {
+        progEl.textContent = "";
+      });
+  loadStats();
+  const srsChk = srsRow.querySelector("#vocab-srs");
+  const srsStatus = srsRow.querySelector("#vocab-srs-status");
+  native.vocabSrsEnabled().then((on) => { srsChk.checked = on === true; }).catch(() => {});
+  srsChk.addEventListener("change", async (e) => {
+    try {
+      await native.vocabSetSrs(e.target.checked);
+      render();
+    } catch (err) {
+      srsStatus.textContent = `failed: ${err.message || err}`;
+      srsChk.checked = !e.target.checked;
+    }
+  });
+  srsRow.querySelector("#vocab-srs-reset").addEventListener("click", async () => {
+    srsStatus.textContent = "resetting…";
+    try {
+      await native.vocabResetSrs();
+      srsStatus.textContent = "progress cleared";
+      loadStats();
+      render();
+    } catch (err) {
+      srsStatus.textContent = `failed: ${err.message || err}`;
     }
   });
 }
