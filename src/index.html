@@ -53,6 +53,7 @@
           <button class="tab" data-tab="projects">Projects</button>
           <button class="tab" data-tab="vocab">Vocab</button>
           <button class="tab" data-tab="meme">Memes</button>
+          <button class="tab" data-tab="calendar">Calendar</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="config">Config</button>
         </nav>
@@ -128,6 +129,7 @@
                   <option value="project">Projects</option>
                   <option value="vocab">Vocab</option>
                   <option value="meme">Memes</option>
+                  <option value="calendar">Calendar</option>
                   <option value="spotify">Spotify</option>
                   <option value="system">System</option>
                 </select>
@@ -183,6 +185,10 @@
             <p>Meme tile rotates templates + your collection. Expand any tile for the big view: browse, caption, search, export.</p>
             <div id="meme-list"></div>
           </div>
+          <div class="tab-panel" data-panel="calendar">
+            <p>Calendar tile with the Vietnamese lunar calendar (âm lịch), moon phases, and public-holiday highlights.</p>
+            <div id="calendar-list"></div>
+          </div>
           <div class="tab-panel" data-panel="config">
             <p>Move this dashboard to another machine: export a file here, import it there. API keys and tokens stay in each machine's own secret store and are never exported.</p>
             <div id="config-list"></div>
@@ -191,6 +197,8 @@
       </div>
     </section>
 
+    <script src="lunar.js"></script>
+    <script src="holidays.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

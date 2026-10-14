@@ -884,3 +884,36 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .confirm-popup { padding: 12px; }
 .confirm-msg { font-size: 0.85rem; color: var(--text); margin-bottom: 12px; max-width: 260px; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Calendar tile (Vietnamese lunar calendar + moon phase + holidays) */
+.compartment-body:has(.cal-root) { padding: 8px 10px; overflow: hidden; }
+.cal-root { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.cal-head { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.cal-title { flex: 1; text-align: center; font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-head .btn.icon-btn { padding: 2px 7px; font-size: 1rem; line-height: 1; }
+.cal-today { font-size: 0.72rem; padding: 2px 8px; flex: 0 0 auto; }
+.cal-today-line { font-size: 0.72rem; color: var(--muted); margin: 4px 0 8px; text-align: center; flex: 0 0 auto; }
+.cal-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 2px; flex: 0 0 auto; }
+.cal-wd { font-size: 0.62rem; color: var(--muted); text-align: center; text-transform: uppercase; letter-spacing: 0.2px; white-space: nowrap; overflow: hidden; }
+.cal-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: 1fr; gap: 2px; }
+.cal-cell {
+  position: relative;
+  min-height: 26px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  overflow: hidden;
+}
+.cal-cell.dim { opacity: 0.32; }
+.cal-cell.today { border-color: var(--accent); background: rgba(124, 58, 237, 0.18); }
+.cal-cell.holiday { background: rgba(239, 68, 68, 0.16); }
+.cal-cell.holiday.today { background: rgba(124, 58, 237, 0.22); }
+.cal-solar { font-size: 0.82rem; font-weight: 600; line-height: 1; }
+.cal-lunar { font-size: 0.58rem; color: var(--muted); line-height: 1.1; white-space: nowrap; }
+.cal-cell.holiday .cal-lunar, .cal-cell.holiday .cal-solar { color: var(--text); }
+.cal-moon { font-size: 0.6rem; }

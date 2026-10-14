@@ -704,7 +704,7 @@ function openTileMenu(clientX, clientY, compId) {
 function openGridMenu(clientX, clientY) {
   const order = [
     ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
-    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["vocab", "Vocab"], ["meme", "Memes"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
     ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
     ["system", "System"],
   ];
@@ -977,6 +977,8 @@ async function renderCompartmentBody(c, body) {
     renderVocabBody(c, body);
   } else if (c.kind === "meme") {
     renderMemeBody(c, body);
+  } else if (c.kind === "calendar") {
+    renderCalendarBody(c, body);
   } else {
     body.innerHTML = `<div class="muted">${escapeHtml(c.kind)} compartment (scaffold).</div>`;
   }
@@ -2171,6 +2173,7 @@ function activateTab(tabName) {
   if (tabName === "config") renderConfigSettings();
   if (tabName === "vocab") renderVocabSettings();
   if (tabName === "meme") renderMemeSettings();
+  if (tabName === "calendar") renderCalendarSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -2188,6 +2191,7 @@ const KIND_TAB = {
   project: "projects",
   vocab: "vocab",
   meme: "meme",
+  calendar: "calendar",
 };
 
 function openTileSettings(id) {
@@ -2206,6 +2210,7 @@ function openTileSettings(id) {
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
+  if (comp.kind === "calendar") selectedCalendarId = id;
   activateTab(tab);
   settingsEl.classList.remove("hidden");
 }
@@ -2392,6 +2397,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "project") renderProjectsSettings();
   if (comp.kind === "vocab") renderVocabSettings();
   if (comp.kind === "meme") renderMemeSettings();
+  if (comp.kind === "calendar") renderCalendarSettings();
 }
 
 function ensureLauncher() {
@@ -4466,6 +4472,178 @@ async function exportMemePng(imgSrc, top, bottom) {
   return btoa(bin);
 }
 
+// ---------------------------------------------------------------------------
+// Calendar tile: month grid with the Vietnamese lunar calendar (âm lịch),
+// moon phases and public-holiday highlights. Weekday/month labels are shown
+// bilingual (ES/DE); holiday names stay native with ES/DE translations in the
+// hover tooltip. Lunar maths lives in src/lunar.js; holidays in src/holidays.js.
+// ---------------------------------------------------------------------------
+const CAL_MONTHS = [
+  ["Enero", "Januar"], ["Febrero", "Februar"], ["Marzo", "März"], ["Abril", "April"],
+  ["Mayo", "Mai"], ["Junio", "Juni"], ["Julio", "Juli"], ["Agosto", "August"],
+  ["Septiembre", "September"], ["Octubre", "Oktober"], ["Noviembre", "November"], ["Diciembre", "Dezember"],
+];
+const CAL_DAYS_MON = [["Lun", "Mon"], ["Mar", "Die"], ["Mié", "Mit"], ["Jue", "Don"], ["Vie", "Fre"], ["Sáb", "Sam"], ["Dom", "Son"]];
+const CAL_DAYS_SUN = [["Dom", "Son"], ["Lun", "Mon"], ["Mar", "Die"], ["Mié", "Mit"], ["Jue", "Don"], ["Vie", "Fre"], ["Sáb", "Sam"]];
+const CAL_TZ = 7; // Vietnamese lunar reference (UTC+7)
+
+function calendarOpts(c) {
+  const d = c.data || (c.data = {});
+  if (!d.weekStart) d.weekStart = "mon";
+  if (d.moonPhase === undefined) d.moonPhase = true;
+  d.holidays = d.holidays || {};
+  for (const k of ["vietnam", "germany", "pakistan"]) {
+    if (d.holidays[k] === undefined) d.holidays[k] = false;
+  }
+  return d;
+}
+
+function renderCalendarBody(c, body) {
+  if (!window.Lunar || !window.Holidays) {
+    body.innerHTML = `<div class="muted">Calendar engine unavailable.</div>`;
+    return;
+  }
+  const opts = calendarOpts(c);
+  const dayNames = opts.weekStart === "sun" ? CAL_DAYS_SUN : CAL_DAYS_MON;
+  let viewY = new Date().getFullYear();
+  let viewM = new Date().getMonth();
+
+  const paint = () => {
+    if (!body.isConnected) return;
+    const today = new Date(); // recomputed each paint so midnight rollover works
+    const first = new Date(viewY, viewM, 1);
+    const startIdx = (first.getDay() + (opts.weekStart === "sun" ? 0 : 6)) % 7;
+    const gridStart = new Date(viewY, viewM, 1 - startIdx);
+    const daysInMonth = new Date(viewY, viewM + 1, 0).getDate();
+    const rows = Math.ceil((startIdx + daysInMonth) / 7);
+    const total = rows * 7;
+    const gridEnd = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + total - 1);
+    const hol = window.Holidays.forRange(gridStart, gridEnd, opts.holidays);
+    const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+
+    let cells = "";
+    for (let i = 0; i < total; i++) {
+      const dt = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+      const inMonth = dt.getMonth() === viewM;
+      const key = `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
+      const [ld, lm, , leap] = window.Lunar.fromDate(dt, CAL_TZ);
+      const moon = opts.moonPhase ? window.Lunar.moonPhase(ld) : null;
+      const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      const hs = hol.get(iso) || [];
+      const tips = hs.map((h) => {
+        const tr = [];
+        if (h.es) tr.push(h.es);
+        if (h.de && h.de !== h.name) tr.push(h.de);
+        return tr.length ? `${h.name} — ${tr.join(" / ")}` : h.name;
+      });
+      const lunarLabel = ld === 1 ? `${ld}/${lm}${leap ? "n" : ""}` : `${ld}`;
+      const cls = `cal-cell${inMonth ? "" : " dim"}${key === todayKey ? " today" : ""}${hs.length ? " holiday" : ""}`;
+      cells += `<div class="${cls}"${tips.length ? ` title="${escapeHtml(tips.join(" · "))}"` : ""}>` +
+        `<span class="cal-solar">${dt.getDate()}</span>` +
+        `<span class="cal-lunar">${lunarLabel}${moon ? ` <span class="cal-moon">${moon.emoji}</span>` : ""}</span></div>`;
+    }
+
+    const [tld, tlm] = window.Lunar.fromDate(today, CAL_TZ);
+    const tphase = window.Lunar.moonPhase(tld);
+    body.innerHTML = `
+      <div class="cal-root">
+        <div class="cal-head">
+          <button class="btn ghost icon-btn cal-prev" title="Previous month">‹</button>
+          <span class="cal-title">${CAL_MONTHS[viewM][0]}/${CAL_MONTHS[viewM][1]} ${viewY}</span>
+          <button class="btn ghost icon-btn cal-next" title="Next month">›</button>
+          <button class="btn ghost cal-today">Hoy/Heute</button>
+        </div>
+        <div class="cal-today-line">${tphase.emoji} ${tld}/${tlm} · ${escapeHtml(tphase.es)} / ${escapeHtml(tphase.de)}</div>
+        <div class="cal-week">${dayNames.map(([es, de]) => `<span class="cal-wd">${es}/${de}</span>`).join("")}</div>
+        <div class="cal-grid">${cells}</div>
+      </div>
+    `;
+    body.querySelector(".cal-prev").addEventListener("click", () => { viewM--; if (viewM < 0) { viewM = 11; viewY--; } paint(); });
+    body.querySelector(".cal-next").addEventListener("click", () => { viewM++; if (viewM > 11) { viewM = 0; viewY++; } paint(); });
+    body.querySelector(".cal-today").addEventListener("click", () => { const n = new Date(); viewY = n.getFullYear(); viewM = n.getMonth(); paint(); });
+  };
+  paint();
+
+  // Move the "today" highlight at midnight (once a minute is plenty). Repaint in
+  // place — a full render() wouldn't rebuild this tile (its body signature is
+  // unchanged when only the date moves).
+  let startDay = new Date().toDateString();
+  const t = setInterval(() => {
+    const k = new Date().toDateString();
+    if (k !== startDay) {
+      startDay = k;
+      paint();
+    }
+  }, 60000);
+  addTimer(body, t);
+}
+
+let selectedCalendarId = null;
+function findCalendarComp() {
+  return state.compartments.find((c) => c.id === selectedCalendarId && c.kind === "calendar")
+    ?? state.compartments.find((c) => c.kind === "calendar")
+    ?? null;
+}
+function renderCalendarSettings() {
+  const panel = document.getElementById("calendar-list");
+  if (!panel) return;
+  const comp = findCalendarComp();
+  const comps = state.compartments.filter((c) => c.kind === "calendar");
+
+  panel.innerHTML = "";
+  if (!comp) {
+    const hint = document.createElement("div");
+    hint.className = "item-row";
+    hint.innerHTML = `<span class="muted">No Calendar tile yet — add one from Grid &gt; Add a tile.</span>`;
+    panel.appendChild(hint);
+    return;
+  }
+  const opts = calendarOpts(comp);
+
+  const selectorRow = document.createElement("div");
+  selectorRow.className = "item-row";
+  selectorRow.innerHTML = `
+    <label>Tile</label>
+    <select id="calendar-select">
+      ${comps.map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`).join("")}
+    </select>`;
+  panel.appendChild(selectorRow);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const optRow = document.createElement("div");
+  optRow.className = "item-row";
+  optRow.innerHTML = `
+    <label>Week starts
+      <select id="cal-week">
+        <option value="mon" ${opts.weekStart === "mon" ? "selected" : ""}>Monday</option>
+        <option value="sun" ${opts.weekStart === "sun" ? "selected" : ""}>Sunday</option>
+      </select>
+    </label>
+    <label>Moon phase <input type="checkbox" id="cal-moon" ${opts.moonPhase ? "checked" : ""} /></label>`;
+  panel.appendChild(optRow);
+
+  const holHead = document.createElement("div");
+  holHead.className = "item-row";
+  holHead.innerHTML = `<label>Holidays</label><span class="muted">highlight public holidays (hover a day for names)</span>`;
+  panel.appendChild(holHead);
+  const holRow = document.createElement("div");
+  holRow.className = "item-row";
+  holRow.innerHTML = `
+    <label>Vietnam <input type="checkbox" class="cal-hol" data-c="vietnam" ${opts.holidays.vietnam ? "checked" : ""} /></label>
+    <label>Germany (Rheinland-Pfalz) <input type="checkbox" class="cal-hol" data-c="germany" ${opts.holidays.germany ? "checked" : ""} /></label>
+    <label>Pakistan <input type="checkbox" class="cal-hol" data-c="pakistan" ${opts.holidays.pakistan ? "checked" : ""} /></label>`;
+  panel.appendChild(holRow);
+
+  const commit = () => { saveState(); render(); renderCalendarSettings(); };
+  panel.querySelector("#calendar-select").addEventListener("change", (e) => { selectedCalendarId = e.target.value; renderCalendarSettings(); });
+  panel.querySelector("#cal-week").addEventListener("change", (e) => { comp.data.weekStart = e.target.value; commit(); });
+  panel.querySelector("#cal-moon").addEventListener("change", (e) => { comp.data.moonPhase = e.target.checked; commit(); });
+  holRow.querySelectorAll(".cal-hol").forEach((b) =>
+    b.addEventListener("change", (e) => { comp.data.holidays[e.target.dataset.c] = e.target.checked; commit(); })
+  );
+}
+
 const KIND_DEFAULTS = {
   launcher: { title: "Folders & Files", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
@@ -4478,6 +4656,7 @@ const KIND_DEFAULTS = {
   spotify: { title: "Spotify", data: {} },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
+  calendar: { title: "Calendar", data: {} },
   project: { title: "Projects", data: { roots: [] } },
 };
 
