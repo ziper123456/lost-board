@@ -928,3 +928,51 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .td-grad-fields { display: inline-flex; align-items: center; gap: 6px; }
 .td-grad-fields input[type="number"] { width: 56px; }
 .item-row .td-reset { padding: 2px 7px; }
+
+/* Tile font scaling: these tile-content text sizes are expressed relative to the
+   tile body (em) so a per-tile font size (--tile-font-size) scales them. The
+   values mirror the originals, so with no per-tile size they render identically. */
+.launcher-open { font-size: 0.9em; }
+.launcher-path { font-size: 0.75em; }
+.bmk-name { font-size: 0.85em; }
+.bmk-host { font-size: 0.72em; }
+.favicon-letter { font-size: 0.72em; }
+.azure-name { font-size: 0.85em; }
+.wea-name { font-size: 0.92em; }
+.wea-clock { font-size: 1.05em; }
+.wea-temp { font-size: 2.6em; }
+.wea-desc { font-size: 0.8em; }
+.spot-title { font-size: 0.95em; }
+.spot-artist { font-size: 0.8em; }
+.spot-album { font-size: 0.72em; }
+.spot-queue-title { font-size: 0.72em; }
+.spot-queue-item { font-size: 0.75em; }
+.prj-note { font-size: 0.8em; }
+.prj-root { font-size: 0.8em; }
+.prj-name { font-size: 0.82em; }
+.vocab-en { font-size: 1.35em; }
+.vocab-other { font-size: 0.82em; }
+.cal-title { font-size: 0.9em; }
+.cal-today-line { font-size: 0.72em; }
+.cal-wd { font-size: 0.62em; }
+.cal-solar { font-size: 0.82em; }
+.cal-lunar { font-size: 0.58em; }
+.cal-moon { font-size: 0.6em; }
+
+/* Colour input: compact rounded swatch, no full-width stretch, no white border. */
+.item-row input[type="color"],
+input[type="color"] {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-2);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+input[type="color"]:hover { border-color: var(--accent); }
