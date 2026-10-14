@@ -27,6 +27,8 @@ const ICON = {
   file: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5.5z"/><path d="M9 1.5v4h4"/><circle cx="8" cy="10.5" r="1.2"/></svg>`,
   volumeOn: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6z"/><path d="M10 5.5a3.5 3.5 0 0 1 0 5M11.8 3.7a6 6 0 0 1 0 8.6"/></svg>`,
   volumeOff: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6z"/><path d="M10.5 6.5l3 3M13.5 6.5l-3 3"/></svg>`,
+  copy: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>`,
+  plus: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>`,
 };
 
 // ---------------------------------------------------------------------------
@@ -420,28 +422,94 @@ function buildHeaderHtml(c) {
         ${collapsible ? `<button class="btn ghost icon-btn collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${ICON.collapse(collapsed)}</button>` : ""}
         <button class="btn ghost icon-btn preview-tile" data-id="${c.id}" title="Preview">${ICON.preview}</button>
         <button class="btn ghost icon-btn settings-tile" data-id="${c.id}" title="Settings">${ICON.settings}</button>
-        <button class="btn ghost icon-btn rename" data-id="${c.id}" title="Rename">${ICON.rename}</button>
-        <button class="btn ghost icon-btn remove" data-id="${c.id}" title="Remove">${ICON.remove}</button>
       </div>
     </div>
     <div class="compartment-body" data-id="${c.id}"></div>
     <div class="resize-handle" title="Resize"></div>
   `;
 }
+// --- Tile actions --------------------------------------------------------
+// Shared by the header buttons and the right-click context menu, so both
+// paths always behave identically.
+
+function toggleTileCollapse(c) {
+  if (c.collapsed === true) {
+    if (openTiles.has(c.id)) openTiles.delete(c.id);
+    else openTiles.add(c.id);
+    render();
+  } else {
+    c.collapsed = true;
+    openTiles.delete(c.id);
+    saveState();
+    render();
+  }
+}
+
+function startTileRename(c, el) {
+  const span = el.querySelector(".comp-title");
+  if (!span) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "comp-title-input";
+  input.value = c.title;
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const restore = (title) => {
+    const s = document.createElement("span");
+    s.className = "comp-title";
+    s.textContent = title;
+    input.replaceWith(s);
+  };
+  const commit = () => {
+    const val = input.value.trim();
+    if (val && val !== c.title) {
+      c.title = val;
+      saveState();
+    }
+    // Restore the span locally (header won't be rebuilt if title is unchanged).
+    if (input.isConnected) restore(c.title);
+    render();
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") commit();
+    if (ev.key === "Escape") {
+      if (input.isConnected) restore(c.title);
+      render();
+    }
+  });
+  input.addEventListener("blur", commit);
+}
+
+function removeTile(c) {
+  showConfirmPopup(`Are you sure you want to delete "${c.title}" tile?`, {
+    onConfirm: () => {
+      state.compartments = state.compartments.filter((x) => x.id !== c.id);
+      openTiles.delete(c.id);
+      saveState();
+      render();
+    },
+  });
+}
+
+function duplicateTile(c) {
+  const copy = JSON.parse(JSON.stringify(c));
+  copy.id = "c" + Date.now();
+  copy.title = `${c.title} copy`;
+  copy.x = Math.min(c.x + 1, Math.max(0, state.columns - c.w));
+  copy.y = c.y + 1;
+  state.compartments.push(copy);
+  saveState();
+  render();
+  gridEl.querySelector(`.compartment[data-id="${copy.id}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
 function wireHeader(rec, c) {
   const el = rec.el;
   el.querySelector(".collapse")?.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (c.collapsed === true) {
-      if (openTiles.has(c.id)) openTiles.delete(c.id);
-      else openTiles.add(c.id);
-      render();
-    } else {
-      c.collapsed = true;
-      openTiles.delete(c.id);
-      saveState();
-      render();
-    }
+    toggleTileCollapse(c);
   });
   el.querySelector(".preview-tile").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -451,50 +519,156 @@ function wireHeader(rec, c) {
     e.stopPropagation();
     openTileSettings(c.id);
   });
-  el.querySelector(".rename").addEventListener("click", (e) => {
-    e.stopPropagation();
-    const span = el.querySelector(".comp-title");
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "comp-title-input";
-    input.value = c.title;
-    span.replaceWith(input);
-    input.focus();
-    input.select();
-
-    const restore = (title) => {
-      const s = document.createElement("span");
-      s.className = "comp-title";
-      s.textContent = title;
-      input.replaceWith(s);
-    };
-    const commit = () => {
-      const val = input.value.trim();
-      if (val && val !== c.title) {
-        c.title = val;
-        saveState();
-      }
-      // Restore the span locally (header won't be rebuilt if title is unchanged).
-      if (input.isConnected) restore(c.title);
-      render();
-    };
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") commit();
-      if (ev.key === "Escape") {
-        if (input.isConnected) restore(c.title);
-        render();
-      }
-    });
-    input.addEventListener("blur", commit);
-  });
-  el.querySelector(".remove").addEventListener("click", (e) => {
-    e.stopPropagation();
-    state.compartments = state.compartments.filter((x) => x.id !== c.id);
-    openTiles.delete(c.id);
-    saveState();
-    render();
-  });
 }
+
+// --- Right-click context menu --------------------------------------------
+// One floating menu reused for tiles (actions) and the empty grid (add tile).
+let ctxMenuEl = null;
+let ctxMenuPos = null; // last opened position, so a confirm lands in place
+
+function closeCtxMenu() {
+  if (ctxMenuEl) {
+    ctxMenuEl.remove();
+    ctxMenuEl = null;
+  }
+}
+
+// Place a floating popup at (x, y), clamped so it never spills off-screen.
+function positionCtxMenu(el, x, y) {
+  const r = el.getBoundingClientRect();
+  const px = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+  const py = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+  el.style.left = `${px}px`;
+  el.style.top = `${py}px`;
+}
+
+function showCtxMenu(items, clientX, clientY) {
+  closeCtxMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.setAttribute("role", "menu");
+  for (const it of items) {
+    if (it.heading) {
+      const h = document.createElement("div");
+      h.className = "ctx-heading";
+      h.textContent = it.heading;
+      menu.appendChild(h);
+      continue;
+    }
+    if (it.divider) {
+      const d = document.createElement("div");
+      d.className = "ctx-divider";
+      menu.appendChild(d);
+      continue;
+    }
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ctx-item" + (it.danger ? " danger" : "");
+    b.setAttribute("role", "menuitem");
+    b.innerHTML = `<span class="ctx-icon">${it.icon || ""}</span><span class="ctx-label">${escapeHtml(it.label)}</span>`;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeCtxMenu();
+      it.action();
+    });
+    menu.appendChild(b);
+  }
+  document.body.appendChild(menu);
+  positionCtxMenu(menu, clientX, clientY);
+  ctxMenuEl = menu;
+  ctxMenuPos = { x: clientX, y: clientY };
+}
+
+// Small in-app confirmation (replaces window.confirm). Styled like the context
+// menu, positioned where it was opened, focused on Cancel so a stray Enter is
+// safe. Confirm runs onConfirm; Cancel / outside-click / Escape dismiss.
+function showConfirmPopup(message, { x, y, confirmLabel = "Remove", onConfirm } = {}) {
+  closeCtxMenu();
+  const pop = document.createElement("div");
+  pop.className = "ctx-menu confirm-popup";
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-modal", "true");
+  const msg = document.createElement("div");
+  msg.className = "confirm-msg";
+  msg.textContent = message;
+  const actions = document.createElement("div");
+  actions.className = "confirm-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn ghost";
+  cancel.textContent = "Cancel";
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = "btn danger";
+  confirm.textContent = confirmLabel;
+  actions.append(cancel, confirm);
+  pop.append(msg, actions);
+  document.body.appendChild(pop);
+  const px = x ?? ctxMenuPos?.x ?? window.innerWidth / 2;
+  const py = y ?? ctxMenuPos?.y ?? window.innerHeight / 2;
+  positionCtxMenu(pop, px, py);
+  ctxMenuEl = pop;
+  cancel.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeCtxMenu();
+  });
+  confirm.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeCtxMenu();
+    onConfirm?.();
+  });
+  cancel.focus();
+}
+
+function openTileMenu(clientX, clientY, compId) {
+  const c = state.compartments.find((x) => x.id === compId);
+  if (!c) return;
+  const el = tileEls.get(c.id)?.el;
+  const collapsed = c.collapsed === true;
+  const items = [];
+  if (c.collapsible !== false) {
+    items.push({
+      label: collapsed ? "Open" : "Collapse",
+      icon: ICON.collapse(collapsed),
+      action: () => toggleTileCollapse(c),
+    });
+  }
+  items.push(
+    { label: "Preview", icon: ICON.preview, action: () => openPreview(c.id) },
+    { label: "Settings", icon: ICON.settings, action: () => openTileSettings(c.id) },
+    { label: "Rename", icon: ICON.rename, action: () => { if (el) startTileRename(c, el); } },
+    { label: "Duplicate", icon: ICON.copy, action: () => duplicateTile(c) },
+    { divider: true },
+    { label: "Remove", icon: ICON.remove, danger: true, action: () => removeTile(c) }
+  );
+  showCtxMenu(items, clientX, clientY);
+}
+
+// Add-tile items, one per kind (mirrors the Settings > Grid add control).
+function openGridMenu(clientX, clientY) {
+  const order = [
+    ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["vocab", "Vocab"], ["meme", "Memes"],
+    ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
+    ["system", "System"],
+  ];
+  const items = [{ heading: "Add a tile" }];
+  for (const [kind, label] of order) {
+    items.push({ label, icon: ICON.plus, action: () => addTile(kind) });
+  }
+  showCtxMenu(items, clientX, clientY);
+}
+
+// Global dismissal for the context menu.
+document.addEventListener("mousedown", (e) => {
+  if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeCtxMenu();
+});
+window.addEventListener("blur", closeCtxMenu);
+window.addEventListener("resize", closeCtxMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeCtxMenu();
+});
+
 
 // Live tile elements by compartment id, so re-renders reuse them instead of
 // rebuilding the whole board.
@@ -502,6 +676,7 @@ const tileEls = new Map();
 const overlayEls = new Map();
 
 function render() {
+  closeCtxMenu(); // a re-render invalidates any open context menu
   // Unscaled grid size; a CSS transform scales it visually, and the scaler is
   // sized to the scaled dimensions so the dashboard scrolls correctly.
   const w = dashboard.clientWidth;
@@ -4233,14 +4408,15 @@ const KIND_DEFAULTS = {
   project: { title: "Projects", data: { roots: [] } },
 };
 
-document.getElementById("btn-add-compartment").addEventListener("click", () => {
-  const kind = document.getElementById("add-kind").value || "launcher";
+// Create a tile of the given kind. `title` overrides the default name; used by
+// the Settings "Add a tile" control and the grid right-click menu.
+function addTile(kind, title) {
   const d = KIND_DEFAULTS[kind] || KIND_DEFAULTS.launcher;
   const y = state.compartments.reduce((m, c) => Math.max(m, c.y + c.h), 0);
   const comp = {
     id: "c" + Date.now(),
     kind,
-    title: (document.getElementById("add-title").value || "").trim() || d.title,
+    title: (title || "").trim() || d.title,
     x: 0,
     y,
     w: 4,
@@ -4249,12 +4425,18 @@ document.getElementById("btn-add-compartment").addEventListener("click", () => {
   };
   state.compartments.push(comp);
   if (kind === "launcher") selectedLauncherId = comp.id;
-  document.getElementById("add-title").value = "";
   saveState();
   render();
   // New tiles are placed at the bottom of a tall grid; scroll it into view so
   // the user actually sees what they added.
   gridEl.querySelector(`.compartment[data-id="${comp.id}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+document.getElementById("btn-add-compartment").addEventListener("click", () => {
+  const kind = document.getElementById("add-kind").value || "launcher";
+  const title = document.getElementById("add-title").value;
+  document.getElementById("add-title").value = "";
+  addTile(kind, title);
 });
 
 document.getElementById("set-cols").addEventListener("change", (e) => {
@@ -4317,6 +4499,7 @@ document.getElementById("zoom-level").addEventListener("change", (e) => {
 let gesture = null;
 
 dashboard.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return; // only left button drags/resizes; right = context menu
   const handle = e.target.closest(".resize-handle");
   const header = e.target.closest(".compartment-header");
   // Don't start a drag when pressing any header button (rename, settings,
@@ -4328,6 +4511,19 @@ dashboard.addEventListener("mousedown", (e) => {
   if (!item) return;
   e.preventDefault();
   gesture = { mode: handle ? "resize" : "drag", item, comp, startX: e.clientX, startY: e.clientY };
+});
+
+// Right-click: tile menu on a tile (or its collapsed overlay), add-tile menu
+// on empty grid space. Text fields keep their native (cut/copy/paste) menu.
+dashboard.addEventListener("contextmenu", (e) => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  const tile = e.target.closest(".compartment, .compartment-overlay");
+  e.preventDefault();
+  if (tile && tile.dataset.id) {
+    openTileMenu(e.clientX, e.clientY, tile.dataset.id);
+  } else {
+    openGridMenu(e.clientX, e.clientY);
+  }
 });
 
 dashboard.addEventListener("mousemove", (e) => {
