@@ -29,6 +29,7 @@ const ICON = {
   volumeOff: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6v4h2.5L8 13V3L4.5 6z"/><path d="M10.5 6.5l3 3M13.5 6.5l-3 3"/></svg>`,
   copy: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>`,
   plus: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>`,
+  panel: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12"/></svg>`,
 };
 
 // ---------------------------------------------------------------------------
@@ -394,6 +395,7 @@ function tileHeaderSig(c) {
     t: c.title,
     c: c.collapsed === true,
     col: c.collapsible !== false,
+    hl: c.hideHeader === true,
     icon: c.icon ? `${c.icon.type}:${c.icon.value}` : "",
     ic: c.iconColor || "",
     hc: c.headerColor || "",
@@ -403,18 +405,28 @@ function tileHeaderSig(c) {
 function tileBodySig(c) {
   return JSON.stringify({ k: c.kind, d: c.data || {} });
 }
+function tileIconHtml(c) {
+  if (!c.icon) return "";
+  if (c.icon.type === "file" && c.icon.value) {
+    return c.iconColor
+      ? `<span class="tile-icon"><span class="tile-icon-mask" style="background-color:${escapeHtml(c.iconColor)};-webkit-mask-image:url('${escapeHtml(c.icon.value)}');mask-image:url('${escapeHtml(c.icon.value)}')"></span></span>`
+      : `<span class="tile-icon"><img src="${escapeHtml(c.icon.value)}" alt="" /></span>`;
+  }
+  if (c.icon.type === "text" && c.icon.value) {
+    return `<span class="tile-icon">${escapeHtml(c.icon.value)}</span>`;
+  }
+  return "";
+}
 function buildHeaderHtml(c) {
   const collapsed = c.collapsed === true;
   const collapsible = c.collapsible !== false;
-  const icon = c.icon
-    ? c.icon.type === "file" && c.icon.value
-      ? c.iconColor
-        ? `<span class="tile-icon"><span class="tile-icon-mask" style="background-color:${escapeHtml(c.iconColor)};-webkit-mask-image:url('${escapeHtml(c.icon.value)}');mask-image:url('${escapeHtml(c.icon.value)}')"></span></span>`
-        : `<span class="tile-icon"><img src="${escapeHtml(c.icon.value)}" alt="" /></span>`
-      : c.icon.type === "text" && c.icon.value
-        ? `<span class="tile-icon">${escapeHtml(c.icon.value)}</span>`
-        : ""
-    : "";
+  // Bare mode: header hidden on an open tile so the body fills it entirely.
+  const bare = c.hideHeader === true && !collapsed;
+  const icon = tileIconHtml(c);
+  if (bare) {
+    // No header, no resize handle: the body owns the whole tile.
+    return `<div class="compartment-body" data-id="${c.id}"></div>`;
+  }
   return `
     <div class="compartment-header">
       <span class="comp-title-wrap">${icon}<span class="comp-title">${escapeHtml(c.title)}</span></span>
@@ -432,6 +444,14 @@ function buildHeaderHtml(c) {
 // Shared by the header buttons and the right-click context menu, so both
 // paths always behave identically.
 
+// Hide/show the header on an open tile. When hidden the body fills the tile
+// and move/resize are unavailable (no header/handle) until toggled back.
+function toggleHideHeader(c) {
+  c.hideHeader = !c.hideHeader;
+  saveState();
+  render();
+}
+
 function toggleTileCollapse(c) {
   if (c.collapsed === true) {
     if (openTiles.has(c.id)) openTiles.delete(c.id);
@@ -447,39 +467,73 @@ function toggleTileCollapse(c) {
 
 function startTileRename(c, el) {
   const span = el.querySelector(".comp-title");
-  if (!span) return;
+  if (span) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "comp-title-input";
+    input.value = c.title;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const restore = (title) => {
+      const s = document.createElement("span");
+      s.className = "comp-title";
+      s.textContent = title;
+      input.replaceWith(s);
+    };
+    const commit = () => {
+      const val = input.value.trim();
+      if (val && val !== c.title) {
+        c.title = val;
+        saveState();
+      }
+      // Restore the span locally (header won't be rebuilt if title is unchanged).
+      if (input.isConnected) restore(c.title);
+      render();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") commit();
+      if (ev.key === "Escape") {
+        if (input.isConnected) restore(c.title);
+        render();
+      }
+    });
+    input.addEventListener("blur", commit);
+    return;
+  }
+
+  // Bare tile (header hidden): show a transient overlay header to rename, then
+  // hide it again on Enter / click-outside (Escape cancels).
+  const overlay = document.createElement("div");
+  overlay.className = "compartment-header compartment-header-overlay";
+  overlay.innerHTML = `<span class="comp-title-wrap">${tileIconHtml(c)}</span>`;
   const input = document.createElement("input");
   input.type = "text";
   input.className = "comp-title-input";
   input.value = c.title;
-  span.replaceWith(input);
+  overlay.querySelector(".comp-title-wrap").appendChild(input);
+  el.appendChild(overlay);
   input.focus();
   input.select();
 
-  const restore = (title) => {
-    const s = document.createElement("span");
-    s.className = "comp-title";
-    s.textContent = title;
-    input.replaceWith(s);
-  };
-  const commit = () => {
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
     const val = input.value.trim();
-    if (val && val !== c.title) {
+    if (save && val && val !== c.title) {
       c.title = val;
       saveState();
     }
-    // Restore the span locally (header won't be rebuilt if title is unchanged).
-    if (input.isConnected) restore(c.title);
+    overlay.remove();
     render();
   };
   input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") commit();
-    if (ev.key === "Escape") {
-      if (input.isConnected) restore(c.title);
-      render();
-    }
+    if (ev.key === "Enter") finish(true);
+    else if (ev.key === "Escape") finish(false);
   });
-  input.addEventListener("blur", commit);
+  input.addEventListener("blur", () => finish(true));
 }
 
 function removeTile(c) {
@@ -511,11 +565,12 @@ function wireHeader(rec, c) {
     e.stopPropagation();
     toggleTileCollapse(c);
   });
-  el.querySelector(".preview-tile").addEventListener("click", (e) => {
+  // Header actions are absent in bare mode (hidden header) — chain them.
+  el.querySelector(".preview-tile")?.addEventListener("click", (e) => {
     e.stopPropagation();
     openPreview(c.id);
   });
-  el.querySelector(".settings-tile").addEventListener("click", (e) => {
+  el.querySelector(".settings-tile")?.addEventListener("click", (e) => {
     e.stopPropagation();
     openTileSettings(c.id);
   });
@@ -634,6 +689,7 @@ function openTileMenu(clientX, clientY, compId) {
     });
   }
   items.push(
+    { label: c.hideHeader ? "Show header" : "Hide header", icon: ICON.panel, action: () => toggleHideHeader(c) },
     { label: "Preview", icon: ICON.preview, action: () => openPreview(c.id) },
     { label: "Settings", icon: ICON.settings, action: () => openTileSettings(c.id) },
     { label: "Rename", icon: ICON.rename, action: () => { if (el) startTileRename(c, el); } },
@@ -719,6 +775,7 @@ function render() {
     // Cheap, always-updated geometry.
     applyBox(rec.el, c);
     rec.el.classList.toggle("collapsed", collapsed);
+    rec.el.classList.toggle("headerless", c.hideHeader === true && !collapsed);
     if (collapsed) rec.el.style.height = `${ROW_H - GUTTER}px`;
     // Per-tile colors (CSS variables consumed by the header/body).
     rec.el.style.setProperty("--tile-header", c.headerColor || "transparent");
@@ -2172,6 +2229,9 @@ function appendCollapsibleRow(panel, comp) {
   row.innerHTML = `
     <label>Collapsible
       <input type="checkbox" class="collapsible" ${comp.collapsible !== false ? "checked" : ""} />
+    </label>
+    <label>Hide header
+      <input type="checkbox" class="hide-header" ${comp.hideHeader ? "checked" : ""} />
     </label>`;
   row.querySelector(".collapsible").addEventListener("change", (e) => {
     comp.collapsible = e.target.checked;
@@ -2179,6 +2239,12 @@ function appendCollapsibleRow(panel, comp) {
     // Turning collapsible OFF on a currently-collapsed tile would leave it as a
     // header-only bar with no button to expand it — so force it expanded.
     if (!comp.collapsible && comp.collapsed) comp.collapsed = false;
+    saveState();
+    render();
+    renderTabPanel(comp);
+  });
+  row.querySelector(".hide-header").addEventListener("change", (e) => {
+    comp.hideHeader = e.target.checked;
     saveState();
     render();
     renderTabPanel(comp);
@@ -4516,6 +4582,8 @@ dashboard.addEventListener("mousedown", (e) => {
   if (!comp) return;
   const item = state.compartments.find((c) => c.id === comp.dataset.id);
   if (!item) return;
+  // Bare (header-hidden) tiles can't be dragged or resized.
+  if (item.hideHeader === true && item.collapsed !== true) return;
   e.preventDefault();
   gesture = { mode: handle ? "resize" : "drag", item, comp, startX: e.clientX, startY: e.clientY };
 });
