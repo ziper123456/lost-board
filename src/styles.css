@@ -375,14 +375,83 @@ html, body {
 .azure-links { display: flex; gap: 4px; }
 .azure-links .btn { padding: 2px 8px; font-size: 0.72rem; }
 
-/* Weather + world clock */
+/* Weather + world clock — country-themed card. The surface stays transparent
+   so the per-tile content color (--tile-content) shows through; only the sky
+   art and text sit on top, so each country keeps its identity. */
+.compartment-body:has(.wea-card) { padding: 0; }
+.wea-card {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.02) 55%, transparent);
+}
+.wea-sky { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.wea-sun {
+  position: absolute;
+  top: 24%;
+  right: 9%;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 40%, #fff3b0, #fcbb04 70%);
+  box-shadow: 0 0 22px rgba(252, 187, 4, 0.55);
+  animation: wea-sunshine 3.4s ease-in-out infinite;
+}
+@keyframes wea-sunshine {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.14); opacity: 1; }
+}
+.wea-cloud {
+  position: absolute;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+}
+.wea-cloud::before,
+.wea-cloud::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  background: inherit;
+  border-radius: 50%;
+}
+.wea-cloud-front {
+  top: 36%;
+  left: 6%;
+  width: 82px;
+  animation: wea-drift 9s ease-in-out infinite;
+}
+.wea-cloud-front::before { left: 12px; width: 32px; height: 32px; }
+.wea-cloud-front::after { right: 12px; width: 24px; height: 24px; }
+.wea-cloud-back {
+  top: 17%;
+  left: 44%;
+  width: 60px;
+  height: 16px;
+  opacity: 0.7;
+  animation: wea-drift 13s ease-in-out infinite;
+}
+.wea-cloud-back::before { left: 10px; width: 26px; height: 26px; }
+.wea-cloud-back::after { right: 8px; width: 18px; height: 18px; }
+@keyframes wea-drift {
+  0%, 100% { transform: translateX(8px); }
+  50% { transform: translateX(-8px); }
+}
 .wea-head {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
-.wea-name { font-weight: 600; font-size: 0.9rem; }
+.wea-name { font-weight: 600; font-size: 0.92rem; }
 .wea-clock {
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 1.05rem;
@@ -390,8 +459,16 @@ html, body {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
-.wea-temp { font-size: 2rem; font-weight: 700; line-height: 1; margin: 6px 0 2px; }
-.wea-desc { color: var(--muted); font-size: 0.8rem; }
+.wea-temp {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  font-size: 2.6rem;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+.wea-desc { position: relative; z-index: 1; color: var(--text); opacity: 0.8; font-size: 0.8rem; margin-top: 2px; }
 .wea-err { color: var(--red); }
 
 /* News / RSS */

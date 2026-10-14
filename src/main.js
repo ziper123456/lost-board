@@ -1847,12 +1847,19 @@ function renderWeatherBody(c, body) {
         timeZone: w.tz,
       });
     body.innerHTML = `
-      <div class="wea-head">
-        <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
-        <span class="wea-clock" data-clock>${clock()}</span>
+      <div class="wea-card">
+        <div class="wea-sky">
+          <span class="wea-sun"></span>
+          <span class="wea-cloud wea-cloud-back"></span>
+          <span class="wea-cloud wea-cloud-front"></span>
+        </div>
+        <div class="wea-head">
+          <span class="wea-name">${escapeHtml(loc.name || "Weather")}</span>
+          <span class="wea-clock" data-clock>${clock()}</span>
+        </div>
+        <div class="wea-temp">${Math.round(w.temp)}°</div>
+        <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
       </div>
-      <div class="wea-temp">${Math.round(w.temp)}°</div>
-      <div class="wea-desc">${wmoLabel(w.code)} · wind ${Math.round(w.wind)} km/h</div>
     `;
     const clockEl = body.querySelector("[data-clock]");
     if (clockEl) {
