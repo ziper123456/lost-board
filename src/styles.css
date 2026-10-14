@@ -18,9 +18,10 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font, "Segoe UI", system-ui, sans-serif);
   overflow: hidden;
 }
+html { font-size: var(--font-size, 16px); }
 
 /* Floating settings button (bottom-left). */
 .settings-fab {
@@ -117,9 +118,10 @@ html, body {
 
 /* Compartment tiles */
 .compartment {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 10px);
+  background: var(--tile-bg, var(--panel));
+  border: var(--tile-border-w, 1px) solid var(--tile-border, var(--border));
+  border-radius: var(--tile-radius, var(--radius, 10px));
+  box-shadow: var(--tile-shadow, none);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -661,20 +663,20 @@ html, body {
 * { scrollbar-width: thin; scrollbar-color: var(--panel-2) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 5px; border: 2px solid var(--bg); }
+*::-webkit-scrollbar-thumb { background: var(--scroll-thumb, var(--panel-2)); border-radius: 5px; border: 2px solid var(--bg); }
 *::-webkit-scrollbar-thumb:hover { background: var(--border); }
 
 /* Buttons */
 .btn {
   padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text);
+  border-radius: var(--btn-radius, 6px);
+  border: 1px solid var(--btn-border, var(--border));
+  background: var(--btn-bg, var(--panel-2));
+  color: var(--btn-text, var(--text));
   cursor: pointer;
   font-size: 0.85rem;
 }
-.btn:hover { background: var(--border); }
+.btn:not(.primary):not(.danger):hover { background: var(--btn-hover-bg, var(--panel-2)); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.ghost { background: transparent; }
 .btn.danger { background: transparent; border-color: var(--red); color: var(--red); }
@@ -754,6 +756,7 @@ html, body {
   gap: 8px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
+  background: var(--row-bg, transparent);
 }
 .item-row input { flex: 1; }
 .item-row .btn { flex: 0 0 auto; }
@@ -767,10 +770,10 @@ html, body {
 .add-tile h3 { margin: 0 0 8px; font-size: 0.95rem; }
 
 input[type="text"], input[type="number"], input[type="password"], select {
-  background: var(--panel-2);
+  background: var(--input-bg, var(--panel-2));
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--input-radius, 6px);
   padding: 6px 8px;
   font-size: 0.85rem;
 }
