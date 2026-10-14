@@ -66,18 +66,56 @@ const THEMES = {
   gruvbox: { bg: "#282828", panel: "#3c3836", panel2: "#504945", border: "#665c54", text: "#ebdbb2", muted: "#a89984", accent: "#fabd2f" },
 };
 
-// Apply theme palette, corner radius and wall pattern to the document.
+// Apply the theme palette, then layer the optional design-token overrides on
+// top, plus the corner radius and background gradient. All tokens are written
+// to :root as CSS variables; styles.css consumes them with fallbacks, so an
+// unset token always resolves to the theme default.
 function applyAppearance() {
   const t = THEMES[state.theme] || THEMES.dark;
+  const d = state.design || {};
+  const v = (k, fb) => (d[k] !== undefined && d[k] !== null && d[k] !== "" ? d[k] : fb);
+  const px = (k, fb) => `${v(k, fb)}px`;
   const root = document.documentElement.style;
-  root.setProperty("--bg", t.bg);
-  root.setProperty("--panel", t.panel);
-  root.setProperty("--panel-2", t.panel2);
-  root.setProperty("--border", t.border);
-  root.setProperty("--text", t.text);
-  root.setProperty("--muted", t.muted);
-  root.setProperty("--accent", t.accent);
-  root.setProperty("--radius", `${state.cornerRadius != null ? state.cornerRadius : 10}px`);
+  root.setProperty("--bg", v("bg", t.bg));
+  root.setProperty("--panel", v("panel", t.panel));
+  root.setProperty("--panel-2", v("panel2", t.panel2));
+  root.setProperty("--border", v("borderColor", t.border));
+  root.setProperty("--text", v("text", t.text));
+  root.setProperty("--muted", v("muted", t.muted));
+  root.setProperty("--accent", v("accent", t.accent));
+  root.setProperty("--green", v("green", "#22c55e"));
+  root.setProperty("--red", v("red", "#ef4444"));
+  root.setProperty("--amber", v("amber", "#f59e0b"));
+  const radiusGlobal = v("radiusGlobal", state.cornerRadius != null ? state.cornerRadius : 10);
+  root.setProperty("--radius", `${radiusGlobal}px`);
+  root.setProperty("--btn-radius", px("radiusButton", 6));
+  root.setProperty("--input-radius", px("radiusInput", 6));
+  root.setProperty("--tile-radius", px("radiusTile", radiusGlobal));
+  root.setProperty("--btn-bg", v("btnBg", "var(--panel-2)"));
+  root.setProperty("--btn-text", v("btnText", "var(--text)"));
+  root.setProperty("--btn-border", v("btnBorder", "var(--border)"));
+  root.setProperty("--btn-hover-bg", v("btnHoverBg", "var(--border)"));
+  root.setProperty("--row-bg", v("rowBg", "transparent"));
+  root.setProperty("--input-bg", v("inputBg", "var(--panel-2)"));
+  root.setProperty("--tile-bg", v("tileBg", "var(--panel)"));
+  root.setProperty("--tile-border", v("tileBorderColor", "var(--border)"));
+  root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
+  root.setProperty("--tile-shadow", v("tileShadow", "none"));
+  root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
+  root.setProperty("--font-size", px("fontBase", 16));
+  root.setProperty("--scroll-thumb", v("scrollThumb", "var(--panel-2)"));
+  // Heading weight / transition are only set when overridden, so their per-element
+  // CSS fallbacks preserve the current look until the user changes them.
+  if (d.headingWeight != null) root.setProperty("--heading-weight", String(d.headingWeight));
+  else root.removeProperty("--heading-weight");
+  if (d.transitionMs != null) root.setProperty("--transition", `${d.transitionMs}ms`);
+  else root.removeProperty("--transition");
+  // Board background: a gradient token consumed by html/body + .dashboard,
+  // falling back to the flat --bg colour.
+  root.setProperty(
+    "--board-bg",
+    d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
+  );
 }
 
 // Set of collapsed tiles currently showing their floating body overlay.
@@ -780,6 +818,25 @@ function render() {
     // Per-tile colors (CSS variables consumed by the header/body).
     rec.el.style.setProperty("--tile-header", c.headerColor || "transparent");
     rec.el.style.setProperty("--tile-content", c.contentColor || "transparent");
+    // Per-tile decoration. Only set a variable when the tile defines it, so an
+    // unset one falls back to the global/design token (remset to avoid an empty
+    // value, which would invalidate the declaration instead of using the fallback).
+    const setTileVar = (name, val) => {
+      if (val) rec.el.style.setProperty(name, val);
+      else rec.el.style.removeProperty(name);
+    };
+    setTileVar("--tile-border", c.borderColor || "");
+    setTileVar("--tile-border-w", c.borderWidth != null ? `${c.borderWidth}px` : "");
+    setTileVar("--tile-radius", c.radius != null ? `${c.radius}px` : "");
+    setTileVar("--tile-shadow", c.shadow || "");
+    setTileVar("--tile-font-size", c.fontSize != null ? `${c.fontSize}px` : "");
+    setTileVar("--tile-font-weight", c.fontWeight != null ? String(c.fontWeight) : "");
+    setTileVar(
+      "--tile-bg",
+      c.bgFrom && c.bgTo
+        ? `linear-gradient(${c.bgAngle != null ? c.bgAngle : 135}deg, ${c.bgFrom}, ${c.bgTo})`
+        : c.tileBg || ""
+    );
 
     // Header — rebuild only when title / collapse / collapsible changed.
     const hs = tileHeaderSig(c);
@@ -2174,6 +2231,7 @@ function activateTab(tabName) {
   if (tabName === "vocab") renderVocabSettings();
   if (tabName === "meme") renderMemeSettings();
   if (tabName === "calendar") renderCalendarSettings();
+  if (tabName === "design") renderDesignSettings();
 }
 
 // Map a compartment kind to its dedicated Settings tab (used by the per-tile
@@ -2382,6 +2440,121 @@ function appendAppearanceRow(panel, comp) {
     commit();
     renderTabPanel(comp);
   });
+
+  appendDecorationRow(panel, comp);
+}
+
+// Per-tile decoration (Phase 2): border color/width, radius, shadow and a
+// background gradient. Each control writes to the tile object and re-renders so
+// render() pushes the values as per-tile CSS variables.
+function appendDecorationRow(panel, comp) {
+  const commit = () => { saveState(); render(); };
+
+  const bRow = document.createElement("div");
+  bRow.className = "item-row";
+  bRow.innerHTML = `
+    <label>Tile border</label>
+    <input type="color" class="td-border" value="${comp.borderColor || "#2c2c36"}" />
+    <button class="btn ghost td-reset" data-k="borderColor" title="Reset">✕</button>
+    <label>Width <input type="number" class="td-bw" min="0" max="6" step="1" placeholder="1" value="${comp.borderWidth != null ? comp.borderWidth : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="borderWidth" title="Reset">✕</button>`;
+  panel.appendChild(bRow);
+
+  const rRow = document.createElement("div");
+  rRow.className = "item-row";
+  rRow.innerHTML = `
+    <label>Tile radius <input type="number" class="td-radius" min="0" max="40" step="1" placeholder="theme" value="${comp.radius != null ? comp.radius : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="radius" title="Reset">✕</button>
+    <label>Shadow
+      <select class="td-shadow">
+        <option value="">Theme default</option>
+        ${DESIGN_SHADOWS.map(([l, v]) => `<option value="${escapeHtml(v)}" ${comp.shadow === v ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+    </label>
+    <button class="btn ghost td-reset" data-k="shadow" title="Reset">✕</button>`;
+  panel.appendChild(rRow);
+
+  const fRow = document.createElement("div");
+  fRow.className = "item-row";
+  fRow.innerHTML = `
+    <label>Font size <input type="number" class="td-fsize" min="8" max="32" step="1" placeholder="theme" value="${comp.fontSize != null ? comp.fontSize : ""}" /></label>
+    <button class="btn ghost td-reset" data-k="fontSize" title="Reset">✕</button>
+    <label>Weight
+      <select class="td-fweight">
+        <option value="">Theme default</option>
+        ${[["Normal", 400], ["Medium", 500], ["Semi-bold", 600], ["Bold", 700]].map(([l, v]) => `<option value="${v}" ${comp.fontWeight === v ? "selected" : ""}>${l}</option>`).join("")}
+      </select>
+    </label>
+    <button class="btn ghost td-reset" data-k="fontWeight" title="Reset">✕</button>`;
+  panel.appendChild(fRow);
+
+  const gradOn = !!(comp.bgFrom && comp.bgTo);
+  const gRow = document.createElement("div");
+  gRow.className = "item-row";
+  gRow.innerHTML = `
+    <label>Tile gradient <input type="checkbox" class="td-grad-on" ${gradOn ? "checked" : ""} /></label>
+    <span class="td-grad-fields" ${gradOn ? "" : "hidden"}>
+      <input type="color" class="td-grad-from" value="${comp.bgFrom || "#1a1a20"}" />
+      <input type="color" class="td-grad-to" value="${comp.bgTo || "#2a1a4a"}" />
+      <input type="number" class="td-grad-angle" min="0" max="360" step="5" value="${comp.bgAngle != null ? comp.bgAngle : 135}" />
+    </span>
+    <button class="btn ghost td-reset" data-k="grad" title="Reset">✕</button>`;
+  panel.appendChild(gRow);
+
+  bRow.querySelector(".td-border").addEventListener("input", (e) => { comp.borderColor = e.target.value; commit(); });
+  bRow.querySelector(".td-bw").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.borderWidth; else comp.borderWidth = Number(v);
+    commit();
+  });
+  rRow.querySelector(".td-radius").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.radius; else comp.radius = Number(v);
+    commit();
+  });
+  rRow.querySelector(".td-shadow").addEventListener("change", (e) => {
+    if (e.target.value) comp.shadow = e.target.value; else delete comp.shadow;
+    commit();
+  });
+  fRow.querySelector(".td-fsize").addEventListener("input", (e) => {
+    const v = e.target.value;
+    if (v === "") delete comp.fontSize; else comp.fontSize = Number(v);
+    commit();
+  });
+  fRow.querySelector(".td-fweight").addEventListener("change", (e) => {
+    if (e.target.value) comp.fontWeight = Number(e.target.value); else delete comp.fontWeight;
+    commit();
+  });
+  const gradFields = gRow.querySelector(".td-grad-fields");
+  gRow.querySelector(".td-grad-on").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      comp.bgFrom = comp.bgFrom || "#1a1a20";
+      comp.bgTo = comp.bgTo || "#2a1a4a";
+      gradFields.hidden = false;
+    } else {
+      delete comp.bgFrom;
+      delete comp.bgTo;
+      gradFields.hidden = true;
+    }
+    commit();
+  });
+  gRow.querySelector(".td-grad-from").addEventListener("input", (e) => { comp.bgFrom = e.target.value; commit(); });
+  gRow.querySelector(".td-grad-to").addEventListener("input", (e) => { comp.bgTo = e.target.value; commit(); });
+  gRow.querySelector(".td-grad-angle").addEventListener("input", (e) => { comp.bgAngle = Number(e.target.value); commit(); });
+
+  panel.querySelectorAll(".td-reset").forEach((b) =>
+    b.addEventListener("click", () => {
+      const k = b.dataset.k;
+      if (k === "grad") {
+        delete comp.bgFrom; delete comp.bgTo; delete comp.bgAngle;
+      } else {
+        delete comp[k];
+      }
+      saveState();
+      render();
+      renderTabPanel(comp);
+    })
+  );
 }
 
 function renderTabPanel(comp) {
@@ -4642,6 +4815,194 @@ function renderCalendarSettings() {
   holRow.querySelectorAll(".cal-hol").forEach((b) =>
     b.addEventListener("change", (e) => { comp.data.holidays[e.target.dataset.c] = e.target.checked; commit(); })
   );
+}
+
+// ---------------------------------------------------------------------------
+// Design tab: global design tokens layered over the current theme. Every control
+// writes to state.design and re-applies the CSS variables live. "Reset" (✕)
+// removes a token so it falls back to the theme default; presets set a bundle.
+// ---------------------------------------------------------------------------
+const DESIGN_FONTS = [
+  ["System UI", '"Segoe UI", system-ui, sans-serif'],
+  ["Segoe UI", '"Segoe UI", sans-serif'],
+  ["Arial", "Arial, Helvetica, sans-serif"],
+  ["Verdana", "Verdana, Geneva, sans-serif"],
+  ["Tahoma", "Tahoma, sans-serif"],
+  ["Trebuchet MS", '"Trebuchet MS", sans-serif'],
+  ["Georgia", 'Georgia, "Times New Roman", serif'],
+  ["Cambria", "Cambria, Georgia, serif"],
+  ["Times New Roman", '"Times New Roman", Times, serif'],
+  ["Consolas", 'Consolas, "Courier New", monospace'],
+  ["Courier New", '"Courier New", monospace'],
+  ["sans-serif", "sans-serif"],
+  ["serif", "serif"],
+  ["monospace", "monospace"],
+];
+const DESIGN_SHADOWS = [
+  ["None", "none"],
+  ["Soft", "0 4px 16px rgba(0,0,0,0.35)"],
+  ["Medium", "0 10px 30px rgba(0,0,0,0.5)"],
+  ["Hard", "0 14px 40px rgba(0,0,0,0.65)"],
+  ["Glow", "0 0 16px var(--accent)"],
+];
+const DESIGN_PRESETS = {
+  Default: null,
+  Glass: { panel: "rgba(34,34,46,0.55)", panel2: "rgba(48,48,64,0.5)", borderColor: "rgba(255,255,255,0.14)", tileBg: "rgba(34,34,46,0.45)", tileBorderColor: "rgba(255,255,255,0.16)", radiusTile: 18, radiusButton: 12, tileShadow: "0 8px 30px rgba(0,0,0,0.45)", rowBg: "rgba(255,255,255,0.03)" },
+  Neon: { bg: "#06090c", panel: "#0a1014", panel2: "#0e161c", borderColor: "#123a3a", accent: "#00ffc8", tileBorderColor: "#00ffc8", tileBorderWidth: 1, tileShadow: "0 0 14px rgba(0,255,200,0.30)", btnBg: "transparent", radiusButton: 4 },
+  Soft: { radiusGlobal: 18, radiusTile: 20, radiusButton: 12, radiusInput: 12, panel: "#22222c", panel2: "#2c2c38", tileShadow: "0 6px 20px rgba(0,0,0,0.35)" },
+  Terminal: { bg: "#050505", panel: "#0b0f0b", panel2: "#101510", borderColor: "#1c2a1c", text: "#c6ffc6", muted: "#5f7f5f", accent: "#33ff66", font: 'Consolas, "Courier New", monospace', radiusGlobal: 2, radiusTile: 2, radiusButton: 2, tileBorderColor: "#33ff66" },
+};
+
+function renderDesignSettings() {
+  const panel = document.getElementById("design-list");
+  if (!panel) return;
+  state.design = state.design || {};
+  panel.innerHTML = "";
+  // Live apply on every input, but debounce the (IPC) save so dragging a slider
+  // doesn't spam save_state. Discrete changes save immediately.
+  let saveT = 0;
+  const apply = () => { applyAppearance(); clearTimeout(saveT); saveT = setTimeout(saveState, 300); };
+  const applyNow = () => { applyAppearance(); saveState(); };
+  const heading = (text) => {
+    const h = document.createElement("h3");
+    h.textContent = text;
+    panel.appendChild(h);
+  };
+  const colorRow = (label, key, fallback) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `<label>${label}</label>
+      <input type="color" class="d-input" value="${state.design[key] || fallback}" />
+      <button class="btn ghost d-reset" title="Reset">✕</button>`;
+    panel.appendChild(row);
+    row.querySelector(".d-input").addEventListener("input", (e) => { state.design[key] = e.target.value; apply(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
+  };
+  const numRow = (label, key, min, max, step, unit, fallback) => {
+    const cur = state.design[key] != null ? state.design[key] : fallback;
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `<label>${label}</label>
+      <input type="range" class="d-input" min="${min}" max="${max}" step="${step}" value="${cur}" />
+      <span class="d-val">${cur}${unit}</span>
+      <button class="btn ghost d-reset" title="Reset">✕</button>`;
+    panel.appendChild(row);
+    const val = row.querySelector(".d-val");
+    row.querySelector(".d-input").addEventListener("input", (e) => { state.design[key] = Number(e.target.value); val.textContent = `${e.target.value}${unit}`; apply(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
+  };
+  const selectRow = (label, key, options, fallback) => {
+    const cur = state.design[key] != null ? state.design[key] : fallback;
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `<label>${label}</label>
+      <select class="d-input">${options.map(([l, v]) => `<option value="${escapeHtml(v)}" ${v === cur ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}</select>
+      <button class="btn ghost d-reset" title="Reset">✕</button>`;
+    panel.appendChild(row);
+    row.querySelector(".d-input").addEventListener("change", (e) => { state.design[key] = e.target.value; applyNow(); });
+    row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
+  };
+
+  // Presets
+  const presetRow = document.createElement("div");
+  presetRow.className = "item-row";
+  presetRow.innerHTML = `<label>Presets</label>` +
+    Object.keys(DESIGN_PRESETS).map((k) => `<button class="btn ghost design-preset" data-p="${k}">${k}</button>`).join("");
+  panel.appendChild(presetRow);
+  presetRow.querySelectorAll(".design-preset").forEach((b) =>
+    b.addEventListener("click", () => {
+      const p = DESIGN_PRESETS[b.dataset.p];
+      state.design = p ? { ...p } : {};
+      applyNow();
+      renderDesignSettings();
+    })
+  );
+
+  heading("Background");
+  colorRow("Board color", "bg", "#101014");
+  const gradOn = !!(state.design.bgFrom && state.design.bgTo);
+  const gradRow = document.createElement("div");
+  gradRow.className = "item-row";
+  gradRow.innerHTML = `<label>Gradient <input type="checkbox" class="d-input" ${gradOn ? "checked" : ""} /></label>`;
+  panel.appendChild(gradRow);
+  gradRow.querySelector(".d-input").addEventListener("change", (e) => {
+    if (e.target.checked) {
+      state.design.bgFrom = state.design.bgFrom || "#101014";
+      state.design.bgTo = state.design.bgTo || "#2a1a4a";
+    } else {
+      delete state.design.bgFrom;
+      delete state.design.bgTo;
+    }
+    applyNow();
+    renderDesignSettings();
+  });
+  if (gradOn) {
+    colorRow("Gradient from", "bgFrom", "#101014");
+    colorRow("Gradient to", "bgTo", "#2a1a4a");
+    numRow("Gradient angle", "bgAngle", 0, 360, 5, "°", 135);
+  }
+
+  heading("Surfaces & borders");
+  colorRow("Panel", "panel", "#1a1a20");
+  colorRow("Panel 2", "panel2", "#23232b");
+  colorRow("Border color", "borderColor", "#2c2c36");
+  colorRow("Tile border", "tileBorderColor", "#2c2c36");
+  numRow("Tile border width", "tileBorderWidth", 0, 6, 1, "px", 1);
+
+  heading("Radius");
+  numRow("Global", "radiusGlobal", 0, 28, 1, "px", state.cornerRadius != null ? state.cornerRadius : 10);
+  numRow("Tile", "radiusTile", 0, 28, 1, "px", 10);
+  numRow("Button", "radiusButton", 0, 24, 1, "px", 6);
+  numRow("Input", "radiusInput", 0, 24, 1, "px", 8);
+
+  heading("Typography");
+  const fontRow = document.createElement("div");
+  fontRow.className = "item-row";
+  const curFont = state.design.font || DESIGN_FONTS[0][1];
+  const known = DESIGN_FONTS.some(([, v]) => v === curFont);
+  fontRow.innerHTML = `<label>Font</label>
+    <select class="d-font">${DESIGN_FONTS.map(([l, v]) => `<option value="${escapeHtml(v)}" ${v === curFont ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}<option value="__custom" ${known ? "" : "selected"}>Custom…</option></select>
+    <button class="btn ghost d-reset" title="Reset">✕</button>`;
+  panel.appendChild(fontRow);
+  const customFontRow = document.createElement("div");
+  customFontRow.className = "item-row";
+  customFontRow.innerHTML = `<label>Custom font</label><input type="text" class="d-custom-font" placeholder='e.g. "Fira Sans", sans-serif' value="${escapeHtml(known ? "" : curFont)}" /></div>`;
+  customFontRow.hidden = known;
+  panel.appendChild(customFontRow);
+  fontRow.querySelector(".d-font").addEventListener("change", (e) => {
+    if (e.target.value === "__custom") {
+      customFontRow.hidden = false;
+      customFontRow.querySelector(".d-custom-font").focus();
+      return;
+    }
+    state.design.font = e.target.value;
+    applyNow();
+    renderDesignSettings();
+  });
+  customFontRow.querySelector(".d-custom-font").addEventListener("change", (e) => {
+    const val = e.target.value.trim();
+    if (val) { state.design.font = val; applyNow(); }
+  });
+  fontRow.querySelector(".d-reset").addEventListener("click", () => { delete state.design.font; applyNow(); renderDesignSettings(); });
+  numRow("Base size", "fontBase", 11, 22, 1, "px", 16);
+  numRow("Heading weight", "headingWeight", 400, 800, 50, "", 600);
+
+  heading("Buttons");
+  colorRow("Background", "btnBg", "#23232b");
+  colorRow("Text", "btnText", "#e6e6ea");
+  colorRow("Border", "btnBorder", "#2c2c36");
+  colorRow("Hover background", "btnHoverBg", "#2c2c36");
+
+  heading("Rows, inputs & tiles");
+  colorRow("Row background", "rowBg", "#1a1a20");
+  colorRow("Input background", "inputBg", "#23232b");
+  colorRow("Tile background", "tileBg", "#1a1a20");
+  selectRow("Tile shadow", "tileShadow", DESIGN_SHADOWS, "none");
+
+  heading("Accents & effects");
+  colorRow("Accent", "accent", "#7c3aed");
+  colorRow("Scrollbar thumb", "scrollThumb", "#23232b");
+  numRow("Transition speed", "transitionMs", 0, 600, 10, "ms", 150);
 }
 
 const KIND_DEFAULTS = {

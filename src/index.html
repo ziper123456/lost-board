@@ -42,6 +42,7 @@
 
         <nav class="settings-tabs">
           <button class="tab active" data-tab="grid">Grid</button>
+          <button class="tab" data-tab="design">Design</button>
           <button class="tab" data-tab="folders">Folders</button>
           <button class="tab" data-tab="bookmarks">Bookmarks</button>
           <button class="tab" data-tab="azure">Azure</button>
@@ -136,6 +137,10 @@
                 <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
               </div>
             </div>
+          </div>
+          <div class="tab-panel" data-panel="design">
+            <p>Global design tokens layered over the current theme. Presets give a quick look; every control fine-tunes. Reset clears a token back to the theme default.</p>
+            <div id="design-list"></div>
           </div>
           <div class="tab-panel" data-panel="folders">
             <p>Choose a tile, then add folders and files to it. Click a tile on the dashboard to open it (via its file association).</p>

@@ -260,6 +260,18 @@ auth, custom images are user-supplied, captioning is fully local.
   in `src/holidays.js` (Vietnamese lunar dates + Gregorian Easter computus). Islamic Pakistan
   holidays are deferred (need a Hijri conversion).
 
+### 2.16 Design tokens (global decoration layer)
+
+- **FR-DSN-001** The system shall expose a curated set of **design tokens** (surfaces,
+  borders, radius, typography, buttons, rows/inputs, tiles, accents, effects, board
+  background gradient) that layer over the active theme and render live.
+- **FR-DSN-002** Each token shall be individually reset back to the theme default; the
+  Design tab shall offer one-click **presets** (Default, Glass, Neon, Soft, Terminal).
+- **FR-DSN-003** Typography shall offer an offline **font picker** (installed families +
+  generic categories + a custom family field).
+- **FR-DSN-004** (Phase 2, pending) Per-tile decoration shall extend to tile border
+  color/width, radius, shadow and background gradient.
+
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
 ~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).

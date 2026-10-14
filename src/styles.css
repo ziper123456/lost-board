@@ -12,15 +12,19 @@
 }
 
 * { box-sizing: border-box; }
+/* Form controls don't inherit the page font by default — make them follow the
+   global/per-tile font tokens. */
+button, input, select, textarea { font-family: inherit; }
 
 html, body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: var(--board-bg, var(--bg));
   color: var(--text);
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: var(--font, "Segoe UI", system-ui, sans-serif);
   overflow: hidden;
 }
+html { font-size: var(--font-size, 16px); }
 
 /* Floating settings button (bottom-left). */
 .settings-fab {
@@ -104,7 +108,7 @@ html, body {
   height: 100%;
   overflow: auto;
   position: relative;
-  background: var(--bg);
+  background: var(--board-bg, var(--bg));
 }
 /* Scaler sizes the scrollable area to the scaled grid; the grid itself is
    CSS-transform-scaled so tiles/text/buttons all zoom uniformly. */
@@ -117,9 +121,10 @@ html, body {
 
 /* Compartment tiles */
 .compartment {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 10px);
+  background: var(--tile-bg, var(--panel));
+  border: var(--tile-border-w, 1px) solid var(--tile-border, var(--border));
+  border-radius: var(--tile-radius, var(--radius, 10px));
+  box-shadow: var(--tile-shadow, none);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -176,7 +181,7 @@ html, body {
   gap: 2px;
   flex: 0 0 auto;
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--transition, 0.12s) ease;
 }
 .compartment:hover .header-actions,
 .compartment:focus-within .header-actions {
@@ -204,7 +209,7 @@ html, body {
   border-radius: var(--radius, 10px) var(--radius, 10px) 0 0;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
-.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); position: relative; }
+.compartment-body { padding: 10px 12px; overflow: auto; flex: 1; background: var(--tile-content, transparent); position: relative; font-size: var(--tile-font-size, inherit); font-weight: var(--tile-font-weight, inherit); }
 .compartment.drag-over,
 .compartment-overlay.drag-over {
   border-color: var(--accent);
@@ -463,8 +468,8 @@ html, body {
 }
 .wea-name { font-weight: 600; font-size: 0.92rem; }
 .wea-clock {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 1.05rem;
+  font-family: var(--font, "Segoe UI", system-ui, sans-serif);
+  font-size: 1.05em;
   font-weight: 700;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
@@ -485,7 +490,7 @@ html, body {
 .news-feed { margin-bottom: 10px; }
 .news-feed-title {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.85em;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -501,7 +506,7 @@ html, body {
   color: var(--text);
   padding: 5px 0;
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.82em;
   line-height: 1.3;
   overflow: hidden;
 }
@@ -661,20 +666,20 @@ html, body {
 * { scrollbar-width: thin; scrollbar-color: var(--panel-2) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 5px; border: 2px solid var(--bg); }
+*::-webkit-scrollbar-thumb { background: var(--scroll-thumb, var(--panel-2)); border-radius: 5px; border: 2px solid var(--bg); }
 *::-webkit-scrollbar-thumb:hover { background: var(--border); }
 
 /* Buttons */
 .btn {
   padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--text);
+  border-radius: var(--btn-radius, 6px);
+  border: 1px solid var(--btn-border, var(--border));
+  background: var(--btn-bg, var(--panel-2));
+  color: var(--btn-text, var(--text));
   cursor: pointer;
   font-size: 0.85rem;
 }
-.btn:hover { background: var(--border); }
+.btn:not(.primary):not(.danger):hover { background: var(--btn-hover-bg, var(--panel-2)); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.ghost { background: transparent; }
 .btn.danger { background: transparent; border-color: var(--red); color: var(--red); }
@@ -754,6 +759,7 @@ html, body {
   gap: 8px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
+  background: var(--row-bg, transparent);
 }
 .item-row input { flex: 1; }
 .item-row .btn { flex: 0 0 auto; }
@@ -767,10 +773,10 @@ html, body {
 .add-tile h3 { margin: 0 0 8px; font-size: 0.95rem; }
 
 input[type="text"], input[type="number"], input[type="password"], select {
-  background: var(--panel-2);
+  background: var(--input-bg, var(--panel-2));
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: var(--input-radius, 6px);
   padding: 6px 8px;
   font-size: 0.85rem;
 }
@@ -917,3 +923,62 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .cal-lunar { font-size: 0.58rem; color: var(--muted); line-height: 1.1; white-space: nowrap; }
 .cal-cell.holiday .cal-lunar, .cal-cell.holiday .cal-solar { color: var(--text); }
 .cal-moon { font-size: 0.6rem; }
+
+/* Per-tile decoration controls (Phase 2) */
+.td-grad-fields { display: inline-flex; align-items: center; gap: 6px; }
+.td-grad-fields input[type="number"] { width: 56px; }
+.item-row .td-reset { padding: 2px 7px; }
+
+/* Tile font scaling: these tile-content text sizes are expressed relative to the
+   tile body (em) so a per-tile font size (--tile-font-size) scales them. The
+   values mirror the originals, so with no per-tile size they render identically. */
+.launcher-open { font-size: 0.9em; }
+.launcher-path { font-size: 0.75em; }
+.bmk-name { font-size: 0.85em; }
+.bmk-host { font-size: 0.72em; }
+.favicon-letter { font-size: 0.72em; }
+.azure-name { font-size: 0.85em; }
+.wea-name { font-size: 0.92em; }
+.wea-clock { font-size: 1.05em; }
+.wea-temp { font-size: 2.6em; }
+.wea-desc { font-size: 0.8em; }
+.spot-title { font-size: 0.95em; }
+.spot-artist { font-size: 0.8em; }
+.spot-album { font-size: 0.72em; }
+.spot-queue-title { font-size: 0.72em; }
+.spot-queue-item { font-size: 0.75em; }
+.prj-note { font-size: 0.8em; }
+.prj-root { font-size: 0.8em; }
+.prj-name { font-size: 0.82em; }
+.vocab-en { font-size: 1.35em; }
+.vocab-other { font-size: 0.82em; }
+.cal-title { font-size: 0.9em; }
+.cal-today-line { font-size: 0.72em; }
+.cal-wd { font-size: 0.62em; }
+.cal-solar { font-size: 0.82em; }
+.cal-lunar { font-size: 0.58em; }
+.cal-moon { font-size: 0.6em; }
+
+/* Colour input: compact rounded swatch, no full-width stretch, no white border. */
+.item-row input[type="color"],
+input[type="color"] {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-2);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+input[type="color"]:hover { border-color: var(--accent); }
+
+/* Heading weight token: only set when the user overrides it, so the per-element
+   fallbacks preserve the current weights by default. */
+.comp-title, .news-feed-title, .spot-title, .bmk-name, .wea-name { font-weight: var(--heading-weight, 600); }
+.cal-title, .vocab-en, .spot-queue-title { font-weight: var(--heading-weight, 700); }
+.wea-temp { font-weight: var(--heading-weight, 800); }
