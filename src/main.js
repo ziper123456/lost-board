@@ -422,8 +422,6 @@ function buildHeaderHtml(c) {
         ${collapsible ? `<button class="btn ghost icon-btn collapse" data-id="${c.id}" title="${collapsed ? "Open" : "Collapse"}">${ICON.collapse(collapsed)}</button>` : ""}
         <button class="btn ghost icon-btn preview-tile" data-id="${c.id}" title="Preview">${ICON.preview}</button>
         <button class="btn ghost icon-btn settings-tile" data-id="${c.id}" title="Settings">${ICON.settings}</button>
-        <button class="btn ghost icon-btn rename" data-id="${c.id}" title="Rename">${ICON.rename}</button>
-        <button class="btn ghost icon-btn remove" data-id="${c.id}" title="Remove">${ICON.remove}</button>
       </div>
     </div>
     <div class="compartment-body" data-id="${c.id}"></div>
@@ -517,14 +515,6 @@ function wireHeader(rec, c) {
   el.querySelector(".settings-tile").addEventListener("click", (e) => {
     e.stopPropagation();
     openTileSettings(c.id);
-  });
-  el.querySelector(".rename").addEventListener("click", (e) => {
-    e.stopPropagation();
-    startTileRename(c, el);
-  });
-  el.querySelector(".remove").addEventListener("click", (e) => {
-    e.stopPropagation();
-    removeTile(c);
   });
 }
 
