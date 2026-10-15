@@ -120,14 +120,15 @@
     if (cardDone || !isCorrect()) return;
     inputs().forEach((i) => { i.classList.remove("bad"); i.classList.add("ok"); });
     record(attempts === 0 ? "good" : "hard");
-    finishCard(mode === "practice" ? 700 : 1100);
+    finishCard(1500); // typing the answer is the only way forward — pause to read
   }
 
   function revealNow() {
+    // Show the answer and record the honest fail, but KEEP the card open: reading
+    // and retyping it after reveal is part of learning, so we never auto-skip.
     revealEl.textContent = "Answer: " + targets.join(" / ");
     inputs().forEach((i) => i.classList.add("bad"));
     record("again");
-    finishCard(mode === "practice" ? 1700 : 2100);
   }
 
   function advance() {
