@@ -1692,6 +1692,8 @@ pub fn run() {
             read_vocab_cards,
             vocab_categories,
             vocab_due_card,
+            vocab_due_batch,
+            vocab_practice_batch,
             vocab_record_review,
             vocab_due_count,
             vocab_reset_srs,
@@ -1800,6 +1802,12 @@ struct VocabCard {
 struct VocabPopupConfig {
     lang: String,
     cats: Vec<String>,
+    /// Max graded cards per popup (0 = all due). Drives the session loop.
+    session_size: usize,
+    /// Surface high-lapse due cards first.
+    struggling_first: bool,
+    /// Practice mode: show not-due struggling cards, never graded.
+    practice: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1812,6 +1820,9 @@ static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
 static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig {
     lang: String::new(),
     cats: Vec::new(),
+    session_size: 1,
+    struggling_first: true,
+    practice: false,
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -2106,6 +2117,108 @@ fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>) -> Result<Opti
     Ok(Some(DueCard { card: m[0].clone(), due: false }))
 }
 
+/// Pick up to `limit` distinct due cards (0 = all), shuffled; when
+/// `struggling_first`, high-lapse cards lead. Falls back to one not-due exposure
+/// card when nothing is due (parity with the single-card behavior). Pure, so it
+/// can be unit-tested.
+fn pick_due_batch<'a>(
+    matching: &[&'a VocabCard],
+    typed: &std::collections::HashMap<String, SrsEntry>,
+    now: u64,
+    limit: usize,
+    struggling_first: bool,
+) -> Vec<DueCard> {
+    use rand::seq::SliceRandom;
+    let mut due: Vec<&VocabCard> = matching
+        .iter()
+        .copied()
+        .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
+        .collect();
+    due.shuffle(&mut rand::thread_rng());
+    if struggling_first {
+        let (mut s, r): (Vec<&VocabCard>, Vec<&VocabCard>) =
+            due.into_iter().partition(|c| is_struggling(typed.get(&c.id)));
+        s.extend(r);
+        due = s;
+    }
+    let take = if limit == 0 { due.len() } else { limit.min(due.len()) };
+    let out: Vec<DueCard> = due
+        .into_iter()
+        .take(take)
+        .map(|c| DueCard { card: c.clone(), due: true })
+        .collect();
+    if out.is_empty() {
+        if let Some(c) = matching.choose(&mut rand::thread_rng()) {
+            return vec![DueCard { card: (*c).clone(), due: false }];
+        }
+    }
+    out
+}
+
+/// A session's worth of due cards for the drill popup. `limit` = cards per
+/// session (0 = all due). Only due cards come back `due:true` (graded); a lone
+/// exposure card comes back `due:false` when nothing is scheduled.
+#[tauri::command]
+fn vocab_due_batch(
+    app: tauri::AppHandle,
+    categories: Vec<String>,
+    limit: usize,
+    prefer_struggling: bool,
+) -> Result<Vec<DueCard>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let matching = vocab_matching(all, &categories);
+    if !srs_enabled(&app) {
+        use rand::seq::SliceRandom;
+        return Ok(matching
+            .choose(&mut rand::thread_rng())
+            .map(|c| vec![DueCard { card: (*c).clone(), due: false }])
+            .unwrap_or_default());
+    }
+    let typed = parse_srs(&srs_map(&app));
+    Ok(pick_due_batch(&matching, &typed, now_secs(), limit, prefer_struggling))
+}
+
+/// Extra practice pool: matching cards that are NOT due but that you keep
+/// failing. Pure, for testing.
+fn pick_practice_batch<'a>(
+    matching: &[&'a VocabCard],
+    typed: &std::collections::HashMap<String, SrsEntry>,
+    now: u64,
+    limit: usize,
+) -> Vec<&'a VocabCard> {
+    use rand::seq::SliceRandom;
+    let mut pool: Vec<&VocabCard> = matching
+        .iter()
+        .copied()
+        .filter(|c| {
+            let e = typed.get(&c.id);
+            e.map(|e| e.due > now).unwrap_or(false) && is_struggling(e)
+        })
+        .collect();
+    pool.shuffle(&mut rand::thread_rng());
+    let take = if limit == 0 { pool.len() } else { limit.min(pool.len()) };
+    pool.truncate(take);
+    pool
+}
+
+/// Extra practice: matching cards that are NOT due but that you keep failing
+/// (high lapses). Never graded — the popup must not call vocab_record_review,
+/// so these reps leave the schedule and mastery untouched.
+#[tauri::command]
+fn vocab_practice_batch(
+    app: tauri::AppHandle,
+    categories: Vec<String>,
+    limit: usize,
+) -> Result<Vec<VocabCard>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let matching = vocab_matching(all, &categories);
+    let typed = parse_srs(&srs_map(&app));
+    Ok(pick_practice_batch(&matching, &typed, now_secs(), limit)
+        .into_iter()
+        .cloned()
+        .collect())
+}
+
 /// Record a graded review. `grade` is again | hard | good | easy.
 #[tauri::command]
 fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) -> Result<(), String> {
@@ -2175,6 +2288,12 @@ fn mastery_of(e: Option<&SrsEntry>) -> Mastery {
         Some(e) if e.ivl >= MATURE_DAYS => Mastery::Mature,
         Some(_) => Mastery::Young,
     }
+}
+
+/// A card you keep forgetting. Same threshold as the "struggling" stat so the
+/// pile and the number on screen agree.
+fn is_struggling(e: Option<&SrsEntry>) -> bool {
+    e.map(|e| e.lapses >= STRUGGLE_LAPSES).unwrap_or(false)
 }
 
 #[derive(serde::Serialize)]
@@ -2358,6 +2477,7 @@ fn open_drill_window(
     cats: &[String],
     position: &str,
     focus_existing: bool,
+    practice: bool,
 ) -> Result<&'static str, String> {
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
     if let Some(w) = app.get_webview_window("drill") {
@@ -2368,9 +2488,21 @@ fn open_drill_window(
         }
         return Ok("already-open");
     }
+    let cfg = read_vocab_section(app);
+    let session_size = cfg
+        .get("cardsPerSession")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1) as usize;
+    let struggling_first = cfg
+        .get("strugglingFirst")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     *VOCAB_POPUP.lock().unwrap() = VocabPopupConfig {
         lang: lang.to_string(),
         cats: cats.to_vec(),
+        session_size,
+        struggling_first,
+        practice,
     };
     // Placement preset on the primary monitor, converted to logical pixels.
     let mon = app
@@ -2408,8 +2540,9 @@ async fn open_vocab_popup(
     lang: String,
     categories: Vec<String>,
     position: String,
+    practice: bool,
 ) -> Result<String, String> {
-    open_drill_window(&app, &lang, &categories, &position, true).map(|s| s.to_string())
+    open_drill_window(&app, &lang, &categories, &position, true, practice).map(|s| s.to_string())
 }
 
 /// Close the drill popup (called from the popup itself).
@@ -2538,7 +2671,7 @@ async fn vocab_tick(app: tauri::AppHandle) -> Result<String, String> {
         .get("popupPosition")
         .and_then(|v| v.as_str())
         .unwrap_or("bottom-right");
-    let status = open_drill_window(&app, lang, &cats, position, false)?;
+    let status = open_drill_window(&app, lang, &cats, position, false, false)?;
     if status == "opened" {
         *VOCAB_LAST_POPUP_AT.lock().unwrap() = now;
         let _ = write_vocab_keys(&app, &[("lastPopupAt", serde_json::Value::from(now))]);
@@ -2835,5 +2968,84 @@ mod srs_tests {
         assert_eq!(card_categories(&c), vec!["Food"]);
         c.cats.clear();
         assert_eq!(card_categories(&c), vec![UNCATEGORIZED]);
+    }
+
+    fn tcard(id: &str) -> VocabCard {
+        VocabCard {
+            id: id.into(),
+            en: id.into(),
+            es: String::new(),
+            de: String::new(),
+            cats: vec!["x".into()],
+        }
+    }
+
+    #[test]
+    fn due_batch_caps_and_only_returns_due_cards() {
+        let a = tcard("a");
+        let b = tcard("b");
+        let c = tcard("c");
+        let matching = vec![&a, &b, &c];
+        let mut typed = std::collections::HashMap::new();
+        typed.insert("a".to_string(), SrsEntry { due: 100, ..Default::default() });
+        typed.insert("b".to_string(), SrsEntry { due: 100, ..Default::default() });
+        typed.insert("c".to_string(), SrsEntry { due: 10_000, ..Default::default() }); // not due
+        let out = pick_due_batch(&matching, &typed, 200, 5, false);
+        assert_eq!(out.len(), 2, "only due cards are returned");
+        assert!(out.iter().all(|d| d.due));
+        assert_eq!(pick_due_batch(&matching, &typed, 200, 1, false).len(), 1, "cap respected");
+    }
+
+    #[test]
+    fn due_batch_falls_back_to_exposure_card() {
+        let a = tcard("a");
+        let matching = vec![&a];
+        let mut typed = std::collections::HashMap::new();
+        typed.insert("a".to_string(), SrsEntry { due: 10_000, ..Default::default() });
+        let out = pick_due_batch(&matching, &typed, 200, 0, false);
+        assert_eq!(out.len(), 1);
+        assert!(!out[0].due, "exposure card must not be graded");
+    }
+
+    #[test]
+    fn due_batch_prefers_struggling_first() {
+        let a = tcard("a");
+        let b = tcard("b");
+        let c = tcard("c");
+        let matching = vec![&a, &b, &c];
+        let mut typed = std::collections::HashMap::new();
+        typed.insert("a".to_string(), SrsEntry { due: 100, ..Default::default() });
+        typed.insert("b".to_string(), SrsEntry { due: 100, ..Default::default() });
+        typed.insert(
+            "c".to_string(),
+            SrsEntry { due: 100, lapses: STRUGGLE_LAPSES, ..Default::default() },
+        );
+        // With cap 1 + struggling-first, the leech must always be the one picked.
+        for _ in 0..25 {
+            assert_eq!(pick_due_batch(&matching, &typed, 200, 1, true)[0].card.id, "c");
+        }
+    }
+
+    #[test]
+    fn practice_pool_is_not_due_and_struggling() {
+        let a = tcard("a"); // not due + struggling -> include
+        let b = tcard("b"); // due + struggling -> exclude (graded as a normal review)
+        let c = tcard("c"); // not due, not struggling -> exclude
+        let matching = vec![&a, &b, &c];
+        let mut typed = std::collections::HashMap::new();
+        typed.insert(
+            "a".to_string(),
+            SrsEntry { due: 10_000, lapses: STRUGGLE_LAPSES, ..Default::default() },
+        );
+        typed.insert(
+            "b".to_string(),
+            SrsEntry { due: 100, lapses: STRUGGLE_LAPSES, ..Default::default() },
+        );
+        typed.insert("c".to_string(), SrsEntry { due: 10_000, ..Default::default() });
+        let ids: Vec<String> = pick_practice_batch(&matching, &typed, 200, 0)
+            .into_iter()
+            .map(|c| c.id.clone())
+            .collect();
+        assert_eq!(ids, vec!["a".to_string()]);
     }
 }
