@@ -341,8 +341,8 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [] });
     return null;
   },
-  async vocabCategoryStats() {
-    if (window.__TAURI__) return invoke("vocab_category_stats");
+  async vocabCategoryStats(categories) {
+    if (window.__TAURI__) return invoke("vocab_category_stats", { categories: categories || [] });
     return [];
   },
   async setPopupTheme(css) {
@@ -4125,7 +4125,7 @@ function renderVocabSettings() {
   catTable.innerHTML = `<span class="muted">loading…</span>`;
   panel.appendChild(catTable);
   native
-    .vocabCategoryStats()
+    .vocabCategoryStats(v.drillCats || [])
     .then((rows) => {
       if (!catTable.isConnected) return;
       if (!rows || !rows.length) {

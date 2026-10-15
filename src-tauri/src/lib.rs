@@ -2238,21 +2238,35 @@ struct CategoryStat {
     mature: usize,
 }
 
+/// Synthetic bucket so cards with no category still reconcile in the table.
+const UNCATEGORIZED: &str = "(uncategorized)";
+
+/// Category labels for a card; uncategorized cards get the synthetic bucket so
+/// they can't silently drop out of the per-category totals.
+fn card_categories(c: &VocabCard) -> Vec<&str> {
+    if c.cats.is_empty() {
+        vec![UNCATEGORIZED]
+    } else {
+        c.cats.iter().map(|s| s.as_str()).collect()
+    }
+}
+
 /// Per-category mastery breakdown for the settings tab, so you can see which
-/// categories you've got and which are still stuck in learning. Sorted by size.
+/// categories you've got and which are still stuck in learning. Scoped to the
+/// same `categories` filter as the mastery bar (empty = all). Sorted by size.
 #[tauri::command]
-fn vocab_category_stats(app: tauri::AppHandle) -> Result<Vec<CategoryStat>, String> {
+fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<Vec<CategoryStat>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let typed = parse_srs(&srs_map(&app));
     let now = now_secs();
     let mut map: std::collections::HashMap<String, CategoryStat> = std::collections::HashMap::new();
-    for c in all.iter() {
+    for c in vocab_matching(all, &categories) {
         let e = typed.get(&c.id);
         let is_due = e.map(|e| e.due <= now).unwrap_or(true);
         let bucket = mastery_of(e);
-        for cat in c.cats.iter() {
-            let s = map.entry(cat.clone()).or_insert_with(|| CategoryStat {
-                category: cat.clone(),
+        for cat in card_categories(c) {
+            let s = map.entry(cat.to_string()).or_insert_with(|| CategoryStat {
+                category: cat.to_string(),
                 total: 0,
                 due: 0,
                 new: 0,
@@ -2807,5 +2821,19 @@ mod srs_tests {
         // A just-failed card (reps reset) is Learning again even if it had lapsed far.
         let relapsed = SrsEntry { reps: 0, ivl: 0, lapses: 4, ..Default::default() };
         assert!(matches!(mastery_of(Some(&relapsed)), Mastery::Learning));
+    }
+
+    #[test]
+    fn uncategorized_cards_get_a_synthetic_bucket() {
+        let mut c = VocabCard {
+            id: "a".into(),
+            en: "a".into(),
+            es: String::new(),
+            de: String::new(),
+            cats: vec!["Food".into()],
+        };
+        assert_eq!(card_categories(&c), vec!["Food"]);
+        c.cats.clear();
+        assert_eq!(card_categories(&c), vec![UNCATEGORIZED]);
     }
 }

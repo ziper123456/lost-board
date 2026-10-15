@@ -219,6 +219,10 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-013** The Vocab settings tab shall show review **progress** (seen/total, due now,
   new). The drill popup shall follow the active **theme + design tokens** (colours, font,
   radius) so it is decorated like the tiles.
+- **FR-VOC-014** Mastery shall be read back from each card's SM-2 state (interval/reps): buckets
+  **new / learning / young / mature (≥21d)**, plus a **struggling** count (lapses ≥ 3). Settings
+  shows a mastery bar and a per-category table (scoped to the category filter; uncategorized
+  cards listed as "(uncategorized)"); the popup shows mastered %.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
