@@ -1698,6 +1698,7 @@ pub fn run() {
             vocab_set_srs,
             vocab_srs_enabled,
             vocab_srs_stats,
+            vocab_category_stats,
             set_popup_theme,
             get_popup_theme,
             vocab_popup_config,
@@ -2153,44 +2154,127 @@ fn vocab_srs_enabled(app: tauri::AppHandle) -> bool {
     srs_enabled(&app)
 }
 
+/// Mastery is read back from the card's own SM-2 state (the interval only grows
+/// with repeated success and collapses on a fail), so it reflects durability,
+/// not just "was shown". Thresholds follow the common SRS convention.
+#[derive(PartialEq)]
+enum Mastery {
+    New,
+    Learning,
+    Young,
+    Mature,
+}
+
+const MATURE_DAYS: i64 = 21; // interval >= 21 days => scheduler trusts ~3+ weeks recall
+const STRUGGLE_LAPSES: u32 = 3; // failed this many times => a "leech"
+
+fn mastery_of(e: Option<&SrsEntry>) -> Mastery {
+    match e {
+        None => Mastery::New,
+        Some(e) if e.reps == 0 => Mastery::Learning,
+        Some(e) if e.ivl >= MATURE_DAYS => Mastery::Mature,
+        Some(_) => Mastery::Young,
+    }
+}
+
 #[derive(serde::Serialize)]
 struct SrsStats {
     total: usize,
     due: usize,
     seen: usize,
     new: usize,
+    learning: usize,
+    young: usize,
+    mature: usize,
+    struggling: usize,
 }
 
-/// Review progress for the settings tab: total / due now / seen / never-reviewed.
+/// Review progress for the settings tab: totals, due now, and mastery buckets.
 #[tauri::command]
 fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<SrsStats, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let matching = vocab_matching(all, &categories);
     let now = now_secs();
     let typed = parse_srs(&srs_map(&app));
-    let mut due = 0;
-    let mut seen = 0;
-    let mut new = 0;
+    let mut s = SrsStats {
+        total: matching.len(),
+        due: 0,
+        seen: 0,
+        new: 0,
+        learning: 0,
+        young: 0,
+        mature: 0,
+        struggling: 0,
+    };
     for c in &matching {
-        match typed.get(&c.id) {
-            Some(e) => {
-                seen += 1;
-                if e.due <= now {
-                    due += 1;
-                }
+        let e = typed.get(&c.id);
+        if e.map(|e| e.due <= now).unwrap_or(true) {
+            s.due += 1;
+        }
+        if let Some(e) = e {
+            s.seen += 1;
+            if e.lapses >= STRUGGLE_LAPSES {
+                s.struggling += 1;
             }
-            None => {
-                new += 1;
-                due += 1;
+        }
+        match mastery_of(e) {
+            Mastery::New => s.new += 1,
+            Mastery::Learning => s.learning += 1,
+            Mastery::Young => s.young += 1,
+            Mastery::Mature => s.mature += 1,
+        }
+    }
+    Ok(s)
+}
+
+#[derive(serde::Serialize)]
+struct CategoryStat {
+    category: String,
+    total: usize,
+    due: usize,
+    new: usize,
+    learning: usize,
+    young: usize,
+    mature: usize,
+}
+
+/// Per-category mastery breakdown for the settings tab, so you can see which
+/// categories you've got and which are still stuck in learning. Sorted by size.
+#[tauri::command]
+fn vocab_category_stats(app: tauri::AppHandle) -> Result<Vec<CategoryStat>, String> {
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let typed = parse_srs(&srs_map(&app));
+    let now = now_secs();
+    let mut map: std::collections::HashMap<String, CategoryStat> = std::collections::HashMap::new();
+    for c in all.iter() {
+        let e = typed.get(&c.id);
+        let is_due = e.map(|e| e.due <= now).unwrap_or(true);
+        let bucket = mastery_of(e);
+        for cat in c.cats.iter() {
+            let s = map.entry(cat.clone()).or_insert_with(|| CategoryStat {
+                category: cat.clone(),
+                total: 0,
+                due: 0,
+                new: 0,
+                learning: 0,
+                young: 0,
+                mature: 0,
+            });
+            s.total += 1;
+            if is_due {
+                s.due += 1;
+            }
+            match bucket {
+                Mastery::New => s.new += 1,
+                Mastery::Learning => s.learning += 1,
+                Mastery::Young => s.young += 1,
+                Mastery::Mature => s.mature += 1,
             }
         }
     }
-    Ok(SrsStats {
-        total: matching.len(),
-        due,
-        seen,
-        new,
-    })
+    let mut out: Vec<CategoryStat> = map.into_values().collect();
+    out.sort_by(|a, b| b.total.cmp(&a.total).then(a.category.cmp(&b.category)));
+    Ok(out)
 }
 
 // The drill is a separate window with its own stylesheet, so it can't read the
@@ -2709,5 +2793,19 @@ mod srs_tests {
         assert!(v["vocab"].is_null(), "no vocab added when there was none");
         // Garbage existing content must fail open, not corrupt.
         assert_eq!(preserve_rust_vocab_keys(payload, "not json"), payload);
+    }
+
+    #[test]
+    fn mastery_buckets_follow_interval_and_reps() {
+        assert!(matches!(mastery_of(None), Mastery::New));
+        let learning = SrsEntry { reps: 0, ivl: 0, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&learning)), Mastery::Learning));
+        let young = SrsEntry { reps: 3, ivl: 6, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&young)), Mastery::Young));
+        let mature = SrsEntry { reps: 4, ivl: MATURE_DAYS, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&mature)), Mastery::Mature));
+        // A just-failed card (reps reset) is Learning again even if it had lapsed far.
+        let relapsed = SrsEntry { reps: 0, ivl: 0, lapses: 4, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&relapsed)), Mastery::Learning));
     }
 }

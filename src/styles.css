@@ -797,6 +797,18 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .vocab-pos-grid { display: grid; grid-template-columns: repeat(3, 30px); gap: 4px; }
 .vocab-pos { width: 30px; height: 22px; padding: 0; }
 .vocab-pos.active { border-color: var(--accent); background: rgba(124, 58, 237, 0.18); }
+.vocab-mastery { flex-direction: column; align-items: stretch; gap: 6px; }
+.vocab-mastery-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
+.vocab-mastery-seg { height: 100%; }
+.vocab-mastery-seg.mature { background: #3fb950; }
+.vocab-mastery-seg.young { background: #58a6ff; }
+.vocab-mastery-seg.learning { background: #d29922; }
+.vocab-mastery-seg.new { background: #6e7681; }
+.vocab-mastery-table { overflow-x: auto; }
+.vocab-mastery-table table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.vocab-mastery-table th, .vocab-mastery-table td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.vocab-mastery-table th:first-child, .vocab-mastery-table td:first-child { text-align: left; }
+.vocab-mastery-table thead th { color: var(--muted); font-weight: 600; }
 
 /* Meme tile */
 .meme-wrap { position: relative; height: 100%; min-height: 120px; }

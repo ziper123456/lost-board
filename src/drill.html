@@ -142,7 +142,8 @@
         ]);
         const progEl = document.getElementById("progress");
         if (progEl && stats) {
-          progEl.textContent = `Due today: ${due} · ${stats.seen}/${stats.total} seen`;
+          const pct = stats.total ? Math.round((stats.mature / stats.total) * 100) : 0;
+          progEl.textContent = `Due today: ${due} · mastered ${pct}% (${stats.mature}/${stats.total}) · learning ${stats.learning}`;
         }
       } catch { /* progress is optional */ }
       if (lang === "both") {
