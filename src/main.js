@@ -1238,6 +1238,7 @@ function vocabConfig() {
   if (!v.popupPosition) v.popupPosition = "bottom-right";
   if (v.cardsPerSession === undefined) v.cardsPerSession = 1; // 0 = all due
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
+  if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
   return v;
 }
 
@@ -4106,6 +4107,13 @@ function renderVocabSettings() {
           .join("")}
       </select>
     </label>
+    <label>Practice size
+      <select id="vocab-practice-size">
+        ${[[5, "5"], [10, "10"], [20, "20"], [0, "All"]]
+          .map(([val, label]) => `<option value="${val}" ${Number(v.practicePerSession) === val ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>
+    </label>
     <label title="Show high-lapse cards first in the session"><input type="checkbox" id="vocab-struggling-first" ${v.strugglingFirst ? "checked" : ""} /> Prioritize hard words</label>
     <button class="btn ghost" id="vocab-practice" title="Extra ungraded reps on words you keep forgetting — doesn't affect mastery">Practice hard words</button>
     <span id="vocab-session-status" class="muted"></span>`;
@@ -4113,6 +4121,10 @@ function renderVocabSettings() {
   const sessStatus = sessRow.querySelector("#vocab-session-status");
   sessRow.querySelector("#vocab-session-size").addEventListener("change", (e) => {
     v.cardsPerSession = Number(e.target.value) || 0;
+    commit();
+  });
+  sessRow.querySelector("#vocab-practice-size").addEventListener("change", (e) => {
+    v.practicePerSession = Number(e.target.value) || 0;
     commit();
   });
   sessRow.querySelector("#vocab-struggling-first").addEventListener("change", (e) => {

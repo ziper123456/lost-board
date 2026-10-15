@@ -1808,6 +1808,8 @@ struct VocabPopupConfig {
     struggling_first: bool,
     /// Practice mode: show not-due struggling cards, never graded.
     practice: bool,
+    /// Cards per practice session (0 = all). Separate from the review cap.
+    practice_size: usize,
 }
 
 #[derive(serde::Serialize)]
@@ -1823,6 +1825,7 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     session_size: 1,
     struggling_first: true,
     practice: false,
+    practice_size: 10,
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -2480,14 +2483,6 @@ fn open_drill_window(
     practice: bool,
 ) -> Result<&'static str, String> {
     use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-    if let Some(w) = app.get_webview_window("drill") {
-        // Only grab focus on explicit user action (Preview button). The
-        // scheduler tick must never steal focus from another app.
-        if focus_existing {
-            let _ = w.set_focus();
-        }
-        return Ok("already-open");
-    }
     let cfg = read_vocab_section(app);
     let session_size = cfg
         .get("cardsPerSession")
@@ -2497,13 +2492,33 @@ fn open_drill_window(
         .get("strugglingFirst")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    *VOCAB_POPUP.lock().unwrap() = VocabPopupConfig {
+    let practice_size = cfg
+        .get("practicePerSession")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+    let new_config = VocabPopupConfig {
         lang: lang.to_string(),
         cats: cats.to_vec(),
         session_size,
         struggling_first,
         practice,
+        practice_size,
     };
+    if let Some(w) = app.get_webview_window("drill") {
+        // A different mode must be honoured: reload the popup so it re-reads the
+        // config and rebuilds its queue. Same mode → just focus (never steal
+        // focus on the scheduler tick).
+        let same_mode = VOCAB_POPUP.lock().unwrap().practice == practice;
+        if !same_mode {
+            *VOCAB_POPUP.lock().unwrap() = new_config;
+            let _ = w.eval("location.reload()");
+        }
+        if focus_existing {
+            let _ = w.set_focus();
+        }
+        return Ok("already-open");
+    }
+    *VOCAB_POPUP.lock().unwrap() = new_config;
     // Placement preset on the primary monitor, converted to logical pixels.
     let mon = app
         .primary_monitor()

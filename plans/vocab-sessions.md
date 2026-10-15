@@ -39,9 +39,9 @@ It reuses/extends the existing `gradeable = due` gate.
   `vocab.strugglingFirst`).
 - Scheduler coupling: **independent** — `everyMin` (cadence) and `cardsPerSession`
   (throughput) do not affect each other.
-- Frontend: Settings → Vocab gets a "Cards per session" select (1/3/5/10/All due),
-  a "Prioritize hard words" checkbox, and a "Practice hard words" button; the tile
-  gets a compact **Practice** button.
+- Frontend: Settings → Vocab gets "Cards per session" (1/3/5/10/All due) and
+  "Practice size" (5/10/20/All) selects, a "Prioritize hard words" checkbox, and a
+  "Practice hard words" button; the tile gets a compact **Practice** button.
 
 ## Corrections log
 
@@ -50,3 +50,10 @@ It reuses/extends the existing `gradeable = due` gate.
   JS side. Pure helpers `pick_due_batch` / `pick_practice_batch` keep selection
   testable (Rust unit tests: cap, only-due, exposure fallback, struggling-first,
   practice pool). `cargo test --lib` → 10 passing.
+- 2026-10-15: reveal no longer auto-advances (retype-after-reveal is part of
+  learning; typing the answer is the only way forward).
+- 2026-10-15: review follow-ups — practice gets its **own** cap (`practicePerSession`,
+  default 10) instead of the review session cap; opening a mode while a popup is
+  already open now **reloads** it into the requested mode; the due/mastery snapshot
+  is fetched **once** per session (not per card); `cats` hoisted. `cargo test --lib`
+  → 11 passing.

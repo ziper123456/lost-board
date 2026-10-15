@@ -84,6 +84,7 @@
 
   let mode = "review";        // "review" (graded) | "practice" (never graded)
   let lang = "es";
+  let cats = [];              // category filter read from the popup config
   let queue = [];             // [{ card, due }] — one session's worth of cards
   let idx = 0;
   let targets = [];           // accepted answers in order
@@ -92,6 +93,8 @@
   let gradeable = false;      // only grade cards that were actually due
   let cardDone = false;       // guards against advancing twice
   let cardId = "";
+  let sessionDue = 0;         // snapshot fetched once per session (not per card)
+  let sessionStats = null;
 
   // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
   // Practice mode is never graded, so extra reps leave the schedule untouched.
@@ -155,16 +158,10 @@
       progressEl.textContent = `${pos} · practice (not graded)`;
       return;
     }
-    progressEl.textContent = `${pos} · …`;
-    invoke("vocab_due_count", { categories: cats })
-      .then(async (due) => {
-        const stats = await invoke("vocab_srs_stats", { categories: cats }).catch(() => null);
-        const pct = stats && stats.total ? Math.round((stats.mature / stats.total) * 100) : 0;
-        progressEl.textContent = stats && stats.total
-          ? `${pos} · ${due} due · mastered ${pct}% (${stats.mature}/${stats.total}) · learning ${stats.learning}`
-          : `${pos} · ${due} due`;
-      })
-      .catch(() => { progressEl.textContent = pos; });
+    const pct = sessionStats && sessionStats.total ? Math.round((sessionStats.mature / sessionStats.total) * 100) : 0;
+    progressEl.textContent = sessionStats && sessionStats.total
+      ? `${pos} · ${sessionDue} due · mastered ${pct}% (${sessionStats.mature}/${sessionStats.total}) · learning ${sessionStats.learning}`
+      : `${pos} · ${sessionDue} due`;
   }
 
   function renderCard() {
@@ -193,8 +190,6 @@
     inputs()[0]?.focus();
   }
 
-  let cats = [];
-
   async function boot() {
     // Pull the board's theme tokens so the popup is decorated like the tiles.
     try {
@@ -210,19 +205,26 @@
       lang = cfg.lang || "es";
       cats = Array.isArray(cfg.cats) ? cfg.cats : [];
       mode = cfg.practice === true ? "practice" : "review";
-      const limit = Number(cfg.session_size) || 0; // 1 default; 0 = all due
       if (mode === "practice") {
         badgeEl.style.display = "inline-block";
         badgeEl.textContent = "Practice — not graded";
-        const cards = await invoke("vocab_practice_batch", { categories: cats, limit });
+        // Practice has its own cap (defaults to 10) — not the review session cap.
+        const practiceLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
+        const cards = await invoke("vocab_practice_batch", { categories: cats, limit: practiceLimit });
         queue = (cards || []).map((c) => ({ card: c, due: false }));
       } else {
+        const limit = Number(cfg.session_size) || 0; // 1 default; 0 = all due
         const batch = await invoke("vocab_due_batch", {
           categories: cats,
           limit,
           preferStruggling: cfg.struggling_first !== false,
         });
         queue = (batch || []).map((d) => ({ card: d.card, due: d.due === true }));
+        // Fetch the due/mastery snapshot once per session (updateProgress uses it).
+        try {
+          sessionDue = await invoke("vocab_due_count", { categories: cats });
+          sessionStats = await invoke("vocab_srs_stats", { categories: cats }).catch(() => null);
+        } catch { /* progress is optional */ }
       }
       if (!queue.length) {
         errorEl.textContent = mode === "practice"
