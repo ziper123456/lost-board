@@ -26,6 +26,12 @@
     font-size: 1rem; line-height: 1; padding: 2px 4px; border-radius: 6px;
   }
   #btn-reveal:hover { color: var(--text, #e8e8ee); background: var(--panel-2, #23232c); }
+  .mode-badge {
+    display: none; align-self: flex-start; margin-top: 6px;
+    font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--amber, #f0c674); border: 1px solid var(--amber, #f0c674);
+    border-radius: 999px; padding: 1px 8px;
+  }
   .prompt { font-size: 1.5rem; font-weight: 700; margin: 2px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .answer { display: flex; gap: 8px; align-items: center; }
   .answer input {
@@ -52,6 +58,7 @@
     <div class="prompt-label" id="lang-label">Translate to Spanish</div>
     <button id="btn-reveal" title="Show answer immediately">👁</button>
   </div>
+  <div class="mode-badge" id="mode-badge"></div>
   <div class="prompt" id="prompt">…</div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
@@ -64,50 +71,123 @@
 <script>
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   // Port of vocab-app typingMatch: lowercase + NFD diacritic-strip + trim.
-  const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
   const promptEl = document.getElementById("prompt");
   const labelEl = document.getElementById("lang-label");
-  const inputEl = document.getElementById("input");
   const revealEl = document.getElementById("reveal");
   const errorEl = document.getElementById("error");
+  const progressEl = document.getElementById("progress");
+  const badgeEl = document.getElementById("mode-badge");
+  const answerWrap = document.querySelector(".answer");
   const close = () => invoke("close_vocab_popup").catch(() => window.close());
 
-  let targets = [];   // accepted answers in order
+  let mode = "review";        // "review" (graded) | "practice" (never graded)
+  let lang = "es";
+  let cats = [];              // category filter read from the popup config
+  let queue = [];             // [{ card, due }] — one session's worth of cards
+  let idx = 0;
+  let targets = [];           // accepted answers in order
   let attempts = 0;
-  let answered = false;   // grade recorded already?
-  let gradeable = false;  // only grade cards that were actually due
+  let answered = false;       // grade recorded for the current card?
+  let gradeable = false;      // only grade cards that were actually due
+  let cardDone = false;       // guards against advancing twice
   let cardId = "";
+  let sessionDue = 0;         // snapshot fetched once per session (not per card)
+  let sessionStats = null;
 
   // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
+  // Practice mode is never graded, so extra reps leave the schedule untouched.
   function record(grade) {
+    if (mode === "practice") return;
     if (answered || !gradeable || !cardId) return;
     answered = true;
     invoke("vocab_record_review", { cardId, grade }).catch(() => {});
   }
 
-  function checkBoth() {
-    // "both" mode: two inputs must both match (mirrors vocab-app Both mode).
-    const vals = [...document.querySelectorAll(".answer input")].map((i) => norm(i.value));
-    return targets.every((t, i) => vals[i] === norm(t));
+  const inputs = () => [...document.querySelectorAll(".answer input")];
+  function isCorrect() {
+    const vals = inputs().map((i) => norm(i.value));
+    return targets.length > 1
+      ? targets.every((t, i) => vals[i] === norm(t))
+      : norm(inputs()[0]?.value) === norm(targets[0]);
+  }
+
+  function finishCard(delay) {
+    if (cardDone) return;
+    cardDone = true;
+    setTimeout(advance, delay);
   }
 
   function onInput() {
-    const done = targets.length > 1 ? checkBoth() : norm(inputEl.value) === norm(targets[0]);
-    if (done) {
-      inputEl.classList.remove("bad");
-      inputEl.classList.add("ok");
-      record(attempts === 0 ? "good" : "hard");
-      setTimeout(close, 1500);
-      return;
-    }
-    // Count an attempt on Enter with a non-empty, non-matching value.
+    if (cardDone || !isCorrect()) return;
+    inputs().forEach((i) => { i.classList.remove("bad"); i.classList.add("ok"); });
+    record(attempts === 0 ? "good" : "hard");
+    finishCard(1500); // typing the answer is the only way forward — pause to read
   }
 
   function revealNow() {
+    // Show the answer and record the honest fail, but KEEP the card open: reading
+    // and retyping it after reveal is part of learning, so we never auto-skip.
     revealEl.textContent = "Answer: " + targets.join(" / ");
-    document.querySelectorAll(".answer input").forEach((i) => i.classList.add("bad"));
+    inputs().forEach((i) => i.classList.add("bad"));
     record("again");
+  }
+
+  function advance() {
+    idx += 1;
+    if (idx >= queue.length) {
+      close();
+      return;
+    }
+    renderCard();
+  }
+
+  function makeInput(placeholder) {
+    const i = document.createElement("input");
+    i.type = "text";
+    i.autocomplete = "off";
+    i.placeholder = placeholder;
+    i.addEventListener("input", onInput);
+    return i;
+  }
+
+  function updateProgress() {
+    const pos = `Card ${idx + 1}/${queue.length}`;
+    if (mode === "practice") {
+      progressEl.textContent = `${pos} · practice (not graded)`;
+      return;
+    }
+    const pct = sessionStats && sessionStats.total ? Math.round((sessionStats.mature / sessionStats.total) * 100) : 0;
+    progressEl.textContent = sessionStats && sessionStats.total
+      ? `${pos} · ${sessionDue} due · mastered ${pct}% (${sessionStats.mature}/${sessionStats.total}) · learning ${sessionStats.learning}`
+      : `${pos} · ${sessionDue} due`;
+  }
+
+  function renderCard() {
+    const { card, due } = queue[idx];
+    cardId = card.id;
+    gradeable = mode === "review" && due === true; // practice/early cards are never graded
+    answered = false;
+    attempts = 0;
+    cardDone = false;
+    revealEl.textContent = "";
+    errorEl.textContent = "";
+    promptEl.textContent = card.en;
+    promptEl.title = card.en;
+    labelEl.textContent =
+      lang === "both" ? "Translate to Spanish + German" : lang === "de" ? "Translate to German" : "Translate to Spanish";
+
+    answerWrap.innerHTML = "";
+    if (lang === "both") {
+      answerWrap.append(makeInput("español"), makeInput("deutsch"));
+      targets = [card.es, card.de];
+    } else {
+      answerWrap.append(makeInput("type the translation"));
+      targets = [lang === "de" ? card.de : card.es];
+    }
+    updateProgress();
+    inputs()[0]?.focus();
   }
 
   async function boot() {
@@ -121,60 +201,48 @@
       }
     } catch { /* keep the fallback look */ }
     try {
-      const cfg = await invoke("vocab_popup_config").catch(() => ({ lang: "es", cats: [] }));
-      const lang = cfg.lang || "es";
-      const cats = Array.isArray(cfg.cats) ? cfg.cats : [];
-      const dueRes = await invoke("vocab_due_card", { categories: cats });
-      if (!dueRes || !dueRes.card) {
-        errorEl.textContent = "No cards available — clear the category filter in Settings > Vocab.";
+      const cfg = (await invoke("vocab_popup_config").catch(() => ({}))) || {};
+      lang = cfg.lang || "es";
+      cats = Array.isArray(cfg.cats) ? cfg.cats : [];
+      mode = cfg.practice === true ? "practice" : "review";
+      if (mode === "practice") {
+        badgeEl.style.display = "inline-block";
+        badgeEl.textContent = "Practice — not graded";
+        // Practice has its own cap (defaults to 10) — not the review session cap.
+        const practiceLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
+        const cards = await invoke("vocab_practice_batch", { categories: cats, limit: practiceLimit });
+        queue = (cards || []).map((c) => ({ card: c, due: false }));
+      } else {
+        const limit = Number(cfg.session_size) || 0; // 1 default; 0 = all due
+        const batch = await invoke("vocab_due_batch", {
+          categories: cats,
+          limit,
+          preferStruggling: cfg.struggling_first !== false,
+        });
+        queue = (batch || []).map((d) => ({ card: d.card, due: d.due === true }));
+        // Fetch the due/mastery snapshot once per session (updateProgress uses it).
+        try {
+          sessionDue = await invoke("vocab_due_count", { categories: cats });
+          sessionStats = await invoke("vocab_srs_stats", { categories: cats }).catch(() => null);
+        } catch { /* progress is optional */ }
+      }
+      if (!queue.length) {
+        errorEl.textContent = mode === "practice"
+          ? "No struggling cards to practise right now."
+          : "No cards available — clear the category filter in Settings > Vocab.";
         return;
       }
-      const card = dueRes.card;
-      cardId = card.id;
-      gradeable = dueRes.due === true; // only grade cards that were due
-      promptEl.textContent = card.en;
-      promptEl.title = card.en;
-      // Show review progress in the popup itself.
-      try {
-        const [due, stats] = await Promise.all([
-          invoke("vocab_due_count", { categories: cats }),
-          invoke("vocab_srs_stats", { categories: cats }),
-        ]);
-        const progEl = document.getElementById("progress");
-        if (progEl && stats) {
-          const pct = stats.total ? Math.round((stats.mature / stats.total) * 100) : 0;
-          progEl.textContent = `Due today: ${due} · mastered ${pct}% (${stats.mature}/${stats.total}) · learning ${stats.learning}`;
-        }
-      } catch { /* progress is optional */ }
-      if (lang === "both") {
-        labelEl.textContent = "Translate to Spanish + German";
-        const wrap = document.querySelector(".answer");
-        wrap.innerHTML = `<input id="input-es" type="text" autocomplete="off" placeholder="español" /><input id="input-de" type="text" autocomplete="off" placeholder="deutsch" />`;
-        targets = [card.es, card.de];
-        wrap.querySelectorAll("input").forEach((i) => i.addEventListener("input", onInput));
-        wrap.querySelector("input").focus();
-      } else {
-        const isDe = lang === "de";
-        labelEl.textContent = isDe ? "Translate to German" : "Translate to Spanish";
-        targets = [isDe ? card.de : card.es];
-        inputEl.addEventListener("input", onInput);
-        inputEl.focus();
-      }
-      // Enter with a wrong answer counts an attempt: 2 attempts, then reveal.
-      document.querySelector(".answer").addEventListener("keydown", (e) => {
+      renderCard();
+      answerWrap.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
-        const done = targets.length > 1 ? checkBoth() : norm(inputEl.value) === norm(targets[0]);
-        if (done) return; // auto-close already scheduled by onInput
-        const val = targets.length > 1
-          ? [...document.querySelectorAll(".answer input")].map((i) => i.value).join(" / ")
-          : inputEl.value;
-        if (!norm(val)) return;
+        if (isCorrect()) return; // onInput already scheduled the advance
+        if (!inputs().some((i) => norm(i.value))) return;
         attempts += 1;
         if (attempts >= 2) {
           revealNow();
         } else {
-          document.querySelectorAll(".answer input").forEach((i) => i.classList.add("bad"));
-          setTimeout(() => document.querySelectorAll(".answer input").forEach((i) => i.classList.remove("bad")), 600);
+          inputs().forEach((i) => i.classList.add("bad"));
+          setTimeout(() => inputs().forEach((i) => i.classList.remove("bad")), 600);
         }
       });
       document.getElementById("btn-reveal").addEventListener("click", revealNow);

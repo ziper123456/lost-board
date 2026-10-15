@@ -311,8 +311,8 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("read_vocab_cards", { count, categories: categories || [] });
     return [];
   },
-  async openVocabPopup(lang, categories, position) {
-    if (window.__TAURI__) return invoke("open_vocab_popup", { lang, categories: categories || [], position: position || "bottom-right" });
+  async openVocabPopup(lang, categories, position, practice) {
+    if (window.__TAURI__) return invoke("open_vocab_popup", { lang, categories: categories || [], position: position || "bottom-right", practice: practice === true });
     return "disabled";
   },
   async vocabCategories() {
@@ -322,6 +322,14 @@ async openFolder(path) {
   async vocabDueCard(categories) {
     if (window.__TAURI__) return invoke("vocab_due_card", { categories: categories || [] });
     return null;
+  },
+  async vocabDueBatch(categories, limit, preferStruggling) {
+    if (window.__TAURI__) return invoke("vocab_due_batch", { categories: categories || [], limit: limit || 0, preferStruggling: preferStruggling === true });
+    return [];
+  },
+  async vocabPracticeBatch(categories, limit) {
+    if (window.__TAURI__) return invoke("vocab_practice_batch", { categories: categories || [], limit: limit || 0 });
+    return [];
   },
   async vocabDueCount(categories) {
     if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [] });
@@ -1228,6 +1236,9 @@ function vocabConfig() {
   if (v.quietEnd === undefined) v.quietEnd = "";
   if (!Array.isArray(v.drillCats)) v.drillCats = [];
   if (!v.popupPosition) v.popupPosition = "bottom-right";
+  if (v.cardsPerSession === undefined) v.cardsPerSession = 1; // 0 = all due
+  if (v.strugglingFirst === undefined) v.strugglingFirst = true;
+  if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
   return v;
 }
 
@@ -1255,7 +1266,10 @@ async function renderVocabBody(c, body) {
     return;
   }
   body.innerHTML = `
-    ${due > 0 ? `<div class="vocab-due muted" title="Cards due for review">Due today: ${due}</div>` : ""}
+    <div class="vocab-top">
+      ${due > 0 ? `<span class="vocab-due muted" title="Cards due for review">Due today: ${due}</span>` : `<span></span>`}
+      <button class="btn ghost vocab-practice-btn" title="Extra practice on hard words (not graded)">Practice</button>
+    </div>
     <div class="vocab-card">
       <div class="vocab-en"></div>
       <div class="vocab-other"></div>
@@ -1311,6 +1325,13 @@ async function renderVocabBody(c, body) {
     saveState();
     render();
   });
+  const practiceBtn = body.querySelector(".vocab-practice-btn");
+  if (practiceBtn) {
+    practiceBtn.addEventListener("click", () => {
+      const v = vocabConfig();
+      native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right", true).catch(() => {});
+    });
+  }
   const enEl = body.querySelector(".vocab-en");
   const otherEl = body.querySelector(".vocab-other");
   let i = 0;
@@ -4072,6 +4093,51 @@ function renderVocabSettings() {
       renderVocabSettings();
     } catch (e) {
       statusEl.textContent = `failed: ${e.message || e}`;
+    }
+  });
+
+  // Session size (cap) + struggling priority (B2a) + extra practice (B2b).
+  const sessRow = document.createElement("div");
+  sessRow.className = "item-row";
+  sessRow.innerHTML = `
+    <label>Cards per session
+      <select id="vocab-session-size">
+        ${[[1, "1"], [3, "3"], [5, "5"], [10, "10"], [0, "All due"]]
+          .map(([val, label]) => `<option value="${val}" ${Number(v.cardsPerSession) === val ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>
+    </label>
+    <label>Practice size
+      <select id="vocab-practice-size">
+        ${[[5, "5"], [10, "10"], [20, "20"], [0, "All"]]
+          .map(([val, label]) => `<option value="${val}" ${Number(v.practicePerSession) === val ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>
+    </label>
+    <label title="Show high-lapse cards first in the session"><input type="checkbox" id="vocab-struggling-first" ${v.strugglingFirst ? "checked" : ""} /> Prioritize hard words</label>
+    <button class="btn ghost" id="vocab-practice" title="Extra ungraded reps on words you keep forgetting — doesn't affect mastery">Practice hard words</button>
+    <span id="vocab-session-status" class="muted"></span>`;
+  panel.appendChild(sessRow);
+  const sessStatus = sessRow.querySelector("#vocab-session-status");
+  sessRow.querySelector("#vocab-session-size").addEventListener("change", (e) => {
+    v.cardsPerSession = Number(e.target.value) || 0;
+    commit();
+  });
+  sessRow.querySelector("#vocab-practice-size").addEventListener("change", (e) => {
+    v.practicePerSession = Number(e.target.value) || 0;
+    commit();
+  });
+  sessRow.querySelector("#vocab-struggling-first").addEventListener("change", (e) => {
+    v.strugglingFirst = e.target.checked;
+    commit();
+  });
+  sessRow.querySelector("#vocab-practice").addEventListener("click", async () => {
+    sessStatus.textContent = "opening…";
+    try {
+      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right", true);
+      sessStatus.textContent = res === "already-open" ? "already open" : "opened";
+    } catch (e) {
+      sessStatus.textContent = `failed: ${e.message || e}`;
     }
   });
 

@@ -783,6 +783,8 @@ input[type="text"], input[type="number"], input[type="password"], select {
 
 /* Vocab flashcard tile */
 .vocab-card { padding: 10px 4px 6px; text-align: center; }
+.vocab-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 18px; }
+.vocab-practice-btn { font-size: 0.68rem; padding: 1px 8px; line-height: 1.4; }
 .vocab-en { font-size: 1.35rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vocab-other { font-size: 0.82rem; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vocab-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }

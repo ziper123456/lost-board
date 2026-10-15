@@ -223,6 +223,12 @@ shuffle independently (different words in each is variety, not a bug).
   **new / learning / young / mature (≥21d)**, plus a **struggling** count (lapses ≥ 3). Settings
   shows a mastery bar and a per-category table (scoped to the category filter; uncategorized
   cards listed as "(uncategorized)"); the popup shows mastered %.
+- **FR-VOC-015** The drill popup shall run a **session** of up to `cardsPerSession` due cards
+  (0 = all), stepping through them and closing at the end. When `strugglingFirst` is on, due
+  cards with the most lapses are shown first. Failed cards are still rescheduled by SM-2.
+- **FR-VOC-016** **Practice mode** (manual button in Settings and the Vocab tile) shall show
+  **not-due struggling** cards for extra reps. Practice is **never graded** — it must not change
+  the schedule or mastery, so only genuinely spaced (due) reviews count.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
