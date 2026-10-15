@@ -341,6 +341,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [] });
     return null;
   },
+  async vocabCategoryStats(categories) {
+    if (window.__TAURI__) return invoke("vocab_category_stats", { categories: categories || [] });
+    return [];
+  },
   async setPopupTheme(css) {
     if (window.__TAURI__) return invoke("set_popup_theme", { css });
   },
@@ -4083,9 +4087,10 @@ function renderVocabSettings() {
     <span id="vocab-srs-status" class="muted"></span>`;
   panel.appendChild(srsRow);
   const srsProg = document.createElement("div");
-  srsProg.className = "item-row";
-  srsProg.innerHTML = `<span class="muted" id="vocab-srs-progress">…</span>`;
+  srsProg.className = "item-row vocab-mastery";
+  srsProg.innerHTML = `<div class="vocab-mastery-bar" aria-hidden="true"></div><span class="muted" id="vocab-srs-progress">…</span>`;
   panel.appendChild(srsProg);
+  const barEl = srsProg.querySelector(".vocab-mastery-bar");
   const progEl = srsProg.querySelector("#vocab-srs-progress");
   const loadStats = () =>
     native
@@ -4093,14 +4098,53 @@ function renderVocabSettings() {
       .then((s) => {
         if (!s) {
           progEl.textContent = "";
+          barEl.innerHTML = "";
           return;
         }
-        progEl.textContent = `Progress: ${s.seen}/${s.total} seen · ${s.due} due now · ${s.new} new`;
+        const tot = s.total || 1;
+        const seg = (cls, n) =>
+          n > 0 ? `<span class="vocab-mastery-seg ${cls}" style="width:${(n / tot) * 100}%"></span>` : "";
+        barEl.innerHTML =
+          seg("mature", s.mature) + seg("young", s.young) + seg("learning", s.learning) + seg("new", s.new);
+        const pct = s.total ? Math.round((s.mature / s.total) * 100) : 0;
+        progEl.textContent =
+          `Mastered ${s.mature}/${s.total} (${pct}%) · learning ${s.learning} · young ${s.young} · new ${s.new} · ${s.due} due now` +
+          (s.struggling ? ` · ${s.struggling} struggling` : "");
       })
       .catch(() => {
         progEl.textContent = "";
+        barEl.innerHTML = "";
       });
   loadStats();
+
+  const masteryHead = document.createElement("h3");
+  masteryHead.textContent = "Mastery by category";
+  panel.appendChild(masteryHead);
+  const catTable = document.createElement("div");
+  catTable.className = "vocab-mastery-table";
+  catTable.innerHTML = `<span class="muted">loading…</span>`;
+  panel.appendChild(catTable);
+  native
+    .vocabCategoryStats(v.drillCats || [])
+    .then((rows) => {
+      if (!catTable.isConnected) return;
+      if (!rows || !rows.length) {
+        catTable.innerHTML = `<span class="muted">no categories found</span>`;
+        return;
+      }
+      catTable.innerHTML =
+        `<table><thead><tr><th>Category</th><th>Cards</th><th>Mastered</th><th>Learn</th><th>Young</th><th>New</th><th>Due</th></tr></thead><tbody>` +
+        rows
+          .map((r) => {
+            const pct = r.total ? Math.round((r.mature / r.total) * 100) : 0;
+            return `<tr><td>${escapeHtml(r.category)}</td><td>${r.total}</td><td><b>${pct}%</b> <span class="muted">(${r.mature})</span></td><td>${r.learning}</td><td>${r.young}</td><td>${r.new}</td><td>${r.due}</td></tr>`;
+          })
+          .join("") +
+        `</tbody></table>`;
+    })
+    .catch(() => {
+      if (catTable.isConnected) catTable.innerHTML = `<span class="muted">couldn't load stats</span>`;
+    });
   const srsChk = srsRow.querySelector("#vocab-srs");
   const srsStatus = srsRow.querySelector("#vocab-srs-status");
   native.vocabSrsEnabled().then((on) => { srsChk.checked = on === true; }).catch(() => {});
