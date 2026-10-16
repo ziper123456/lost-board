@@ -2,22 +2,25 @@
 type: spec
 title: lost-board — Feature Specification
 project: lost-board
-date: 2026-10-08
+date: 2026-10-15
 status: living (all planned features built — see PLAN.md; Phase 3 backlog open)
 decisions:
   arch: A (Tauri desktop app, local-only)
-  scope: MVP all compartments except synced lyrics (phase 2)
+  scope: MVP all compartments except synced lyrics (dropped)
   grid: fixed-column grid (snap to rows/columns)
   azure: deep-links only (PAT live tiles dropped — deep-links sufficient)
-  spotify: play/pause/next/prev/volume + shuffle/repeat + queue in v1; synced lyrics dropped
-  weather: per-compartment locations + world-clock time per location
+  spotify: play/pause/next/prev/volume + shuffle/repeat + queue + seek in v1; synced lyrics dropped
+  weather: per-compartment locations + world-clock time per location + animated country card
   healthcheck: dropped (probe tile deemed unnecessary)
   lyrics: dropped (was phase 2; no longer wanted)
   launcher: folders + any file (open via OS association), plus Projects tile with root scanning
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   window: background mode — tray + autostart + always-on-bottom (built, PR #30)
-  vocab: flashcard tile + drill popup + per-tile speech (built, PRs #31, #33)
+  vocab: flashcard tile + drill popup + per-tile speech + SM-2 spaced repetition, mastery
+    buckets, capped sessions + practice mode (built, PRs #31, #33, #36, #43..#45)
   meme: rotation tile (top-100 + curated) + local captioning + expanded view + GIF/PNG export (built, PR #32)
+  calendar: Vietnamese lunar + moon phase + holidays tile (built, PR #41)
+  theming: 6 extra themes + global design-token layer + Design tab (built, PRs #35, #42)
   auth: none (single user, localhost only)
 related:
   - "[[Projects/mu-idle/plan.md]]"
@@ -176,7 +179,7 @@ first-class APIs.
 - **FR-WIN-005** Known quirks (accepted): Win+D minimizes the window (restore via tray icon);
   Alt-Tab focus keeps it visually behind other windows.
 
-### 2.13 Vocab: flashcard tile + drill popup + speech (built — PRs #31, #33)
+### 2.13 Vocab: flashcard tile + drill popup + speech + spaced repetition (built — PRs #31, #33, #36, #43..#45)
 
 Design: passive exposure lives on the board (infinite trilingual flashcard), active recall
 lives in a popup on the main screen (typing drill). This supersedes the earlier
@@ -196,14 +199,16 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-004** When popups are enabled, the system shall show a drill popup every M
   minutes (setting) at the configured 3x3 placement preset (default bottom-right
   of the primary monitor).
-- **FR-VOC-005** Each popup shall present exactly one English word with an input for the target
+- **FR-VOC-005** A popup shall present one English word at a time with an input for the target
   language (popup language setting: ES / DE / Both, mirroring vocab-app modes), drawn from
   the selected categories when a category filter is set (popup-only; empty filter = all cards).
+  A popup runs a **session** of up to N due cards and steps through them (see FR-VOC-015).
 - **FR-VOC-006** Typing shall auto-check on match (case- and diacritic-insensitive, port of
   vocab-app matching); max 2 attempts per word, then the answer is revealed — or immediately
-  via the reveal button.
-- **FR-VOC-007** On a correct answer the popup shall show a brief success state and auto-close
-  (~1.5s); on reveal-after-fail the user dismisses manually.
+  via the reveal button. Revealing keeps the card **open** so the user can read and retype it;
+  typing the correct answer is what advances (retyping after reveal is part of learning).
+- **FR-VOC-007** On a correct answer the popup shall show a brief success state and advance to
+  the next card in the session (~1.5s); the session closes when its cards run out.
 - **FR-VOC-008** Every popup shall offer Dismiss and Snooze-30min; the system shall never stack
   popups (no second popup while one is open); a quiet-hours window and a master enable/disable
   switch shall be configurable.
@@ -265,7 +270,7 @@ auth, custom images are user-supplied, captioning is fully local.
   (default: Pinterest `https://www.pinterest.com/search/pins/?q={q}&rs=typed`; engine URL
   configurable with a `{q}` placeholder).
 
-### 2.15 Calendar tile: lunar calendar + moon phase + holidays
+### 2.15 Calendar tile: lunar calendar + moon phase + holidays (built — PR #41)
 
 - **FR-CAL-001** The tile shall show a month grid (week starts Monday by default, Sunday optional)
   with adjacent-month days dimmed and the current day highlighted.
@@ -279,7 +284,7 @@ auth, custom images are user-supplied, captioning is fully local.
   in `src/holidays.js` (Vietnamese lunar dates + Gregorian Easter computus). Islamic Pakistan
   holidays are deferred (need a Hijri conversion).
 
-### 2.16 Design tokens (global decoration layer)
+### 2.16 Design tokens (global decoration layer) (built — PR #42)
 
 - **FR-DSN-001** The system shall expose a curated set of **design tokens** (surfaces,
   borders, radius, typography, buttons, rows/inputs, tiles, accents, effects, board
@@ -290,6 +295,18 @@ auth, custom images are user-supplied, captioning is fully local.
   generic categories + a custom family field).
 - **FR-DSN-004** Per-tile decoration extends to tile border color/width, radius, shadow,
   background gradient and font size/weight.
+
+### 2.17 UI polish: themes, tile context menu, hide header
+
+- **FR-UI-001** The system shall ship a set of themes — default plus Dracula, Nord, Solarized
+  Dark/Light, Rosé Pine, and Gruvbox — selectable in Settings.
+- **FR-UI-002** Right-clicking a tile shall open a context menu with per-tile actions
+  (configure, collapse/expand, hide header, remove, …).
+- **FR-UI-003** Each tile shall support a **Hide-header** mode so its body fills the tile
+  (bare/immersive), with header affordances available on hover / via the context menu.
+- **FR-UI-004** The Weather tile shall render an animated, country-themed conditions card.
+- **FR-UI-005** The Spotify tile volume shall be responsive and its progress bar locally
+  interpolated; clicking/dragging the bar seeks.
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
@@ -499,15 +516,18 @@ Given the expanded view with default engine,
 When the user types "disappointing meme" and confirms,
 Then a browser tab opens at `https://www.pinterest.com/search/pins/?q=disappointing%20meme&rs=typed`.
 
-### AC-016: Unhealthy service
-Given a configured service whose health endpoint returns 500 (or is unreachable),
-When the dashboard probes it,
-Then the tile shows red and the failure status.
+### AC-038: Vocab spaced repetition
+Given spaced repetition enabled, when a card is due, then the drill presents it before random
+cards and grading (correct = pass, reveal = fail) reschedules it via SM-2; the tile shows a due count.
 
-### AC-017: Click-through
-Given a service tile,
-When the user clicks it,
-Then the health endpoint URL opens in the browser.
+### AC-039: Vocab mastery view
+Given reviewed cards, when Settings > Vocab renders, then a mastery bar shows new/learning/young/
+mature buckets (mature = interval ≥ 21 days) and a per-category table with mastered %.
+
+### AC-040: Drill session + practice
+Given a session size of 5, when the drill opens, then it steps through up to 5 due cards and closes;
+and "Practice hard words" shows not-due struggling cards that are **never graded** (schedule/mastery
+unchanged).
 
 ---
 
@@ -533,74 +553,31 @@ Then the health endpoint URL opens in the browser.
 
 ## 6. Implementation TODO Checklist
 
-### Phase 1 — MVP (all compartments except synced lyrics)
-**Scaffold**
-- [ ] Create Tauri project (Rust backend + web frontend).
-- [ ] Set up app data dir + JSON config load/save with backup on corrupt.
+> **Historical build checklist** — everything in Phase 1 and Phase 2 is **built** (PRs #1–#45;
+> see `PLAN.md` for status and PR numbers). Retained as a record; only the Phase 3 items remain.
 
-**Grid / layout engine**
-- [ ] Integrate a draggable + resizable grid (e.g., `react-grid-layout` or `gridstack.js`).
-- [ ] Persist layout (positions/sizes/order) on change; restore on launch.
+### Phase 1 — MVP (built; PRs #1–#14)
+- [x] Tauri project scaffold (Rust backend + web frontend); app-data JSON config with `.bak` on corrupt.
+- [x] Fixed-column grid: drag + resize + snap, persisted layout; timer cleanup on re-render.
+- [x] Settings page for every compartment + native file/folder pickers.
+- [x] Folders & Files (open via OS association) + Projects (root scanning) + missing-path degrade.
+- [x] Bookmarks (CRUD) + Azure DevOps deep-links (PR + Files); Azure PAT live tiles dropped.
+- [x] Spotify OAuth PKCE + play/pause/next/prev/volume (+ later shuffle/repeat/queue/seek).
+- [x] Weather + world clock (per-location) and News (RSS).
+- [x] System stats (CPU/RAM).
+- [x] ~~Service Healthcheck~~ — dropped (tab removed, PR #29).
+- [ ] Offline / stale-data badges across network compartments. *(Phase 3)*
+- [ ] Formal play-test of AC-001..014 and AC-018..037. *(Phase 3)*
 
-**Settings page**
-- [ ] Settings routes/sections: Folders, Solutions, Bookmarks, Azure, Spotify, Weather, News, System.
-- [ ] Native folder/solution file picker (Tauri dialog) for path selection.
-
-**Compartment: Folder/Solution**
-- [ ] Tauri command `open_in_explorer(path)`.
-- [ ] Tauri command `launch_sln(path)` (uses OS association).
-- [ ] Missing-path degraded state.
-
-**Compartment: Bookmarks + Azure**
-- [ ] Bookmark CRUD in settings + tile rendering.
-- [ ] Azure deep-link builder (`org/project/_git/repo/...` for PR and Files).
-- [ ] Azure PAT input (stored via OS secret store).
-- [ ] Azure REST: open-PR count + latest commit (GET `https://dev.azure.com/{org}/{project}/_apis/git/repositories/{repo}/pullrequests?...`).
-- [ ] Bookmark-only fallback when no PAT.
-
-**Compartment: Spotify**
-- [ ] Spotify auth flow (OAuth PKCE, local-only token).
-- [ ] Poll current playback (`/v1/me/player`) for track/artist/art.
-- [ ] Play/Pause, Next/Previous (`/v1/me/player/next|previous|pause|play`).
-- [ ] Volume set (`/v1/me/player/volume`).
-- [ ] Not-running / not-authorized state.
-
-**Compartment: Weather + World Clock**
-- [ ] Open-Meteo fetch by configured location; current + short forecast.
-- [ ] Per-compartment location configuration.
-- [ ] World-clock time display per location (updated in real time).
-
-**Compartment: News**
-- [ ] RSS fetch + parse for configured feeds; headline list + click-through.
-
-**Compartment: System Stats**
-- [ ] Tauri command reading CPU % + RAM usage; interval refresh 1–2s.
-
-**Compartment: Service Healthcheck**
-- [ ] Healthcheck CRUD in settings (URL, path, timeout, interval, optional auth token).
-- [ ] Probe runner: concurrent `GET` with timeout, independent per service.
-- [ ] Status rendering: green/red, HTTP status, latency ms; click-through opens endpoint.
-- [ ] Auth token stored via OS secret store, sent as `Authorization` header.
-
-**Polish**
-- [ ] Offline / stale-data badge behavior across network compartments.
-- [ ] Play-test AC-001..AC-012.
-
-### Phase 2 — Enhancements (all built 2026-10-08)
-- [x] ~~Spotify synced lyrics~~ — **dropped** (2026-10-07, no longer wanted).
-- [x] ~~Background mode implementation (FR-WIN-001..005, AC-018..020)~~ — built (PR #30).
-- [x] ~~Healthcheck tab removal from UI (dropped feature cleanup)~~ — built (PR #29).
-- [x] ~~Vocab implementation (FR-VOC-001..009, AC-021..026, AC-034)~~ — built (PRs #31, #33):
-  - [x] Rust `read_vocab_cards` command (parse shared `cards.csv`, in-memory cache).
-  - [x] Flashcard tile (new `vocab` kind, per-tile rotation interval, pause-on-collapse).
-  - [x] Drill popup page + scheduler + placement + annoyance controls.
-  - [x] Port of vocab-app matching (normalize + auto-check + 2-attempt reveal).
-  - [x] Per-tile speech with per-language voices, volume + speed (FR-VOC-009).
-- [x] ~~Meme tile implementation (FR-MEM-001..007, AC-027..033)~~ — built (PR #32):
-  - [x] Rotation from top-100 + shared curated collection (image fetch/cache command).
-  - [x] Add via URL paste + file drop (browser-tab drop best-effort).
-  - [x] Local caption overlay + PNG export (+ animated GIF export, captioned or not).
-  - [x] Expanded view (fullscreen overlay, reusable pattern).
+### Phase 2 — Enhancements (built)
+- [x] Translate (DeepL, OS secret store) + Frame (photo/GIF) tiles.
+- [x] Config export/import (secrets excluded) + editable/persisted zoom.
+- [x] Background mode — tray + autostart + always-on-bottom (PR #30, AC-018..020).
+- [x] Vocab flashcards — tile + drill popup + per-tile speech (PRs #31, #33, AC-021..026/034).
+- [x] Meme tile — rotation + curated collection + captioning + PNG/GIF export (PR #32, AC-027..033).
+- [x] Vocab spaced repetition (SM-2), mastery buckets, capped sessions + practice (PRs #43..#45).
+- [x] Extra themes + design-token layer (PRs #35, #42); Calendar tile (PR #41); tile context menu,
+      hide-header, animated weather card, Spotify seek (PRs #37..#40).
 - [ ] (Optional) macOS/Linux build; multi-screen/status-bar support.
 
 ---
