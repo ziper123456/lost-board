@@ -3,15 +3,16 @@
 Cross-machine tracking for the project. **This file + `spec.md` live in the repo** so work can
 continue from any machine. Keep this updated as you go.
 
-## Status (updated 2026-10-08)
+## Status (updated 2026-10-15)
 - **Phase 0 (Foundation):** done — scaffold, native commands, app-data persistence, fixed-column grid with drag/resize/snap, timer lifecycle.
 - **Phase 1 (Core launchers):** done — Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links.
-- **Phase 2 (Live information):** done — Weather + world clock, News, Translate, Spotify (+shuffle/repeat/queue jump), Frame.
+- **Phase 2 (Live information):** done — Weather + world clock, News, Translate, Spotify (+shuffle/repeat/queue jump/seek), Frame.
 - **Phase 2b (Desktop integration):** done — Background mode (tray + autostart + always-on-bottom), Config export/import, editable + persisted zoom.
 - **Phase 2c (New tiles):** done — Vocab flashcards (tile + drill popup + per-tile speech), Memes (rotation + collection + captioning + GIF/PNG export).
+- **Phase 2d (UI + Calendar + Vocab SRS, 2026-10-09..15):** done — 6 extra themes (#35), tile right-click context menu (#38), animated country-themed weather card (#39), per-tile Hide-header mode (#40), Calendar tile (Vietnamese lunar + moon phase + holidays, #41), design-token layer + Design tab (#42), Vocab drill options — category filter / 9-position placement / instant reveal (#36), **SM-2 spaced repetition** (#43), **mastery buckets + per-category table** (#44), **capped drill sessions + struggling-first pile + ungraded practice mode** (#45).
 - **Dropped:** Service Healthcheck (tab removed), synced lyrics, git-status tile, sticky notes, Azure PAT live tiles, vocab-app gateway button. (Local clock covered by weather tiles; media keys covered by keyboard.)
 - **Next up:** Phase 3 backlog below (offline badges, AC play-test, macOS/Linux, forecast detail). No open PRs, no open issues.
-- **Review:** see `REVIEW.md` (all delta findings F1–F5 resolved; per-PR reviews for #22–#33).
+- **Review:** see `REVIEW.md` (base review + deltas; per-PR reviews through #45).
 
 ## Locked decisions (from spec)
 | Decision | Value |
@@ -21,7 +22,7 @@ continue from any machine. Keep this updated as you go.
 | Grid | **Fixed-column grid** (drag + resize, snap to cells) |
 | Auth | **None** (single user, localhost only) |
 | Weather | **Per-compartment locations** + world-clock time per location |
-| Healthcheck | **Probe-only** GET to /health, green/red + latency |
+| Healthcheck | **Dropped** (probe tile removed, PR #29) |
 | Spotify | play/pause/next/prev/volume in MVP; **synced lyrics → Phase 2** |
 | Azure | PAT from Settings (read-only live tiles); deep-links without PAT |
 | Solutions | Clicking a solution **opens** the `.sln` — it does **not** build it |
@@ -51,7 +52,7 @@ data storage, error states, and secrets consistent across the dashboard.
    - Implement RSS news and service health checks.
    - Implement Spotify OAuth and playback controls.
 6. **Verification and polish**
-   - Add offline/stale states, resolve timer cleanup, and play-test AC-001 through AC-017.
+   - Add offline/stale states, resolve timer cleanup, and play-test AC-001..014 and AC-018..037.
 
 ## Roadmap
 
@@ -94,9 +95,22 @@ data storage, error states, and secrets consistent across the dashboard.
 - [x] Removed dead Healthcheck tab from UI → `plans/healthcheck-tab-removal.md` (PR #29)
 - [x] Implementation plans index + conventions: `plans/README.md`
 
+### Phase 2d — UI polish, Calendar, Vocab SRS (built 2026-10-09 .. 10-15)
+- [x] 6 extra themes — Dracula, Nord, Solarized Dark/Light, Rosé Pine, Gruvbox (PR #35)
+- [x] Vocab drill options — category filter, 9-position placement, instant reveal (PR #36)
+- [x] Spotify responsive volume slider + locally-interpolated progress/seek (PR #37)
+- [x] Tile right-click context menu (PR #38)
+- [x] Country-themed animated weather card (PR #39)
+- [x] Per-tile Hide-header (bare/immersive) mode (PR #40)
+- [x] Calendar tile — Vietnamese lunar + moon phase + holidays → `plans/calendar-tile.md` (PR #41)
+- [x] Design-token layer + Design tab → `plans/design-tokens.md` (PR #42)
+- [x] Vocab spaced repetition (SM-2) → `plans/vocab-srs.md` (PR #43)
+- [x] Vocab mastery buckets + per-category table (PR #44)
+- [x] Vocab drill sessions — card cap + struggling-first pile + practice mode → `plans/vocab-sessions.md` (PR #45)
+
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments
-- [ ] Play-test AC-001..AC-017 (see spec.md)
+- [ ] Play-test AC-001..014 and AC-018..037 (see spec.md)
 - [x] ~~Spotify synced lyrics~~ — **dropped**
 - [ ] macOS / Linux builds
 - [ ] Multi-screen / status-bar support

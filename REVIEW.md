@@ -135,3 +135,43 @@ All prior open findings are now resolved; each PR below got a dedicated pre-merg
 - **New since `e74e39d`:** PR #25 config export/import (#21), PR #29 healthcheck removal + editable/persisted zoom, PR #30 background mode (tray/autostart/behind-mode), PR #31 vocab tile + drill popup (5 pre-merge review findings fixed on-branch), PR #32 meme tile (3 pre-merge review findings fixed on-branch, incl. captioned animated GIF export), PR #33 vocab TTS (per-tile toggle, volume/speed sliders, per-language voices).
 - **M3 (null CSP) / M4 (unbounded remote sizes):** still open, unchanged — deferred to Phase 3 hardening.
 - **Scope note:** spec §8 healthcheck entries now historical (feature dropped + tab removed); Azure PAT stays dropped; close-behavior decided (close quits).
+
+---
+
+## 12. Follow-up — delta review `0e79805..5d90650` (2026-10-09..15, PRs #34–#45)
+
+Continued work after the MVP: UI polish, a new tile, and a full spaced-repetition stack for the
+vocab drill. Each substantive PR got a dedicated pre-merge review; findings were fixed on-branch
+before merge.
+
+**Shipped**
+- **#34** docs sync · **#35** 6 extra themes (Dracula, Nord, Solarized D/L, Rosé Pine, Gruvbox) ·
+  **#36** vocab drill options (category filter, 9-position placement, instant reveal) ·
+  **#37** Spotify responsive volume + locally-interpolated progress/seek · **#38** tile right-click
+  context menu · **#39** animated country-themed weather card · **#40** per-tile Hide-header mode ·
+  **#41** Calendar tile (Vietnamese lunar + moon phase + holidays) · **#42** design-token layer +
+  Design tab · **#43** vocab **SM-2 spaced repetition** (+ due badge) · **#44** mastery buckets +
+  per-category table · **#45** drill **sessions** (card cap, struggling-first pile, ungraded practice).
+
+**Findings & dispositions**
+- **#43 — High (fixed on-branch `a87e198`):** `save_state` wrote the main window's stale in-memory
+  `vocab` verbatim, clobbering the drill-written `vocab.srs` on any unrelated save (silent loss of
+  SRS progress). Fix: `preserve_rust_vocab_keys()` merges the on-disk Rust-managed keys
+  (`srs`, `srsEnabled`, `snoozeUntil`, `lastPopupAt`) into every save; also parses the SRS map once
+  in the due/stats scans. Covered by unit tests.
+- **#44 — Low (fixed `5bac79a`):** uncategorized cards dropped out of the per-category table (row
+  totals didn't reconcile); the table now counts them under `(uncategorized)` and takes the same
+  category filter as the mastery bar, so bar and table agree.
+- **#45 — Medium + Low (fixed `f8a947e`):** practice inherited the review session cap (default 1) →
+  practice now has its own `practicePerSession` (default 10); opening a mode while the popup was
+  already open is now honoured by reloading it; the due/mastery snapshot is fetched once per
+  session. Separately, a regression where a revealed card **auto-skipped** was fixed (`6e3ae7a`) —
+  reveal keeps the card open and retyping is the only way forward (retyping after reveal is part of
+  learning).
+- **M3 (null CSP) / M4 (unbounded remote sizes):** still open — deferred to Phase 3 hardening.
+- **Tests:** the project gained its first Rust unit tests (§ `srs_tests`) — SM-2 scheduling,
+  mastery buckets, due/practice batch selection, `save_state` merge, category bucketing —
+  `cargo test --lib` → 11 passing at merge of #45.
+
+**Verdict:** #34–#42 approved (Low/Nit only); #43 Approve-with-nits after the High fix; #44/#45
+Changes-needed → fixed → merged. `main` clean, no open PRs/issues.

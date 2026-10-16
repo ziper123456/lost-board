@@ -4,9 +4,11 @@ Personal dashboard launcher — a single-user, local-only desktop app.
 
 It replaces a browser start page and scattered bookmarks with a customizable grid of live
 "compartments": open folders / solutions / files, browse scanned repo projects, jump to Azure
-DevOps repos, control Spotify, drill vocabulary with flashcards, rotate memes, and see weather
-(with world clocks), news, translate text, framed photos, and system stats — optionally pinned
-as a desktop background with tray + autostart.
+DevOps repos, control Spotify, drill vocabulary with spaced repetition, rotate memes, and see
+weather (with world clocks), news, a Vietnamese lunar calendar, translate text, framed photos,
+and system stats. Tiles are themed (built-in themes + a design-token layer) with per-tile
+context menus and an optional "hide header" immersive mode, and the board can be pinned as a
+desktop background with tray + autostart.
 
 > **Spec & progress tracking live in this repo** so work can continue on any machine (e.g. a work PC).
 > See [`spec.md`](spec.md) (requirements) and [`PLAN.md`](PLAN.md) (roadmap / TODO).
@@ -26,7 +28,10 @@ as a desktop background with tray + autostart.
   - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
   - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue/jump
   - `set_autostart` / `autostart_enabled` — launch on login (tray icon + background behind-mode)
-  - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close) — bundled CSV flashcards + drill popup
+  - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close, `vocab_popup_config`) — bundled CSV flashcards + drill popup
+  - `vocab_due_card` / `vocab_due_batch` / `vocab_practice_batch` / `vocab_record_review` — drill session selection + SM-2 grading (due cards, struggling-first, ungraded practice)
+  - `vocab_srs_stats` / `vocab_category_stats` / `vocab_srs_enabled` / `vocab_set_srs` / `vocab_reset_srs` — mastery buckets + per-category breakdown, SRS toggle/reset
+  - `set_popup_theme` / `get_popup_theme` — push the board's design tokens into the drill popup window
   - `fetch_image_cached` / `import_image_file` / `load_cached_image` — disk-cached image pool (meme tile)
   - `save_meme_png` / `save_meme_source` / `save_meme_captioned_gif` — captioned/static/animated exports
 
@@ -57,9 +62,11 @@ npx serve src        # or open src/index.html — native features are stubbed
 ```
 src/                  # frontend (HTML/CSS/JS)
   index.html          # topbar, dashboard grid container, settings overlay
-  styles.css          # theme + layout
+  styles.css          # theme tokens + layout
   main.js             # state, grid rendering, compartment logic, settings wiring
-  drill.html          # vocab drill popup window
+  drill.html          # vocab drill popup window (session loop + practice mode)
+  lunar.js            # Vietnamese lunar calendar + moon phase (calendar tile)
+  holidays.js         # offline holiday computation (Vietnam / Germany / Pakistan)
 src-tauri/            # Rust backend (Tauri v2)
   Cargo.toml
   tauri.conf.json
@@ -73,13 +80,16 @@ PLAN.md               # roadmap + implementation TODO (cross-machine)
 plans/                # per-feature implementation plans + corrections logs
 ```
 
-## Status (updated 2026-10-08)
+## Status (updated 2026-10-15)
 
 Everything planned is built: fixed-column grid (drag + snap + resize, editable zoom),
-Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links, Weather + world
-clocks, News, Translate, Frame, System stats, Spotify (playback + shuffle/repeat + queue
-jump), Background mode (tray + autostart + always-on-bottom), Vocab flashcards (tile +
-drill popup + per-tile speech), Memes (rotation + collection + captioning + export), and
-Config export/import. Service Healthcheck was dropped and its tab removed. **No open
-PRs, no open issues.** Details in [`PLAN.md`](PLAN.md), requirements in
-[`spec.md`](spec.md), latest review in [`REVIEW.md`](REVIEW.md).
+Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links, Weather (with an
+animated weather card) + world clocks, News, Translate, Frame, System stats, Spotify
+(playback + shuffle/repeat + queue jump + seek), Calendar (Vietnamese lunar + moon phase +
+holidays), Background mode (tray + autostart + always-on-bottom), Config export/import, six
+extra themes plus a design-token layer (Design tab), per-tile right-click context menus and a
+Hide-header mode, and Vocab (flashcard tile + drill popup + per-tile speech + **SM-2 spaced
+repetition** with mastery buckets, a per-category breakdown, capped drill sessions, a
+struggling-first pile and an ungraded practice mode). Service Healthcheck was dropped and its
+tab removed. **No open PRs, no open issues.** Details in [`PLAN.md`](PLAN.md), requirements in
+[`spec.md`](spec.md), review history in [`REVIEW.md`](REVIEW.md).
