@@ -2006,18 +2006,21 @@ fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(),
     let scale = w.scale_factor().unwrap_or(1.0);
     let win_w = (width * scale).round() as i32;
     let win_h = (height * scale).round() as i32;
-    let mon = w
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| w.primary_monitor().ok().flatten());
-    if let (Ok(pos), Some(mon)) = (w.outer_position(), mon) {
-        let mp = mon.position();
-        let ms = mon.size();
-        let max_x = mp.x + ms.width as i32 - win_w;
-        let max_y = mp.y + ms.height as i32 - win_h;
-        let x = pos.x.min(max_x).max(mp.x);
-        let y = pos.y.min(max_y).max(mp.y);
+    // Clamp to the work area (excludes the taskbar); fall back to the monitor.
+    let bounds = work_area_physical().or_else(|| {
+        w.current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| w.primary_monitor().ok().flatten())
+            .map(|mon| {
+                let p = mon.position();
+                let s = mon.size();
+                (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
+            })
+    });
+    if let (Ok(pos), Some((l, t, r, b))) = (w.outer_position(), bounds) {
+        let x = pos.x.min(r - win_w).max(l);
+        let y = pos.y.min(b - win_h).max(t);
         if x != pos.x || y != pos.y {
             let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
         }
@@ -2592,6 +2595,24 @@ fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) 
     (x, y)
 }
 
+/// Windows work area (excludes the taskbar), physical px: (left, top, right, bottom).
+/// None on other platforms — callers fall back to the monitor rect.
+#[cfg(target_os = "windows")]
+fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut core::ffi::c_void, 0)
+    };
+    (ok != 0).then_some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
 fn open_drill_window(
     app: &tauri::AppHandle,
     lang: &str,
@@ -2643,13 +2664,23 @@ fn open_drill_window(
         .map_err(|e| format!("monitor: {e}"))?
         .ok_or("no primary monitor")?;
     let scale = mon.scale_factor().max(1.0);
-    let (x, y) = drill_position(
-        position,
-        mon.position().x as f64 / scale,
-        mon.position().y as f64 / scale,
-        mon.size().width as f64 / scale,
-        mon.size().height as f64 / scale,
-    );
+    // Place inside the work area (excludes the Windows taskbar) so the bottom
+    // buttons aren't hidden under it; fall back to the full monitor elsewhere.
+    let (bx, by, bw, bh) = match work_area_physical() {
+        Some((l, t, r, b)) => (
+            l as f64 / scale,
+            t as f64 / scale,
+            (r - l) as f64 / scale,
+            (b - t) as f64 / scale,
+        ),
+        None => (
+            mon.position().x as f64 / scale,
+            mon.position().y as f64 / scale,
+            mon.size().width as f64 / scale,
+            mon.size().height as f64 / scale,
+        ),
+    };
+    let (x, y) = drill_position(position, bx, by, bw, bh);
     *DRILL_EXPANDED.lock().unwrap() = false;
     WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")

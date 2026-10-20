@@ -36,6 +36,9 @@ imageproc = "0.25"
 ab_glyph = "0.2"
 gif = "0.13"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

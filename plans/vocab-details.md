@@ -129,3 +129,6 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
   - Follow-up fix: expanding now resizes then **clamps the window inside the current monitor**
     (the old bottom-right anchor pushed a bottom-left popup off-screen), and the Learn strip is a
     flex column (scrollable body + fixed action row) so Enlarge/Next never scroll out of view.
+  - Follow-up fix 2: placement and resize use the Windows **work area** (excludes the taskbar,
+    via `SystemParametersInfoW(SPI_GETWORKAREA)`), so a bottom-anchored popup no longer puts
+    Dismiss/Snooze under the taskbar. Non-Windows falls back to the monitor rect.
