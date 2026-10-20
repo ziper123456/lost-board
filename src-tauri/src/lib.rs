@@ -1986,9 +1986,9 @@ fn vocab_card_detail(app: tauri::AppHandle, id: String) -> Result<Option<CardDet
     Ok(card_details(&app).get(&id).cloned())
 }
 
-/// Grow/shrink the drill popup in place (default ↔ full detail). Anchors the
-/// bottom-right corner so a bottom-right popup expands up/left and stays on
-/// screen.
+/// Grow/shrink the drill popup in place (default ↔ full detail). Resizes first,
+/// then clamps the window inside the current monitor so a popup near any edge
+/// (e.g. bottom-left) never grows off-screen.
 #[tauri::command]
 fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
     use tauri::Manager;
@@ -1999,19 +1999,29 @@ fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(),
     if *cur == expanded {
         return Ok(());
     }
-    let (width, height, dw, dh) = if expanded {
-        (680.0, 620.0, 260.0, 300.0)
-    } else {
-        (420.0, 320.0, -260.0, -300.0)
-    };
-    if let Ok(pos) = w.outer_position() {
-        let scale = w.scale_factor().unwrap_or(1.0);
-        let nx = pos.x - (dw * scale) as i32;
-        let ny = pos.y - (dh * scale) as i32;
-        let _ = w.set_position(tauri::PhysicalPosition::new(nx, ny));
-    }
+    let (width, height) = if expanded { (680.0, 640.0) } else { (420.0, 360.0) };
     w.set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| format!("resize drill popup: {e}"))?;
+
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let win_w = (width * scale).round() as i32;
+    let win_h = (height * scale).round() as i32;
+    let mon = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten());
+    if let (Ok(pos), Some(mon)) = (w.outer_position(), mon) {
+        let mp = mon.position();
+        let ms = mon.size();
+        let max_x = mp.x + ms.width as i32 - win_w;
+        let max_y = mp.y + ms.height as i32 - win_h;
+        let x = pos.x.min(max_x).max(mp.x);
+        let y = pos.y.min(max_y).max(mp.y);
+        if x != pos.x || y != pos.y {
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    }
     *cur = expanded;
     Ok(())
 }
@@ -2643,7 +2653,7 @@ fn open_drill_window(
     *DRILL_EXPANDED.lock().unwrap() = false;
     WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(420.0, 320.0)
+        .inner_size(420.0, 360.0)
         .position(x, y)
         .decorations(false)
         .resizable(false)

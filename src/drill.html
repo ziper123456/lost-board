@@ -53,8 +53,9 @@
   .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
 
   /* Learn strip + detail pane */
-  .learn { margin-top: 8px; border-top: 1px solid var(--border, #3a3a48); padding-top: 6px; max-height: 140px; overflow-y: auto; }
+  .learn { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid var(--border, #3a3a48); padding-top: 6px; max-height: 170px; min-height: 0; }
   .learn[hidden], .detail[hidden] { display: none; }
+  .learn-body { overflow-y: auto; min-height: 0; }
   .ex { margin: 2px 0; font-size: 0.82rem; }
   .ex-lang { color: var(--muted, #8b8b98); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
   .ex b { color: var(--accent, #4f8ff7); }
@@ -63,7 +64,7 @@
   .chip { display: inline-block; border: 1px solid var(--border, #3a3a48); border-radius: 999px; padding: 0 7px; margin: 2px 4px 0 0; font-size: 0.7rem; color: var(--muted, #8b8b98); }
   .slip { color: var(--amber, #f0c674); font-size: 0.74rem; margin-top: 4px; }
   .slip s { opacity: 0.7; }
-  .learn-actions { display: flex; gap: 8px; margin-top: 7px; }
+  .learn-actions { flex: 0 0 auto; display: flex; gap: 8px; margin-top: 2px; }
   .learn-actions button {
     background: var(--panel-2, #23232c); color: var(--text, #cfcfda); border: 1px solid var(--border, #3a3a48);
     border-radius: 8px; padding: 4px 10px; font-size: 0.74rem; cursor: pointer;
@@ -289,7 +290,7 @@
       if (lines.length) body += `<div class="mini">${escapeHtml(lines.join("  |  "))}</div>`;
     }
     if (!body) body = `<div class="muted">No usage data for this card yet.</div>`;
-    learnEl.innerHTML = `${body}
+    learnEl.innerHTML = `<div class="learn-body">${body}</div>
       <div class="learn-actions">
         ${currentDetail ? `<button id="btn-expand">${expanded ? "Collapse" : "⤢ Enlarge"}</button>` : ""}
         ${allowNext ? `<button id="btn-next">Next ›</button>` : ""}
