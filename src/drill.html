@@ -51,6 +51,35 @@
   .row button:hover { border-color: var(--accent, #4c4c5a); }
   .error { font-size: 0.78rem; color: var(--red, #d64949); margin-top: 6px; }
   .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
+
+  /* Learn strip + detail pane */
+  .learn { margin-top: 8px; border-top: 1px solid var(--border, #3a3a48); padding-top: 6px; max-height: 140px; overflow-y: auto; }
+  .learn[hidden], .detail[hidden] { display: none; }
+  .ex { margin: 2px 0; font-size: 0.82rem; }
+  .ex-lang { color: var(--muted, #8b8b98); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
+  .ex b { color: var(--accent, #4f8ff7); }
+  .ex.en { color: var(--muted, #8b8b98); font-size: 0.74rem; font-style: italic; }
+  .mini { color: var(--muted, #8b8b98); font-size: 0.72rem; margin-top: 3px; }
+  .chip { display: inline-block; border: 1px solid var(--border, #3a3a48); border-radius: 999px; padding: 0 7px; margin: 2px 4px 0 0; font-size: 0.7rem; color: var(--muted, #8b8b98); }
+  .slip { color: var(--amber, #f0c674); font-size: 0.74rem; margin-top: 4px; }
+  .slip s { opacity: 0.7; }
+  .learn-actions { display: flex; gap: 8px; margin-top: 7px; }
+  .learn-actions button {
+    background: var(--panel-2, #23232c); color: var(--text, #cfcfda); border: 1px solid var(--border, #3a3a48);
+    border-radius: 8px; padding: 4px 10px; font-size: 0.74rem; cursor: pointer;
+  }
+  .learn-actions button:hover { border-color: var(--accent, #4c4c5a); }
+  .learn-actions #btn-next { margin-left: auto; }
+  .detail { margin-top: 8px; flex: 1; overflow-y: auto; border-top: 1px solid var(--border, #3a3a48); padding-top: 6px; }
+  .detail-block { margin-bottom: 10px; }
+  .detail-h { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted, #8b8b98); margin-bottom: 2px; }
+  .conj { margin-bottom: 8px; }
+  .conj-title { font-weight: 600; font-size: 0.8rem; }
+  .conj-tense { margin-top: 4px; }
+  .conj-name { font-size: 0.68rem; color: var(--amber, #f0c674); }
+  .conj-forms { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.74rem; }
+  .conj-forms i { color: var(--muted, #8b8b98); font-style: normal; }
+  .muted { color: var(--muted, #8b8b98); font-size: 0.78rem; }
 </style>
 </head>
 <body>
@@ -62,16 +91,21 @@
   <div class="prompt" id="prompt">…</div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
+  <div class="learn" id="learn" hidden></div>
+  <div class="detail" id="detail" hidden></div>
   <div class="drill-progress" id="progress"></div>
   <div class="row">
     <button id="btn-dismiss">Dismiss</button>
     <button id="btn-snooze" title="No popups for 30 minutes">Snooze 30 min</button>
   </div>
   <div class="error" id="error"></div>
+<script src="conjugate.js"></script>
 <script>
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   // Port of vocab-app typingMatch: lowercase + NFD diacritic-strip + trim.
   const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const escapeHtml = (s) =>
+    (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   const promptEl = document.getElementById("prompt");
   const labelEl = document.getElementById("lang-label");
@@ -79,6 +113,8 @@
   const errorEl = document.getElementById("error");
   const progressEl = document.getElementById("progress");
   const badgeEl = document.getElementById("mode-badge");
+  const learnEl = document.getElementById("learn");
+  const detailEl = document.getElementById("detail");
   const answerWrap = document.querySelector(".answer");
   const close = () => invoke("close_vocab_popup").catch(() => window.close());
 
@@ -88,10 +124,13 @@
   let queue = [];             // [{ card, due }] — one session's worth of cards
   let idx = 0;
   let targets = [];           // accepted answers in order
+  let nounTargets = [];       // per-target { article, noun } when pos === "noun"
+  let currentDetail = null;   // enrichment for the current card (or null)
   let attempts = 0;
   let answered = false;       // grade recorded for the current card?
   let gradeable = false;      // only grade cards that were actually due
-  let cardDone = false;       // guards against advancing twice
+  let awaitingNext = false;   // correct answer seen — waiting for Next/Enter
+  let expanded = false;       // popup enlarged to the detail view
   let cardId = "";
   let sessionDue = 0;         // snapshot fetched once per session (not per card)
   let sessionStats = null;
@@ -106,32 +145,71 @@
   }
 
   const inputs = () => [...document.querySelectorAll(".answer input")];
-  function isCorrect() {
-    const vals = inputs().map((i) => norm(i.value));
-    return targets.length > 1
-      ? targets.every((t, i) => vals[i] === norm(t))
-      : norm(inputs()[0]?.value) === norm(targets[0]);
-  }
 
-  function finishCard(delay) {
-    if (cardDone) return;
-    cardDone = true;
-    setTimeout(advance, delay);
+  // ---- Article-aware matching (nouns) --------------------------------------
+  const ARTICLES = ["el", "la", "los", "las", "der", "die", "das"];
+  function splitArticle(s) {
+    const n = norm(s);
+    for (const a of ARTICLES) {
+      if (n === a) return { article: a, noun: "" };
+      if (n.startsWith(a + " ")) return { article: a, noun: n.slice(a.length + 1).trim() };
+    }
+    return { article: null, noun: n };
   }
+  function expectedNoun(canonical, detailArticle) {
+    const parsed = splitArticle(canonical);
+    const art = parsed.article || norm(detailArticle || "");
+    return { article: art, noun: parsed.noun };
+  }
+  // -> { status: "ok"|"article-wrong"|"wrong", expectedArticle?, inputArticle? }
+  function evalOne(raw, canonical, noun) {
+    if (!noun) {
+      return norm(raw) === norm(canonical) ? { status: "ok" } : { status: "wrong" };
+    }
+    const got = splitArticle(raw);
+    if (!got.noun || got.noun !== noun.noun) return { status: "wrong" };
+    if (!got.article || !noun.article) return { status: "ok" };
+    if (got.article === noun.article) return { status: "ok" };
+    return { status: "article-wrong", expectedArticle: noun.article, inputArticle: got.article };
+  }
+  function evaluate() {
+    const vals = inputs().map((i) => i.value);
+    const slips = [];
+    let ok = true;
+    targets.forEach((t, i) => {
+      const res = evalOne(vals[i] || "", t, nounTargets[i]);
+      if (res.status === "wrong") ok = false;
+      else if (res.status === "article-wrong") slips.push({ index: i, ...res });
+    });
+    return { ok, slips };
+  }
+  const isCorrect = () => evaluate().ok;
 
   function onInput() {
-    if (cardDone || !isCorrect()) return;
+    if (awaitingNext || !isCorrect()) return;
+    const { slips } = evaluate();
     inputs().forEach((i) => { i.classList.remove("bad"); i.classList.add("ok"); });
     record(attempts === 0 ? "good" : "hard");
-    finishCard(1500); // typing the answer is the only way forward — pause to read
+    awaitingNext = true;
+    showLearn(slips);
   }
 
   function revealNow() {
     // Show the answer and record the honest fail, but KEEP the card open: reading
     // and retyping it after reveal is part of learning, so we never auto-skip.
+    // The Learn strip is shown too (reading the usage while retyping helps), but
+    // there is no Next until the user types the answer correctly.
     revealEl.textContent = "Answer: " + targets.join(" / ");
     inputs().forEach((i) => i.classList.add("bad"));
     record("again");
+    showLearn(null, { allowNext: false });
+  }
+
+  function nextCard() {
+    if (!awaitingNext) return;
+    awaitingNext = false;
+    if (expanded) setExpanded(false);
+    advance();
   }
 
   function advance() {
@@ -164,19 +242,148 @@
       : `${pos} · ${sessionDue} due`;
   }
 
-  function renderCard() {
+  // ---- Learn strip ---------------------------------------------------------
+  function boldHl(text, hl) {
+    if (!hl) return escapeHtml(text);
+    const i = text.toLowerCase().indexOf(hl.toLowerCase());
+    if (i < 0) return escapeHtml(text);
+    return escapeHtml(text.slice(0, i)) + "<b>" + escapeHtml(text.slice(i, i + hl.length)) + "</b>" + escapeHtml(text.slice(i + hl.length));
+  }
+  function conjFor(langCode) {
+    if (!window.VocabConjugate) return null;
+    const card = queue[idx] && queue[idx].card;
+    if (!card) return null;
+    return window.VocabConjugate.conjugate(langCode === "es" ? card.es : card.de, langCode);
+  }
+  function showLearn(slips, opts) {
+    const allowNext = !opts || opts.allowNext !== false;
+    const d = currentDetail;
+    const langOrder = lang === "both" ? ["es", "de"] : [lang === "de" ? "de" : "es"];
+    let body = "";
+    if (slips && slips.length) {
+      const lines = slips.map((s) => `expected <b>${escapeHtml(s.expectedArticle)}</b> (you typed <s>${escapeHtml(s.inputArticle)}</s>)`);
+      body += `<div class="slip">Article/gender: ${lines.join("; ")}</div>`;
+    }
+    if (d && d.example) {
+      for (const L of langOrder) {
+        if (d.example[L]) body += `<div class="ex"><span class="ex-lang">${L.toUpperCase()}</span> ${boldHl(d.example[L], d.example["hl_" + L])}</div>`;
+      }
+      if (d.example.en) body += `<div class="ex en">${escapeHtml(d.example.en)}</div>`;
+    }
+    if (d && d.pos === "noun") {
+      const chips = [];
+      for (const L of langOrder) {
+        const art = d.article && d.article[L];
+        const pl = d.plural && d.plural[L];
+        if (art || pl) chips.push(`<span class="chip">${L.toUpperCase()} ${escapeHtml(art || "")}${pl ? ` · pl. ${escapeHtml(pl)}` : ""}</span>`);
+      }
+      if (chips.length) body += `<div class="mini">${chips.join("")}</div>`;
+    }
+    if (d && d.pos === "verb") {
+      const lines = [];
+      for (const L of langOrder) {
+        const c = conjFor(L);
+        const present = c && c.tenses && c.tenses[0];
+        if (present) lines.push(`${L.toUpperCase()} ${present.forms.slice(0, 3).join(" · ")}`);
+      }
+      if (lines.length) body += `<div class="mini">${escapeHtml(lines.join("  |  "))}</div>`;
+    }
+    if (!body) body = `<div class="muted">No usage data for this card yet.</div>`;
+    learnEl.innerHTML = `${body}
+      <div class="learn-actions">
+        ${currentDetail ? `<button id="btn-expand">${expanded ? "Collapse" : "⤢ Enlarge"}</button>` : ""}
+        ${allowNext ? `<button id="btn-next">Next ›</button>` : ""}
+      </div>`;
+    learnEl.hidden = false;
+    const nextBtn = learnEl.querySelector("#btn-next");
+    if (nextBtn) nextBtn.addEventListener("click", nextCard);
+    const expandBtn = learnEl.querySelector("#btn-expand");
+    if (expandBtn) expandBtn.addEventListener("click", () => setExpanded(!expanded));
+  }
+
+  // ---- Detail (enlarged) view ---------------------------------------------
+  function conjTable(c) {
+    if (!c) return "";
+    let html = `<div class="conj"><div class="conj-title">${c.lang.toUpperCase()} · ${escapeHtml(c.infinitive)}</div>`;
+    for (const t of c.tenses) {
+      html += `<div class="conj-tense"><div class="conj-name">${escapeHtml(t.name)}</div><div class="conj-forms">`;
+      html += t.forms.map((f, i) => `<span><i>${escapeHtml(c.persons[i] || "")}</i> ${escapeHtml(f)}</span>`).join("");
+      html += `</div></div>`;
+    }
+    if (c.nonFinite && c.nonFinite.length) {
+      html += `<div class="conj-forms">${c.nonFinite.map((n) => `<span><i>${escapeHtml(n.name)}</i> ${escapeHtml(n.form)}</span>`).join("")}</div>`;
+    }
+    if (c.imperative) {
+      const imp = c.lang === "es"
+        ? [["tú", c.imperative.tu], ["vosotros", c.imperative.vosotros], ["usted", c.imperative.usted], ["ustedes", c.imperative.ustedes]]
+        : [["du", c.imperative.du], ["ihr", c.imperative.ihr], ["Sie", c.imperative.sie]];
+      html += `<div class="conj-name">Imperativo</div><div class="conj-forms">${imp.map(([p, f]) => `<span><i>${escapeHtml(p)}</i> ${escapeHtml(f)}</span>`).join("")}</div>`;
+    }
+    return html + `</div>`;
+  }
+  function showDetail() {
+    const d = currentDetail;
+    const card = queue[idx] && queue[idx].card;
+    let html = "";
+    if (d) {
+      const ex = d.example || {};
+      if (ex.es || ex.de || ex.en) {
+        html += `<div class="detail-block"><div class="detail-h">Usage</div>`;
+        for (const L of ["es", "de"]) {
+          if (ex[L]) html += `<div class="ex"><span class="ex-lang">${L.toUpperCase()}</span> ${boldHl(ex[L], ex["hl_" + L])}</div>`;
+        }
+        if (ex.en) html += `<div class="ex en">${escapeHtml(ex.en)}</div>`;
+        html += `</div>`;
+      }
+      if (d.pos === "noun") {
+        html += `<div class="detail-block"><div class="detail-h">Noun</div>`;
+        for (const L of ["es", "de"]) {
+          const art = d.article && d.article[L];
+          const pl = d.plural && d.plural[L];
+          if (art || pl) html += `<div class="ex"><span class="ex-lang">${L.toUpperCase()}</span> ${escapeHtml(art || "")}${pl ? ` · plural: ${escapeHtml(pl)}` : ""}</div>`;
+        }
+        html += `</div>`;
+      }
+      if (d.note) html += `<div class="detail-block muted">${escapeHtml(d.note)}</div>`;
+    }
+    if (d && d.pos === "verb" && card) {
+      const es = window.VocabConjugate ? window.VocabConjugate.conjugate(card.es, "es") : null;
+      const de = window.VocabConjugate ? window.VocabConjugate.conjugate(card.de, "de") : null;
+      if (es || de) html += `<div class="detail-block"><div class="detail-h">Conjugation</div>${conjTable(es)}${conjTable(de)}</div>`;
+    }
+    if (!html) html = `<div class="muted">No extra details for this card yet.</div>`;
+    detailEl.innerHTML = html;
+    detailEl.hidden = false;
+  }
+  async function setExpanded(on) {
+    expanded = on;
+    try { await invoke("vocab_set_popup_expanded", { expanded: on }); } catch { /* keep going */ }
+    if (on) showDetail();
+    else { detailEl.hidden = true; detailEl.innerHTML = ""; }
+    const b = learnEl.querySelector("#btn-expand");
+    if (b) b.textContent = on ? "Collapse" : "⤢ Enlarge";
+  }
+
+  async function renderCard() {
     const { card, due } = queue[idx];
     cardId = card.id;
     gradeable = mode === "review" && due === true; // practice/early cards are never graded
     answered = false;
     attempts = 0;
-    cardDone = false;
+    awaitingNext = false;
     revealEl.textContent = "";
     errorEl.textContent = "";
+    learnEl.hidden = true;
+    learnEl.innerHTML = "";
+    detailEl.hidden = true;
+    detailEl.innerHTML = "";
+    if (expanded) setExpanded(false);
     promptEl.textContent = card.en;
     promptEl.title = card.en;
     labelEl.textContent =
       lang === "both" ? "Translate to Spanish + German" : lang === "de" ? "Translate to German" : "Translate to Spanish";
+
+    currentDetail = await invoke("vocab_card_detail", { id: card.id }).catch(() => null);
 
     answerWrap.innerHTML = "";
     if (lang === "both") {
@@ -186,6 +393,12 @@
       answerWrap.append(makeInput("type the translation"));
       targets = [lang === "de" ? card.de : card.es];
     }
+    const langForTarget = (i) => (lang === "both" ? (i === 0 ? "es" : "de") : lang === "de" ? "de" : "es");
+    nounTargets = targets.map((t, i) => {
+      if (!currentDetail || currentDetail.pos !== "noun") return null;
+      const L = langForTarget(i);
+      return expectedNoun(t, currentDetail.article && currentDetail.article[L]);
+    });
     updateProgress();
     inputs()[0]?.focus();
   }
@@ -235,7 +448,8 @@
       renderCard();
       answerWrap.addEventListener("keydown", (e) => {
         if (e.key !== "Enter") return;
-        if (isCorrect()) return; // onInput already scheduled the advance
+        if (awaitingNext) { nextCard(); return; }
+        if (isCorrect()) return; // onInput already handled the correct answer
         if (!inputs().some((i) => norm(i.value))) return;
         attempts += 1;
         if (attempts >= 2) {

@@ -1,0 +1,220 @@
+{
+  "1": {
+    "pos": "verb",
+    "example": {
+      "en": "She competes in marathons every year.",
+      "es": "Ella compite en maratones cada año.",
+      "de": "Sie konkurriert jedes Jahr bei Marathons.",
+      "hl_es": "compite",
+      "hl_de": "konkurriert"
+    }
+  },
+  "2": {
+    "pos": "verb",
+    "example": {
+      "en": "He draws a cat on the paper.",
+      "es": "Él dibuja un gato en el papel.",
+      "de": "Er zeichnet eine Katze auf das Papier.",
+      "hl_es": "dibuja",
+      "hl_de": "zeichnet"
+    }
+  },
+  "3": {
+    "pos": "verb",
+    "example": {
+      "en": "We take photos at the beach.",
+      "es": "Sacamos fotos en la playa.",
+      "de": "Wir fotografieren am Strand.",
+      "hl_es": "Sacamos fotos",
+      "hl_de": "fotografieren"
+    }
+  },
+  "4": {
+    "pos": "verb",
+    "example": {
+      "en": "They play basketball after school.",
+      "es": "Juegan al baloncesto después de la escuela.",
+      "de": "Sie spielen nach der Schule Basketball.",
+      "hl_es": "Juegan al baloncesto",
+      "hl_de": "Basketball"
+    }
+  },
+  "15": {
+    "pos": "verb",
+    "example": {
+      "en": "My grandmother knits a scarf.",
+      "es": "Mi abuela teje una bufanda.",
+      "de": "Meine Großmutter strickt einen Schal.",
+      "hl_es": "teje",
+      "hl_de": "strickt"
+    }
+  },
+  "16": {
+    "pos": "verb",
+    "example": {
+      "en": "We go to the museum on Sundays.",
+      "es": "Vamos al museo los domingos.",
+      "de": "Wir gehen sonntags ins Museum.",
+      "hl_es": "Vamos al museo",
+      "hl_de": "ins Museum"
+    }
+  },
+  "36": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "die" },
+    "plural": { "es": "columpios", "de": "Schaukeln" },
+    "example": {
+      "en": "The child is playing on the swing.",
+      "es": "El niño juega en el columpio.",
+      "de": "Das Kind spielt auf der Schaukel.",
+      "hl_es": "columpio",
+      "hl_de": "Schaukel"
+    }
+  },
+  "37": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "der" },
+    "plural": { "es": "cajones de arena", "de": "Sandkästen" },
+    "example": {
+      "en": "The kids dig in the sandbox.",
+      "es": "Los niños cavan en el cajón de arena.",
+      "de": "Die Kinder graben im Sandkasten.",
+      "hl_es": "cajón de arena",
+      "hl_de": "Sandkasten"
+    }
+  },
+  "38": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "der" },
+    "plural": { "es": "parques infantiles", "de": "Spielplätze" },
+    "example": {
+      "en": "The playground is next to the school.",
+      "es": "El parque infantil está junto a la escuela.",
+      "de": "Der Spielplatz ist neben der Schule.",
+      "hl_es": "parque infantil",
+      "hl_de": "Spielplatz"
+    }
+  },
+  "41": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "das" },
+    "plural": { "es": "juguetes", "de": "Spielzeuge" },
+    "example": {
+      "en": "The child plays with a toy.",
+      "es": "El niño juega con un juguete.",
+      "de": "Das Kind spielt mit einem Spielzeug.",
+      "hl_es": "juguete",
+      "hl_de": "Spielzeug"
+    }
+  },
+  "42": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "der" },
+    "plural": { "es": "frisbees", "de": "Frisbees" },
+    "example": {
+      "en": "They throw the Frisbee in the park.",
+      "es": "Lanzan el frisbee en el parque.",
+      "de": "Sie werfen den Frisbee im Park.",
+      "hl_es": "frisbee",
+      "hl_de": "Frisbee"
+    }
+  },
+  "43": {
+    "pos": "noun",
+    "article": { "es": "la", "de": "das" },
+    "plural": { "es": "cuerdas", "de": "Seile" },
+    "example": {
+      "en": "We need a longer rope.",
+      "es": "Necesitamos una cuerda más larga.",
+      "de": "Wir brauchen ein längeres Seil.",
+      "hl_es": "cuerda",
+      "hl_de": "Seil"
+    }
+  },
+  "611": {
+    "pos": "adjective",
+    "example": {
+      "en": "She looks happy today.",
+      "es": "Ella parece feliz hoy.",
+      "de": "Sie sieht heute froh aus.",
+      "hl_es": "feliz",
+      "hl_de": "froh"
+    }
+  },
+  "1210": {
+    "pos": "adjective",
+    "example": {
+      "en": "The garden is beautiful.",
+      "es": "El jardín es hermoso.",
+      "de": "Der Garten ist schön.",
+      "hl_es": "hermoso",
+      "hl_de": "schön"
+    }
+  },
+  "3243": {
+    "pos": "verb",
+    "example": {
+      "en": "I have a dog.",
+      "es": "Tengo un perro.",
+      "de": "Ich habe einen Hund.",
+      "hl_es": "Tengo",
+      "hl_de": "habe"
+    }
+  },
+  "3250": {
+    "pos": "verb",
+    "example": {
+      "en": "We go home now.",
+      "es": "Vamos a casa ahora.",
+      "de": "Wir gehen jetzt nach Hause.",
+      "hl_es": "Vamos",
+      "hl_de": "gehen"
+    }
+  },
+  "3263": {
+    "pos": "verb",
+    "example": {
+      "en": "She is tired today.",
+      "es": "Ella está cansada hoy.",
+      "de": "Sie ist heute müde.",
+      "hl_es": "está",
+      "hl_de": "ist"
+    }
+  },
+  "3306": {
+    "pos": "verb",
+    "example": {
+      "en": "He is a teacher.",
+      "es": "Él es profesor.",
+      "de": "Er ist Lehrer.",
+      "hl_es": "es",
+      "hl_de": "ist"
+    }
+  },
+  "4008": {
+    "pos": "verb",
+    "example": {
+      "en": "There has been an accident.",
+      "es": "Ha habido un accidente.",
+      "de": "Es hat einen Unfall gegeben.",
+      "hl_es": "Ha habido",
+      "hl_de": "hat"
+    }
+  },
+  "4090": {
+    "pos": "noun",
+    "article": { "es": "el", "de": "die" },
+    "plural": { "es": "cajones", "de": "Schubladen" },
+    "example": {
+      "en": "The forks are in the drawer.",
+      "es": "Los tenedores están en el cajón.",
+      "de": "Die Gabeln sind in der Schublade.",
+      "hl_es": "cajón",
+      "hl_de": "Schublade"
+    }
+  },
+  "5299": {
+    "pos": "phrase",
+    "note": "Phrase card — shown as-is; no extra example."
+  }
+}

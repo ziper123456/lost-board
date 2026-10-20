@@ -31,6 +31,7 @@ desktop background with tray + autostart.
   - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close, `vocab_popup_config`) — bundled CSV flashcards + drill popup
   - `vocab_due_card` / `vocab_due_batch` / `vocab_practice_batch` / `vocab_record_review` — drill session selection + SM-2 grading (due cards, struggling-first, ungraded practice)
   - `vocab_srs_stats` / `vocab_category_stats` / `vocab_srs_enabled` / `vocab_set_srs` / `vocab_reset_srs` — mastery buckets + per-category breakdown, SRS toggle/reset
+  - `vocab_card_detail` / `vocab_set_popup_expanded` — per-card usage/conjugation enrichment + in-place drill resize
   - `set_popup_theme` / `get_popup_theme` — push the board's design tokens into the drill popup window
   - `fetch_image_cached` / `import_image_file` / `load_cached_image` — disk-cached image pool (meme tile)
   - `save_meme_png` / `save_meme_source` / `save_meme_captioned_gif` — captioned/static/animated exports

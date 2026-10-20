@@ -1701,6 +1701,8 @@ pub fn run() {
             vocab_srs_enabled,
             vocab_srs_stats,
             vocab_category_stats,
+            vocab_card_detail,
+            vocab_set_popup_expanded,
             set_popup_theme,
             get_popup_theme,
             vocab_popup_config,
@@ -1798,6 +1800,46 @@ struct VocabCard {
     cats: Vec<String>,
 }
 
+/// Optional per-card enrichment (usage examples, gender/article, plural, POS).
+/// Lives in `resources/cards-extra.json` keyed by card id; absent means the
+/// card drills exactly as before.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct DetailLangs {
+    #[serde(default)]
+    es: String,
+    #[serde(default)]
+    de: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct DetailExample {
+    #[serde(default)]
+    en: String,
+    #[serde(default)]
+    es: String,
+    #[serde(default)]
+    de: String,
+    /// Exact surface form used in the ES/DE sentence, for bolding.
+    #[serde(default)]
+    hl_es: String,
+    #[serde(default)]
+    hl_de: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct CardDetail {
+    #[serde(default)]
+    pos: String,
+    #[serde(default)]
+    article: DetailLangs,
+    #[serde(default)]
+    plural: DetailLangs,
+    #[serde(default)]
+    example: DetailExample,
+    #[serde(default)]
+    note: String,
+}
+
 #[derive(serde::Serialize, Clone, Default)]
 struct VocabPopupConfig {
     lang: String,
@@ -1819,6 +1861,9 @@ struct VocabCategory {
 }
 
 static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
+static CARD_DETAILS: std::sync::OnceLock<std::collections::HashMap<String, CardDetail>> =
+    std::sync::OnceLock::new();
+static DRILL_EXPANDED: StdMutex<bool> = StdMutex::new(false);
 static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig {
     lang: String::new(),
     cats: Vec::new(),
@@ -1906,6 +1951,69 @@ fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
             })
         })
         .collect()
+}
+
+/// Load `resources/cards-extra.json` (optional). Missing/malformed → empty map,
+/// so the drill keeps working without enrichment.
+fn load_card_details(app: &tauri::AppHandle) -> std::collections::HashMap<String, CardDetail> {
+    use tauri::path::BaseDirectory;
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = app
+        .path()
+        .resolve("resources/cards-extra.json", BaseDirectory::Resource)
+    {
+        candidates.push(p);
+    }
+    candidates.push(std::path::PathBuf::from("src-tauri/resources/cards-extra.json"));
+    candidates.push(std::path::PathBuf::from("resources/cards-extra.json"));
+    let Some(path) = candidates.into_iter().find(|p| p.is_file()) else {
+        return std::collections::HashMap::new();
+    };
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => std::collections::HashMap::new(),
+    }
+}
+
+fn card_details(app: &tauri::AppHandle) -> &'static std::collections::HashMap<String, CardDetail> {
+    CARD_DETAILS.get_or_init(|| load_card_details(app))
+}
+
+/// Details for one card (null when unenriched). Loaded lazily on first use so
+/// the (large) enrichment file never slows main-window startup.
+#[tauri::command]
+fn vocab_card_detail(app: tauri::AppHandle, id: String) -> Result<Option<CardDetail>, String> {
+    Ok(card_details(&app).get(&id).cloned())
+}
+
+/// Grow/shrink the drill popup in place (default ↔ full detail). Anchors the
+/// bottom-right corner so a bottom-right popup expands up/left and stays on
+/// screen.
+#[tauri::command]
+fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("drill") else {
+        return Ok(());
+    };
+    let mut cur = DRILL_EXPANDED.lock().unwrap();
+    if *cur == expanded {
+        return Ok(());
+    }
+    let (width, height, dw, dh) = if expanded {
+        (680.0, 620.0, 260.0, 300.0)
+    } else {
+        (420.0, 320.0, -260.0, -300.0)
+    };
+    if let Ok(pos) = w.outer_position() {
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let nx = pos.x - (dw * scale) as i32;
+        let ny = pos.y - (dh * scale) as i32;
+        let _ = w.set_position(tauri::PhysicalPosition::new(nx, ny));
+    }
+    w.set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| format!("resize drill popup: {e}"))?;
+    *cur = expanded;
+    Ok(())
 }
 
 /// Return `count` random cards (shuffled each call; tile and popup draw
@@ -2532,9 +2640,10 @@ fn open_drill_window(
         mon.size().width as f64 / scale,
         mon.size().height as f64 / scale,
     );
+    *DRILL_EXPANDED.lock().unwrap() = false;
     WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(360.0, 240.0)
+        .inner_size(420.0, 320.0)
         .position(x, y)
         .decorations(false)
         .resizable(false)
