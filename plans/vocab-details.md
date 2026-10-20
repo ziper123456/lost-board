@@ -126,3 +126,6 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
     card waits for **Next / Enter** (reveal still requires retyping first, as before).
   - The batch tool (`npm run enrich`) is provider-agnostic (OpenAI-compatible) and resumable;
     the in-repo `cards-extra.json` is a representative seed until the full run.
+  - Follow-up fix: expanding now resizes then **clamps the window inside the current monitor**
+    (the old bottom-right anchor pushed a bottom-left popup off-screen), and the Learn strip is a
+    flex column (scrollable body + fixed action row) so Enlarge/Next never scroll out of view.
