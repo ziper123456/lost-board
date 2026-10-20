@@ -1999,32 +1999,18 @@ fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(),
     if *cur == expanded {
         return Ok(());
     }
-    let (width, height) = if expanded { (680.0, 640.0) } else { (420.0, 360.0) };
+    let (width, height) = if expanded {
+        (DRILL_W_EXPANDED, DRILL_H_EXPANDED)
+    } else {
+        (DRILL_W, DRILL_H)
+    };
     w.set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| format!("resize drill popup: {e}"))?;
 
     let scale = w.scale_factor().unwrap_or(1.0);
     let win_w = (width * scale).round() as i32;
     let win_h = (height * scale).round() as i32;
-    // Clamp to the work area (excludes the taskbar); fall back to the monitor.
-    let bounds = work_area_physical().or_else(|| {
-        w.current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| w.primary_monitor().ok().flatten())
-            .map(|mon| {
-                let p = mon.position();
-                let s = mon.size();
-                (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
-            })
-    });
-    if let (Ok(pos), Some((l, t, r, b))) = (w.outer_position(), bounds) {
-        let x = pos.x.min(r - win_w).max(l);
-        let y = pos.y.min(b - win_h).max(t);
-        if x != pos.x || y != pos.y {
-            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
-        }
-    }
+    clamp_window_to_work_area(&w, win_w, win_h);
     *cur = expanded;
     Ok(())
 }
@@ -2560,9 +2546,16 @@ fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
 /// Map a 3x3 placement preset to logical-pixel coordinates on the primary
 /// monitor. Accepts either word order ("center-right" / "right-center").
 /// Unknown values fall back to bottom-right (the spec default).
+// Drill popup sizes must match `drill_position`'s placement math exactly, or a
+// bottom-anchored popup hangs off the bottom of the screen.
+const DRILL_W: f64 = 420.0;
+const DRILL_H: f64 = 360.0;
+const DRILL_W_EXPANDED: f64 = 680.0;
+const DRILL_H_EXPANDED: f64 = 640.0;
+
 fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) -> (f64, f64) {
-    const W: f64 = 360.0;
-    const H: f64 = 240.0;
+    const W: f64 = DRILL_W;
+    const H: f64 = DRILL_H;
     const M: f64 = 16.0;
     let hx = if preset.contains("left") {
         0
@@ -2611,6 +2604,33 @@ fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
 #[cfg(not(target_os = "windows"))]
 fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
     None
+}
+
+/// Clamp the window's top-left so its full `phys_w`×`phys_h` body stays inside
+/// the work area (taskbar-excluded) — the guard against off-screen windows.
+fn clamp_window_to_work_area(w: &tauri::WebviewWindow, phys_w: i32, phys_h: i32) {
+    let Ok(pos) = w.outer_position() else {
+        return;
+    };
+    let bounds = work_area_physical().or_else(|| {
+        w.current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| w.primary_monitor().ok().flatten())
+            .map(|mon| {
+                let p = mon.position();
+                let s = mon.size();
+                (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
+            })
+    });
+    let Some((l, t, r, b)) = bounds else {
+        return;
+    };
+    let x = pos.x.min(r - phys_w).max(l);
+    let y = pos.y.min(b - phys_h).max(t);
+    if x != pos.x || y != pos.y {
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
 }
 
 fn open_drill_window(
@@ -2682,9 +2702,9 @@ fn open_drill_window(
     };
     let (x, y) = drill_position(position, bx, by, bw, bh);
     *DRILL_EXPANDED.lock().unwrap() = false;
-    WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
+    let win = WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(420.0, 360.0)
+        .inner_size(DRILL_W, DRILL_H)
         .position(x, y)
         .decorations(false)
         .resizable(false)
@@ -2693,6 +2713,14 @@ fn open_drill_window(
         .focused(false)
         .build()
         .map_err(|e| format!("popup: {e}"))?;
+    // Safety net: whatever the placement math produced, never let the popup's
+    // body extend past the work area (the taskbar).
+    let win_scale = win.scale_factor().unwrap_or(scale);
+    clamp_window_to_work_area(
+        &win,
+        (DRILL_W * win_scale).round() as i32,
+        (DRILL_H * win_scale).round() as i32,
+    );
     Ok("opened")
 }
 

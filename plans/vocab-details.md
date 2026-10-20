@@ -132,3 +132,8 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
   - Follow-up fix 2: placement and resize use the Windows **work area** (excludes the taskbar,
     via `SystemParametersInfoW(SPI_GETWORKAREA)`), so a bottom-anchored popup no longer puts
     Dismiss/Snooze under the taskbar. Non-Windows falls back to the monitor rect.
+  - Follow-up fix 3 (root cause of the off-screen window): `drill_position` hardcoded the popup
+    as **360×240** while the window is **420×360**, so a bottom anchor placed it 240px from the
+    bottom and the 360px window hung ~104px **below the screen**. Sizes are now shared constants
+    (`DRILL_W/H`, expanded variants) used by both placement and creation, plus a post-create
+    work-area clamp as a safety net.
