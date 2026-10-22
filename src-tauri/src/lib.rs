@@ -1852,6 +1852,8 @@ struct VocabPopupConfig {
     practice: bool,
     /// Cards per practice session (0 = all). Separate from the review cap.
     practice_size: usize,
+    /// Placement preset (used so resize keeps the anchored corner fixed).
+    position: String,
 }
 
 #[derive(serde::Serialize)]
@@ -1870,6 +1872,7 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     struggling_first: true,
     practice: false,
     practice_size: 10,
+    position: String::new(),
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -2000,13 +2003,46 @@ async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Resu
     } else {
         (DRILL_W, DRILL_H)
     };
+
+    // Capture the geometry *before* resizing so we can keep the anchored corner
+    // fixed (otherwise set_size pins the top-left, and a bottom-anchored popup
+    // would jump up when it shrinks).
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let old_pos = w.outer_position().ok();
+    let old_size = w.inner_size().ok();
+    let preset = VOCAB_POPUP.lock().unwrap().position.clone();
+
     w.set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| format!("resize drill popup: {e}"))?;
 
-    let scale = w.scale_factor().unwrap_or(1.0);
-    let win_w = (width * scale).round() as i32;
-    let win_h = (height * scale).round() as i32;
-    clamp_window_to_work_area(&w, win_w, win_h);
+    let new_w = (width * scale).round() as i32;
+    let new_h = (height * scale).round() as i32;
+
+    if let (Some(pos), Some(size)) = (old_pos, old_size) {
+        let old_w = size.width as i32;
+        let old_h = size.height as i32;
+        // horizontal anchor: left edge, right edge, or centered
+        let dx = if preset.contains("right") {
+            old_w - new_w
+        } else if preset.contains("left") || !preset.contains("center") {
+            0
+        } else {
+            (old_w - new_w) / 2
+        };
+        // vertical anchor: top edge, bottom edge, or centered
+        let dy = if preset.starts_with("top") {
+            0
+        } else if preset.starts_with("bottom") || preset.is_empty() {
+            old_h - new_h
+        } else {
+            (old_h - new_h) / 2
+        };
+        if dx != 0 || dy != 0 {
+            let _ = w.set_position(tauri::PhysicalPosition::new(pos.x + dx, pos.y + dy));
+        }
+    }
+
+    clamp_window_to_work_area(&w, new_w, new_h);
     Ok(())
 }
 
@@ -2657,6 +2693,7 @@ fn open_drill_window(
         struggling_first,
         practice,
         practice_size,
+        position: position.to_string(),
     };
     if let Some(w) = app.get_webview_window("drill") {
         // A different mode must be honoured: reload the popup so it re-reads the

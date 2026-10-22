@@ -149,3 +149,8 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
   - **Conjugation layout:** the enlarged detail now renders a real table — **tenses as columns,
     persons as rows** (ES and DE) with non-finite forms + imperative below, instead of per-tense
     inline blocks.
+  - **Anchor fix (the real collapse bug):** `set_size` pins the *top-left*, so a bottom-anchored
+    popup jumped up when it shrank (its base left the taskbar). `vocab_set_popup_expanded` now
+    captures the pre-resize geometry and repositions so the configured corner stays fixed
+    (`bottom-*` keeps the bottom edge → enlarge grows up, collapse returns to the taskbar;
+    `*-left/right/top/center` handled too). 16px gap above the taskbar preserved.
