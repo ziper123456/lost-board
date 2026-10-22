@@ -456,8 +456,8 @@
       }
       if (!queue.length) {
         errorEl.textContent = mode === "practice"
-          ? "No struggling cards to practise right now."
-          : "No cards available — clear the category filter in Settings > Vocab.";
+          ? "No struggling cards match the current filters."
+          : "No cards available — clear the category / part-of-speech filter in Settings > Vocab.";
         return;
       }
       renderCard();

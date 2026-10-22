@@ -41,3 +41,6 @@ only nouns (useful for gender/articles).
 - Built as planned; no API drift. `vocab_filtered` short-circuits before touching the 4 MB
   enrichment map when `pos` is empty. Tests: `cargo test --lib` includes `pos_filter_logic`
   (12 passing); `npm run test:match` / `test:conjugate` unchanged.
+- PR review follow-ups: missing enrichment is treated as `"other"` in `vocab_filtered` (so
+  filtering and the POS counts agree); `vocab_pos_counts` is cached (immutable data); the
+  empty-result message now mentions the category / part-of-speech filter.

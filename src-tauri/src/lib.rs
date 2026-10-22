@@ -2108,29 +2108,35 @@ fn vocab_categories(app: tauri::AppHandle) -> Result<Vec<VocabCategory>, String>
         .collect())
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 struct VocabPos {
     pos: String,
     count: usize,
 }
 
+static VOCAB_POS_COUNTS: std::sync::OnceLock<Vec<VocabPos>> = std::sync::OnceLock::new();
+
 /// Per-part-of-speech card counts (from enrichment), in a fixed display order.
+/// Cached — the enrichment set is immutable at runtime.
 #[tauri::command]
 fn vocab_pos_counts(app: tauri::AppHandle) -> Result<Vec<VocabPos>, String> {
-    const ORDER: [&str; 6] = ["noun", "verb", "adjective", "adverb", "phrase", "other"];
-    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-    let details = card_details(&app);
-    let mut counts: [usize; 6] = [0; 6];
-    for c in all.iter() {
-        let pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
-        let i = ORDER.iter().position(|p| *p == pos).unwrap_or(5);
-        counts[i] += 1;
-    }
-    Ok(ORDER
-        .iter()
-        .enumerate()
-        .map(|(i, p)| VocabPos { pos: (*p).to_string(), count: counts[i] })
-        .collect())
+    let counts = VOCAB_POS_COUNTS.get_or_init(|| {
+        const ORDER: [&str; 6] = ["noun", "verb", "adjective", "adverb", "phrase", "other"];
+        let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+        let details = card_details(&app);
+        let mut counts = [0usize; 6];
+        for c in all.iter() {
+            let pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
+            let i = ORDER.iter().position(|p| *p == pos).unwrap_or(5);
+            counts[i] += 1;
+        }
+        ORDER
+            .iter()
+            .enumerate()
+            .map(|(i, p)| VocabPos { pos: (*p).to_string(), count: counts[i] })
+            .collect()
+    });
+    Ok(counts.clone())
 }
 
 fn read_vocab_section(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
@@ -2289,7 +2295,11 @@ fn vocab_filtered<'a>(
     }
     let details = card_details(app);
     base.into_iter()
-        .filter(|c| pos_passes(pos, details.get(&c.id).map(|d| d.pos.as_str())))
+        .filter(|c| {
+            // Missing enrichment is treated as "other", matching vocab_pos_counts.
+            let card_pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
+            pos_passes(pos, Some(card_pos))
+        })
         .collect()
 }
 
