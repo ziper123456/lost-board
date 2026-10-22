@@ -13,6 +13,9 @@ src-tauri/gen/
 *.local.json
 .env
 
+# Vocab enrichment batch working dir (progress/checkpoints)
+.enrich/
+
 # Cached favicons (fetched at runtime)
 favicons/
 

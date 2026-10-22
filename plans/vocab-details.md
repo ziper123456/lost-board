@@ -1,6 +1,6 @@
 # Plan — Vocab card details: usage examples, conjugation, gender/article
 
-Status: 🚧 in progress. Builds on `vocab-srs.md` + `vocab-sessions.md`.
+Status: ✅ built — full 10,262-card enrichment generated via the opencode batch. Builds on `vocab-srs.md` + `vocab-sessions.md`.
 Spec: `spec.md` §2.13 (FR-VOC-017..019), §2.17? no — §2.13 details.
 
 ## Goal
@@ -137,3 +137,7 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
     bottom and the 360px window hung ~104px **below the screen**. Sizes are now shared constants
     (`DRILL_W/H`, expanded variants) used by both placement and creation, plus a post-create
     work-area clamp as a safety net.
+  - **Enrichment complete:** all **10,262** cards generated via `opencode run` (deepseek-v4.1-flash,
+    batches of 25, resumable with `.enrich/` checkpoints). Validation: 0 missing, 0 unknown ids,
+    0 empty examples, 0 nouns without articles; ~4 MB resource. 26 entries have a highlight string
+    that doesn't exactly appear in the sentence (bold omitted there — cosmetic).
