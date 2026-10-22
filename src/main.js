@@ -311,28 +311,32 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("read_vocab_cards", { count, categories: categories || [] });
     return [];
   },
-  async openVocabPopup(lang, categories, position, practice) {
-    if (window.__TAURI__) return invoke("open_vocab_popup", { lang, categories: categories || [], position: position || "bottom-right", practice: practice === true });
+  async openVocabPopup(lang, categories, pos, position, practice) {
+    if (window.__TAURI__) return invoke("open_vocab_popup", { lang, categories: categories || [], pos: pos || [], position: position || "bottom-right", practice: practice === true });
     return "disabled";
   },
   async vocabCategories() {
     if (window.__TAURI__) return invoke("vocab_categories");
     return [];
   },
-  async vocabDueCard(categories) {
-    if (window.__TAURI__) return invoke("vocab_due_card", { categories: categories || [] });
+  async vocabPosCounts() {
+    if (window.__TAURI__) return invoke("vocab_pos_counts");
+    return [];
+  },
+  async vocabDueCard(categories, pos) {
+    if (window.__TAURI__) return invoke("vocab_due_card", { categories: categories || [], pos: pos || [] });
     return null;
   },
-  async vocabDueBatch(categories, limit, preferStruggling) {
-    if (window.__TAURI__) return invoke("vocab_due_batch", { categories: categories || [], limit: limit || 0, preferStruggling: preferStruggling === true });
+  async vocabDueBatch(categories, pos, limit, preferStruggling) {
+    if (window.__TAURI__) return invoke("vocab_due_batch", { categories: categories || [], pos: pos || [], limit: limit || 0, preferStruggling: preferStruggling === true });
     return [];
   },
-  async vocabPracticeBatch(categories, limit) {
-    if (window.__TAURI__) return invoke("vocab_practice_batch", { categories: categories || [], limit: limit || 0 });
+  async vocabPracticeBatch(categories, pos, limit) {
+    if (window.__TAURI__) return invoke("vocab_practice_batch", { categories: categories || [], pos: pos || [], limit: limit || 0 });
     return [];
   },
-  async vocabDueCount(categories) {
-    if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [] });
+  async vocabDueCount(categories, pos) {
+    if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [], pos: pos || [] });
     return 0;
   },
   async vocabResetSrs() {
@@ -345,12 +349,12 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_srs_enabled");
     return false;
   },
-  async vocabSrsStats(categories) {
-    if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [] });
+  async vocabSrsStats(categories, pos) {
+    if (window.__TAURI__) return invoke("vocab_srs_stats", { categories: categories || [], pos: pos || [] });
     return null;
   },
-  async vocabCategoryStats(categories) {
-    if (window.__TAURI__) return invoke("vocab_category_stats", { categories: categories || [] });
+  async vocabCategoryStats(categories, pos) {
+    if (window.__TAURI__) return invoke("vocab_category_stats", { categories: categories || [], pos: pos || [] });
     return [];
   },
   async setPopupTheme(css) {
@@ -1235,6 +1239,7 @@ function vocabConfig() {
   if (v.quietStart === undefined) v.quietStart = "";
   if (v.quietEnd === undefined) v.quietEnd = "";
   if (!Array.isArray(v.drillCats)) v.drillCats = [];
+  if (!Array.isArray(v.drillPos)) v.drillPos = [];
   if (!v.popupPosition) v.popupPosition = "bottom-right";
   if (v.cardsPerSession === undefined) v.cardsPerSession = 1; // 0 = all due
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
@@ -1254,7 +1259,7 @@ async function renderVocabBody(c, body) {
   }
   let due = 0;
   try {
-    due = await native.vocabDueCount([]);
+    due = await native.vocabDueCount([], []);
   } catch {
     due = 0;
   }
@@ -1329,7 +1334,7 @@ async function renderVocabBody(c, body) {
   if (practiceBtn) {
     practiceBtn.addEventListener("click", () => {
       const v = vocabConfig();
-      native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right", true).catch(() => {});
+      native.openVocabPopup(v.lang || "es", v.drillCats || [], v.drillPos || [], v.popupPosition || "bottom-right", true).catch(() => {});
     });
   }
   const enEl = body.querySelector(".vocab-en");
@@ -4004,6 +4009,35 @@ function renderVocabSettings() {
     if (catBox.isConnected) catBox.innerHTML = `<span class="muted">couldn't load categories</span>`;
   });
 
+  const posHead = document.createElement("div");
+  posHead.className = "item-row";
+  posHead.innerHTML = `<label>Part of speech</label><span class="muted">popup only — empty = all</span>`;
+  panel.appendChild(posHead);
+  const posBox = document.createElement("div");
+  posBox.className = "vocab-cats";
+  posBox.innerHTML = `<span class="muted">loading…</span>`;
+  panel.appendChild(posBox);
+  const POS_LABELS = { noun: "Nouns", verb: "Verbs", adjective: "Adjectives", adverb: "Adverbs", phrase: "Phrases", other: "Other" };
+  native.vocabPosCounts().then((list) => {
+    if (!posBox.isConnected) return;
+    if (!list || !list.length) {
+      posBox.innerHTML = `<span class="muted">no data</span>`;
+      return;
+    }
+    const sel = new Set(v.drillPos || []);
+    posBox.innerHTML = list
+      .map((p) => `<label class="vocab-cat"><input type="checkbox" data-pos="${escapeHtml(p.pos)}" ${sel.has(p.pos) ? "checked" : ""} />${escapeHtml(POS_LABELS[p.pos] || p.pos)} <span class="muted">(${p.count})</span></label>`)
+      .join("");
+    posBox.querySelectorAll("input[type=checkbox]").forEach((box) =>
+      box.addEventListener("change", () => {
+        v.drillPos = [...posBox.querySelectorAll("input[type=checkbox]:checked")].map((b) => b.dataset.pos);
+        commit();
+      })
+    );
+  }).catch(() => {
+    if (posBox.isConnected) posBox.innerHTML = `<span class="muted">couldn't load parts of speech</span>`;
+  });
+
   const posRow = document.createElement("div");
   posRow.className = "item-row";
   posRow.innerHTML = `<label>Popup position</label><div class="vocab-pos-grid" role="radiogroup" aria-label="Drill popup position"></div>`;
@@ -4079,7 +4113,7 @@ function renderVocabSettings() {
   actions.querySelector("#vocab-preview").addEventListener("click", async () => {
     statusEl.textContent = "opening…";
     try {
-      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right");
+      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.drillPos || [], v.popupPosition || "bottom-right");
       statusEl.textContent = res === "already-open" ? "already open" : "opened";
     } catch (e) {
       statusEl.textContent = `failed: ${e.message || e}`;
@@ -4134,7 +4168,7 @@ function renderVocabSettings() {
   sessRow.querySelector("#vocab-practice").addEventListener("click", async () => {
     sessStatus.textContent = "opening…";
     try {
-      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.popupPosition || "bottom-right", true);
+      const res = await native.openVocabPopup(v.lang || "es", v.drillCats || [], v.drillPos || [], v.popupPosition || "bottom-right", true);
       sessStatus.textContent = res === "already-open" ? "already open" : "opened";
     } catch (e) {
       sessStatus.textContent = `failed: ${e.message || e}`;
@@ -4160,7 +4194,7 @@ function renderVocabSettings() {
   const progEl = srsProg.querySelector("#vocab-srs-progress");
   const loadStats = () =>
     native
-      .vocabSrsStats(v.drillCats || [])
+      .vocabSrsStats(v.drillCats || [], v.drillPos || [])
       .then((s) => {
         if (!s) {
           progEl.textContent = "";
@@ -4191,7 +4225,7 @@ function renderVocabSettings() {
   catTable.innerHTML = `<span class="muted">loading…</span>`;
   panel.appendChild(catTable);
   native
-    .vocabCategoryStats(v.drillCats || [])
+    .vocabCategoryStats(v.drillCats || [], v.drillPos || [])
     .then((rows) => {
       if (!catTable.isConnected) return;
       if (!rows || !rows.length) {
