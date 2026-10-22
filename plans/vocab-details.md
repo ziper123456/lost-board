@@ -146,3 +146,6 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
     early-returned on an out-of-sync flag. `vocab_set_popup_expanded` is now **async + idempotent**
     (always applies the size), the window is `resizable(true)`, and the drill updates its UI
     immediately and **always resets to compact on each new card**.
+  - **Conjugation layout:** the enlarged detail now renders a real table — **tenses as columns,
+    persons as rows** (ES and DE) with non-finite forms + imperative below, instead of per-tense
+    inline blocks.

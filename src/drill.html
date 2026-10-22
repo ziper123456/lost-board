@@ -74,12 +74,16 @@
   .detail { margin-top: 8px; flex: 1; overflow-y: auto; border-top: 1px solid var(--border, #3a3a48); padding-top: 6px; }
   .detail-block { margin-bottom: 10px; }
   .detail-h { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted, #8b8b98); margin-bottom: 2px; }
-  .conj { margin-bottom: 8px; }
-  .conj-title { font-weight: 600; font-size: 0.8rem; }
-  .conj-tense { margin-top: 4px; }
-  .conj-name { font-size: 0.68rem; color: var(--amber, #f0c674); }
-  .conj-forms { display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 0.74rem; }
-  .conj-forms i { color: var(--muted, #8b8b98); font-style: normal; }
+  .conj { margin-bottom: 10px; }
+  .conj-title { font-weight: 600; font-size: 0.8rem; margin-bottom: 4px; }
+  .conj-scroll { overflow-x: auto; }
+  .conj-table { border-collapse: collapse; font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+  .conj-table th, .conj-table td { border: 1px solid var(--border, #3a3a48); padding: 2px 6px; text-align: left; white-space: nowrap; }
+  .conj-table thead th { color: var(--amber, #f0c674); font-weight: 600; background: rgba(255, 255, 255, 0.03); }
+  .conj-table tbody th { color: var(--muted, #8b8b98); font-weight: 500; }
+  .conj-table th.p, .conj-table td.p { position: sticky; left: 0; background: var(--board-bg, #141419); }
+  .conj-extra { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 0.72rem; margin-top: 5px; }
+  .conj-extra i { color: var(--muted, #8b8b98); font-style: normal; margin-right: 4px; }
   .muted { color: var(--muted, #8b8b98); font-size: 0.78rem; }
 </style>
 </head>
@@ -302,22 +306,29 @@
   }
 
   // ---- Detail (enlarged) view ---------------------------------------------
+  // Tense = column, person = row (scrolls horizontally if it gets wide).
   function conjTable(c) {
     if (!c) return "";
+    const tenses = c.tenses || [];
+    const persons = c.persons || [];
     let html = `<div class="conj"><div class="conj-title">${c.lang.toUpperCase()} · ${escapeHtml(c.infinitive)}</div>`;
-    for (const t of c.tenses) {
-      html += `<div class="conj-tense"><div class="conj-name">${escapeHtml(t.name)}</div><div class="conj-forms">`;
-      html += t.forms.map((f, i) => `<span><i>${escapeHtml(c.persons[i] || "")}</i> ${escapeHtml(f)}</span>`).join("");
-      html += `</div></div>`;
+    html += `<div class="conj-scroll"><table class="conj-table"><thead><tr><th class="p"></th>`;
+    for (const t of tenses) html += `<th>${escapeHtml(t.name)}</th>`;
+    html += `</tr></thead><tbody>`;
+    for (let i = 0; i < persons.length; i++) {
+      html += `<tr><th class="p">${escapeHtml(persons[i] || "")}</th>`;
+      for (const t of tenses) html += `<td>${escapeHtml((t.forms && t.forms[i]) || "")}</td>`;
+      html += `</tr>`;
     }
+    html += `</tbody></table></div>`;
     if (c.nonFinite && c.nonFinite.length) {
-      html += `<div class="conj-forms">${c.nonFinite.map((n) => `<span><i>${escapeHtml(n.name)}</i> ${escapeHtml(n.form)}</span>`).join("")}</div>`;
+      html += `<div class="conj-extra">${c.nonFinite.map((n) => `<span><i>${escapeHtml(n.name)}</i> ${escapeHtml(n.form)}</span>`).join("")}</div>`;
     }
     if (c.imperative) {
       const imp = c.lang === "es"
         ? [["tú", c.imperative.tu], ["vosotros", c.imperative.vosotros], ["usted", c.imperative.usted], ["ustedes", c.imperative.ustedes]]
         : [["du", c.imperative.du], ["ihr", c.imperative.ihr], ["Sie", c.imperative.sie]];
-      html += `<div class="conj-name">Imperativo</div><div class="conj-forms">${imp.map(([p, f]) => `<span><i>${escapeHtml(p)}</i> ${escapeHtml(f)}</span>`).join("")}</div>`;
+      html += `<div class="conj-extra"><span><i>Imperativo</i>${imp.map(([p, f]) => `${escapeHtml(p)} ${escapeHtml(f)}`).join(" · ")}</span></div>`;
     }
     return html + `</div>`;
   }
