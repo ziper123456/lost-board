@@ -70,19 +70,39 @@ const THEMES = {
 // top, plus the corner radius and background gradient. All tokens are written
 // to :root as CSS variables; styles.css consumes them with fallbacks, so an
 // unset token always resolves to the theme default.
+let dynamicPalette = null; // { url, accent, secondary } — transient, from the current cover
+let lastSpotifyArt = "";   // last seen cover URL (drives the dynamic palette)
+
 function applyAppearance() {
   const t = THEMES[state.theme] || THEMES.dark;
   const d = state.design || {};
   const v = (k, fb) => (d[k] !== undefined && d[k] !== null && d[k] !== "" ? d[k] : fb);
   const px = (k, fb) => `${v(k, fb)}px`;
   const root = document.documentElement.style;
+  // Dynamic colours derived from the current Spotify cover (optional).
+  const dynOn = !!(d.dynamicSpotify && dynamicPalette && typeof Colors !== "undefined");
+  const pct = (x, fb) => (Number.isFinite(Number(x)) ? Math.max(0, Math.min(100, Number(x))) : fb);
+  const baseAccent = v("accent", t.accent);
+  const effectiveAccent = dynOn
+    ? Colors.clampLightness(Colors.mixHex(baseAccent, dynamicPalette.accent, pct(d.dynAccentMix, 60) / 100), 0.42, 0.82)
+    : baseAccent;
+  const baseBg = v("bg", t.bg);
+  let boardBg;
+  if (dynOn && pct(d.dynBgMix, 35) > 0) {
+    const amt = pct(d.dynBgMix, 35) / 100;
+    const from = Colors.mixHex(baseBg, dynamicPalette.accent, amt);
+    const to = Colors.mixHex(baseBg, dynamicPalette.secondary || dynamicPalette.accent, amt * 0.6);
+    boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${from}, ${to})`;
+  } else {
+    boardBg = d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)";
+  }
   root.setProperty("--bg", v("bg", t.bg));
   root.setProperty("--panel", v("panel", t.panel));
   root.setProperty("--panel-2", v("panel2", t.panel2));
   root.setProperty("--border", v("borderColor", t.border));
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
-  root.setProperty("--accent", v("accent", t.accent));
+  root.setProperty("--accent", effectiveAccent);
   root.setProperty("--green", v("green", "#22c55e"));
   root.setProperty("--red", v("red", "#ef4444"));
   root.setProperty("--amber", v("amber", "#f59e0b"));
@@ -110,12 +130,8 @@ function applyAppearance() {
   else root.removeProperty("--heading-weight");
   if (d.transitionMs != null) root.setProperty("--transition", `${d.transitionMs}ms`);
   else root.removeProperty("--transition");
-  // Board background: a gradient token consumed by html/body + .dashboard,
-  // falling back to the flat --bg colour.
-  root.setProperty(
-    "--board-bg",
-    d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
-  );
+  // Board background: theme/design gradient, or the cover-derived one above.
+  root.setProperty("--board-bg", boardBg);
   // Push the computed tokens to the drill popup (separate window, own stylesheet).
   if (window.__TAURI__) {
     const popupCss =
@@ -126,13 +142,60 @@ function applyAppearance() {
       `--border:${v("borderColor", t.border)};` +
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
-      `--accent:${v("accent", t.accent)};` +
+      `--accent:${effectiveAccent};` +
       `--radius:${radiusGlobal}px;` +
       `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
       `--font-size:${v("fontBase", 16)}px;` +
-      `--board-bg:${d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"};` +
+      `--board-bg:${boardBg};` +
       "}";
     void native.setPopupTheme(popupCss).catch(() => {});
+  }
+}
+
+// Live swatch in the Design tab (if visible).
+function updateDynSwatch() {
+  const sw = document.getElementById("dyn-swatch");
+  const st = document.getElementById("dyn-status");
+  if (sw) sw.style.background = dynamicPalette ? dynamicPalette.accent : "";
+  if (st) {
+    if (!(state.design && state.design.dynamicSpotify)) st.textContent = "off";
+    else if (dynamicPalette) st.textContent = "";
+    else st.textContent = lastSpotifyArt ? "loading…" : "no track playing";
+  }
+}
+
+// Fetch the current cover's palette when dynamic colours are on. Only re-fetches
+// when the cover URL changes; keeps the last palette on transient failures.
+async function refreshDynamicPalette(discover) {
+  const d = state.design || {};
+  if (!d.dynamicSpotify) return;
+  // When enabling the toggle without a Spotify tile polling, look up the cover.
+  if (!lastSpotifyArt && discover) {
+    try {
+      const t = await native.spotifyNowPlaying();
+      if (t && t.art) lastSpotifyArt = t.art;
+    } catch {
+      /* not connected */
+    }
+  }
+  if (!lastSpotifyArt) {
+    if (dynamicPalette) {
+      dynamicPalette = null;
+      applyAppearance();
+      updateDynSwatch();
+    }
+    return;
+  }
+  if (dynamicPalette && dynamicPalette.url === lastSpotifyArt) return;
+  const url = lastSpotifyArt;
+  try {
+    const p = await native.spotifyCoverPalette(url);
+    if (!p || lastSpotifyArt !== url) return; // stale response
+    dynamicPalette = { url, accent: p.accent, secondary: p.secondary };
+    applyAppearance();
+    updateDynSwatch();
+  } catch {
+    /* keep the theme / previous palette */
   }
 }
 
@@ -252,6 +315,10 @@ async openFolder(path) {
   },
   async spotifyNowPlaying() {
     if (window.__TAURI__) return invoke("spotify_now_playing");
+    return null;
+  },
+  async spotifyCoverPalette(url) {
+    if (window.__TAURI__) return invoke("spotify_cover_palette", { url });
     return null;
   },
   async spotifyPlay(play) {
@@ -1698,9 +1765,13 @@ async function renderSpotifyBody(c, body) {
       body.querySelector(".spot-album").textContent = "";
       durationMs = 0;
       fillEl.style.width = "0%";
+      lastSpotifyArt = "";
+      void refreshDynamicPalette();
       return;
     }
     bgEl.style.backgroundImage = track.art ? `url("${track.art}")` : "";
+    lastSpotifyArt = track.art || "";
+    void refreshDynamicPalette();
     titleEl.textContent = track.title;
     body.querySelector(".spot-artist").textContent = track.artist;
     body.querySelector(".spot-album").textContent = track.album;
@@ -5150,6 +5221,26 @@ function renderDesignSettings() {
     row.querySelector(".d-input").addEventListener("change", (e) => { state.design[key] = e.target.value; applyNow(); });
     row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
   };
+
+  // Spotify cover colours — dedicated section at the top of the Design tab.
+  heading("Spotify cover colors");
+  const dynRow = document.createElement("div");
+  dynRow.className = "item-row";
+  dynRow.innerHTML = `
+    <label>Use Spotify cover color <input type="checkbox" id="dyn-spotify" ${state.design.dynamicSpotify ? "checked" : ""} /></label>
+    <span class="dyn-swatch" id="dyn-swatch" title="Current cover accent"></span>
+    <span class="muted" id="dyn-status"></span>`;
+  panel.appendChild(dynRow);
+  dynRow.querySelector("#dyn-spotify").addEventListener("change", (e) => {
+    state.design.dynamicSpotify = e.target.checked;
+    applyAppearance();
+    saveState();
+    void refreshDynamicPalette(true);
+    updateDynSwatch();
+  });
+  numRow("Accent blend", "dynAccentMix", 0, 100, 5, "%", 60);
+  numRow("Background blend", "dynBgMix", 0, 100, 5, "%", 35);
+  updateDynSwatch();
 
   // Presets
   const presetRow = document.createElement("div");

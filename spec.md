@@ -313,6 +313,11 @@ auth, custom images are user-supplied, captioning is fully local.
   generic categories + a custom family field).
 - **FR-DSN-004** Per-tile decoration extends to tile border color/width, radius, shadow,
   background gradient and font size/weight.
+- **FR-DSN-005** The Design tab shall offer a **Spotify cover color** mode (top of the tab): a
+  toggle plus **accent-blend** and **background-blend** sliders. When enabled and a track is
+  playing, the board accent and background gradient are derived from the current album cover
+  (extracted locally in Rust), the drill popup follows, and the setting **persists** with the
+  dashboard config. With no track playing, the theme is restored.
 
 ### 2.17 UI polish: themes, tile context menu, hide header
 
@@ -565,6 +570,12 @@ article highlighted and the correct one shown.
 Given the Vocab settings, when the user selects "Verbs" under Part of speech, then the drill and
 mastery stats include only cards enriched as verbs (combined with any category selection); the
 tile and its due badge remain whole-deck.
+
+### AC-045: Spotify cover colours
+Given Spotify is playing and "Use Spotify cover color" is enabled, when the cover changes, then the
+board accent/background reflect the cover colours (per the blend sliders) and the drill popup
+matches; when playback stops, the theme is restored. The toggle and slider values persist across
+restarts.
 
 ---
 

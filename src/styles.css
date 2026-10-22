@@ -996,3 +996,6 @@ input[type="color"]:hover { border-color: var(--accent); }
 .comp-title, .news-feed-title, .spot-title, .bmk-name, .wea-name { font-weight: var(--heading-weight, 600); }
 .cal-title, .vocab-en, .spot-queue-title { font-weight: var(--heading-weight, 700); }
 .wea-temp { font-weight: var(--heading-weight, 800); }
+
+/* Spotify cover-colour swatch (Design tab) */
+.dyn-swatch { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border); display: inline-block; background: transparent; vertical-align: middle; }

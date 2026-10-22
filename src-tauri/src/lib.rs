@@ -1370,6 +1370,102 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
     }))
 }
 
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+struct CoverPalette {
+    accent: String,
+    secondary: String,
+}
+
+static COVER_PALETTES: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, CoverPalette>>,
+> = std::sync::OnceLock::new();
+
+fn cover_palette_cache() -> &'static StdMutex<std::collections::HashMap<String, CoverPalette>> {
+    COVER_PALETTES.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if (max - r).abs() < 1e-6 {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - g).abs() < 1e-6 {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, s, l)
+}
+
+fn hex_color(r: u8, g: u8, b: u8) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Pick (accent, secondary) from image pixels: quantize to 4 bits/channel, then
+/// favour frequent, saturated, non-extreme colours. Pure (unit-tested).
+fn pick_palette(
+    pixels: impl Iterator<Item = (u8, u8, u8)>,
+) -> ((u8, u8, u8), (u8, u8, u8)) {
+    use std::collections::HashMap;
+    let mut bins: HashMap<u16, (u32, u32, u32, u32)> = HashMap::new();
+    for (r, g, b) in pixels {
+        let key = (((r >> 4) as u16) << 8) | (((g >> 4) as u16) << 4) | ((b >> 4) as u16);
+        let e = bins.entry(key).or_insert((0, 0, 0, 0));
+        e.0 += 1;
+        e.1 += r as u32;
+        e.2 += g as u32;
+        e.3 += b as u32;
+    }
+    let mut scored: Vec<((u8, u8, u8), f32)> = bins
+        .values()
+        .filter(|e| e.0 > 0)
+        .map(|&(n, sr, sg, sb)| {
+            let r = (sr / n) as u8;
+            let g = (sg / n) as u8;
+            let b = (sb / n) as u8;
+            let (_, s, l) = rgb_to_hsl(r, g, b);
+            let extreme = if l < 0.12 || l > 0.94 { 0.12 } else { 1.0 };
+            ((r, g, b), n as f32 * (0.25 + s) * extreme)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let accent = scored.first().map(|x| x.0).unwrap_or((124, 58, 237));
+    let secondary = scored.get(1).map(|x| x.0).unwrap_or(accent);
+    (accent, secondary)
+}
+
+/// Extract a small palette from a Spotify cover image (cached per URL). Done in
+/// Rust because reading pixels from a remote image in a canvas taints it.
+#[tauri::command]
+async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
+    let url = url.trim().to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("invalid cover URL".into());
+    }
+    if let Some(p) = cover_palette_cache().lock().unwrap().get(&url).cloned() {
+        return Ok(p);
+    }
+    let (_ext, bytes) = download_image(&url).await?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("decode cover: {e}"))?;
+    let small = img
+        .resize_exact(64, 64, image::imageops::FilterType::Triangle)
+        .to_rgb8();
+    let (accent, secondary) = pick_palette(small.pixels().map(|p| (p[0], p[1], p[2])));
+    let palette = CoverPalette {
+        accent: hex_color(accent.0, accent.1, accent.2),
+        secondary: hex_color(secondary.0, secondary.1, secondary.2),
+    };
+    cover_palette_cache().lock().unwrap().insert(url, palette.clone());
+    Ok(palette)
+}
+
 /// Toggle regular shuffle on the active device.
 /// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
 /// and surfaced through `smart_shuffle` in now-playing.)
@@ -1741,6 +1837,7 @@ pub fn run() {
             spotify_begin,
             spotify_capture,
             spotify_now_playing,
+            spotify_cover_palette,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -3377,5 +3474,18 @@ mod srs_tests {
         // mismatch or unknown POS excluded when a filter is set
         assert!(!pos_passes(&["noun".to_string()], Some("verb")));
         assert!(!pos_passes(&["verb".to_string()], None));
+    }
+
+    #[test]
+    fn cover_palette_prefers_vivid_colour() {
+        let mut px: Vec<(u8, u8, u8)> = Vec::new();
+        for _ in 0..80 {
+            px.push((200, 20, 20)); // dominant, vivid red
+        }
+        for _ in 0..20 {
+            px.push((128, 128, 128)); // minor, greyscale
+        }
+        let (accent, _secondary) = pick_palette(px.into_iter());
+        assert_eq!(accent, (200, 20, 20));
     }
 }
