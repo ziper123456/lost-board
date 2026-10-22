@@ -1701,6 +1701,8 @@ pub fn run() {
             vocab_srs_enabled,
             vocab_srs_stats,
             vocab_category_stats,
+            vocab_card_detail,
+            vocab_set_popup_expanded,
             set_popup_theme,
             get_popup_theme,
             vocab_popup_config,
@@ -1798,6 +1800,46 @@ struct VocabCard {
     cats: Vec<String>,
 }
 
+/// Optional per-card enrichment (usage examples, gender/article, plural, POS).
+/// Lives in `resources/cards-extra.json` keyed by card id; absent means the
+/// card drills exactly as before.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct DetailLangs {
+    #[serde(default)]
+    es: String,
+    #[serde(default)]
+    de: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct DetailExample {
+    #[serde(default)]
+    en: String,
+    #[serde(default)]
+    es: String,
+    #[serde(default)]
+    de: String,
+    /// Exact surface form used in the ES/DE sentence, for bolding.
+    #[serde(default)]
+    hl_es: String,
+    #[serde(default)]
+    hl_de: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct CardDetail {
+    #[serde(default)]
+    pos: String,
+    #[serde(default)]
+    article: DetailLangs,
+    #[serde(default)]
+    plural: DetailLangs,
+    #[serde(default)]
+    example: DetailExample,
+    #[serde(default)]
+    note: String,
+}
+
 #[derive(serde::Serialize, Clone, Default)]
 struct VocabPopupConfig {
     lang: String,
@@ -1810,6 +1852,8 @@ struct VocabPopupConfig {
     practice: bool,
     /// Cards per practice session (0 = all). Separate from the review cap.
     practice_size: usize,
+    /// Placement preset (used so resize keeps the anchored corner fixed).
+    position: String,
 }
 
 #[derive(serde::Serialize)]
@@ -1819,6 +1863,8 @@ struct VocabCategory {
 }
 
 static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
+static CARD_DETAILS: std::sync::OnceLock<std::collections::HashMap<String, CardDetail>> =
+    std::sync::OnceLock::new();
 static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig {
     lang: String::new(),
     cats: Vec::new(),
@@ -1826,6 +1872,7 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     struggling_first: true,
     practice: false,
     practice_size: 10,
+    position: String::new(),
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -1906,6 +1953,105 @@ fn load_vocab_cards(app: &tauri::AppHandle) -> Vec<VocabCard> {
             })
         })
         .collect()
+}
+
+/// Load `resources/cards-extra.json` (optional). Missing/malformed → empty map,
+/// so the drill keeps working without enrichment.
+fn load_card_details(app: &tauri::AppHandle) -> std::collections::HashMap<String, CardDetail> {
+    use tauri::path::BaseDirectory;
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = app
+        .path()
+        .resolve("resources/cards-extra.json", BaseDirectory::Resource)
+    {
+        candidates.push(p);
+    }
+    candidates.push(std::path::PathBuf::from("src-tauri/resources/cards-extra.json"));
+    candidates.push(std::path::PathBuf::from("resources/cards-extra.json"));
+    let Some(path) = candidates.into_iter().find(|p| p.is_file()) else {
+        return std::collections::HashMap::new();
+    };
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => std::collections::HashMap::new(),
+    }
+}
+
+fn card_details(app: &tauri::AppHandle) -> &'static std::collections::HashMap<String, CardDetail> {
+    CARD_DETAILS.get_or_init(|| load_card_details(app))
+}
+
+/// Details for one card (null when unenriched). Loaded lazily on first use so
+/// the (large) enrichment file never slows main-window startup.
+#[tauri::command]
+fn vocab_card_detail(app: tauri::AppHandle, id: String) -> Result<Option<CardDetail>, String> {
+    Ok(card_details(&app).get(&id).cloned())
+}
+
+/// Grow/shrink the drill popup (compact ↔ full detail). Async so it runs off the
+/// main/IPC path (blocking window getters won't stall the event loop), and
+/// idempotent — it always applies the requested size, so a missed call can never
+/// leave the popup stuck at the enlarged size.
+#[tauri::command]
+async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("drill") else {
+        return Ok(());
+    };
+    let (width, height) = if expanded {
+        (DRILL_W_EXPANDED, DRILL_H_EXPANDED)
+    } else {
+        (DRILL_W, DRILL_H)
+    };
+
+    // Capture the geometry *before* resizing so we can keep the anchored corner
+    // fixed (otherwise set_size pins the top-left, and a bottom-anchored popup
+    // would jump up when it shrinks).
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let old_pos = w.outer_position().ok();
+    let old_size = w.inner_size().ok();
+    let preset = VOCAB_POPUP.lock().unwrap().position.clone();
+
+    w.set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| format!("resize drill popup: {e}"))?;
+
+    let new_w = (width * scale).round() as i32;
+    let new_h = (height * scale).round() as i32;
+
+    if let (Some(pos), Some(size)) = (old_pos, old_size) {
+        let old_w = size.width as i32;
+        let old_h = size.height as i32;
+        // horizontal anchor: left edge, right edge, or centered
+        let dx = if preset.contains("right") {
+            old_w - new_w
+        } else if preset.contains("left") || !preset.contains("center") {
+            0
+        } else {
+            (old_w - new_w) / 2
+        };
+        // vertical anchor: top edge, bottom edge, or centered
+        let dy = if preset.starts_with("top") {
+            0
+        } else if preset.starts_with("bottom") || preset.is_empty() {
+            old_h - new_h
+        } else {
+            (old_h - new_h) / 2
+        };
+        // Compute the final target once (anchor + clamp) to avoid reading back a
+        // stale position while the async window move is still pending.
+        let mut x = pos.x + dx;
+        let mut y = pos.y + dy;
+        if let Some((l, t, r, b)) = work_area_bounds(&w) {
+            x = x.min(r - new_w).max(l);
+            y = y.min(b - new_h).max(t);
+        }
+        if x != pos.x || y != pos.y {
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    } else {
+        clamp_window_to_work_area(&w, new_w, new_h);
+    }
+    Ok(())
 }
 
 /// Return `count` random cards (shuffled each call; tile and popup draw
@@ -2436,12 +2582,19 @@ fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
     Ok(VOCAB_POPUP.lock().unwrap().clone())
 }
 
+// Drill popup sizes must match `drill_position`'s placement math exactly, or a
+// bottom-anchored popup hangs off the bottom of the screen.
+const DRILL_W: f64 = 420.0;
+const DRILL_H: f64 = 360.0;
+const DRILL_W_EXPANDED: f64 = 680.0;
+const DRILL_H_EXPANDED: f64 = 640.0;
+
 /// Map a 3x3 placement preset to logical-pixel coordinates on the primary
 /// monitor. Accepts either word order ("center-right" / "right-center").
 /// Unknown values fall back to bottom-right (the spec default).
 fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) -> (f64, f64) {
-    const W: f64 = 360.0;
-    const H: f64 = 240.0;
+    const W: f64 = DRILL_W;
+    const H: f64 = DRILL_H;
     const M: f64 = 16.0;
     let hx = if preset.contains("left") {
         0
@@ -2474,6 +2627,56 @@ fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) 
     (x, y)
 }
 
+/// Windows work area (excludes the taskbar), physical px: (left, top, right, bottom).
+/// None on other platforms — callers fall back to the monitor rect.
+#[cfg(target_os = "windows")]
+fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut core::ffi::c_void, 0)
+    };
+    (ok != 0).then_some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+/// Current work-area bounds as physical `(left, top, right, bottom)`; falls back
+/// to the window's monitor when the OS work area is unavailable (non-Windows).
+fn work_area_bounds(w: &tauri::WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    work_area_physical().or_else(|| {
+        w.current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| w.primary_monitor().ok().flatten())
+            .map(|mon| {
+                let p = mon.position();
+                let s = mon.size();
+                (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
+            })
+    })
+}
+
+/// Clamp the window's top-left so its full `phys_w`×`phys_h` body stays inside
+/// the work area (taskbar-excluded) — the guard against off-screen windows.
+fn clamp_window_to_work_area(w: &tauri::WebviewWindow, phys_w: i32, phys_h: i32) {
+    let Ok(pos) = w.outer_position() else {
+        return;
+    };
+    let Some((l, t, r, b)) = work_area_bounds(w) else {
+        return;
+    };
+    let x = pos.x.min(r - phys_w).max(l);
+    let y = pos.y.min(b - phys_h).max(t);
+    if x != pos.x || y != pos.y {
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+    }
+}
+
 fn open_drill_window(
     app: &tauri::AppHandle,
     lang: &str,
@@ -2503,6 +2706,7 @@ fn open_drill_window(
         struggling_first,
         practice,
         practice_size,
+        position: position.to_string(),
     };
     if let Some(w) = app.get_webview_window("drill") {
         // A different mode must be honoured: reload the popup so it re-reads the
@@ -2525,24 +2729,42 @@ fn open_drill_window(
         .map_err(|e| format!("monitor: {e}"))?
         .ok_or("no primary monitor")?;
     let scale = mon.scale_factor().max(1.0);
-    let (x, y) = drill_position(
-        position,
-        mon.position().x as f64 / scale,
-        mon.position().y as f64 / scale,
-        mon.size().width as f64 / scale,
-        mon.size().height as f64 / scale,
-    );
-    WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
+    // Place inside the work area (excludes the Windows taskbar) so the bottom
+    // buttons aren't hidden under it; fall back to the full monitor elsewhere.
+    let (bx, by, bw, bh) = match work_area_physical() {
+        Some((l, t, r, b)) => (
+            l as f64 / scale,
+            t as f64 / scale,
+            (r - l) as f64 / scale,
+            (b - t) as f64 / scale,
+        ),
+        None => (
+            mon.position().x as f64 / scale,
+            mon.position().y as f64 / scale,
+            mon.size().width as f64 / scale,
+            mon.size().height as f64 / scale,
+        ),
+    };
+    let (x, y) = drill_position(position, bx, by, bw, bh);
+    let win = WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(360.0, 240.0)
+        .inner_size(DRILL_W, DRILL_H)
         .position(x, y)
         .decorations(false)
-        .resizable(false)
+        .resizable(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .focused(false)
         .build()
         .map_err(|e| format!("popup: {e}"))?;
+    // Safety net: whatever the placement math produced, never let the popup's
+    // body extend past the work area (the taskbar).
+    let win_scale = win.scale_factor().unwrap_or(scale);
+    clamp_window_to_work_area(
+        &win,
+        (DRILL_W * win_scale).round() as i32,
+        (DRILL_H * win_scale).round() as i32,
+    );
     Ok("opened")
 }
 

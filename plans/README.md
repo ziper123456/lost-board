@@ -28,6 +28,7 @@ Read the relevant file before implementing.
 | Calendar tile (lunar + moon phase + holidays) | [`calendar-tile.md`](calendar-tile.md) ✅ PR #41 | `spec.md` §2.15, AC-035..037 |
 | Vocab spaced repetition (SM-2) | [`vocab-srs.md`](vocab-srs.md) ✅ PR #43 | `spec.md` §2.13, FR-VOC-010..014 |
 | Vocab drill sessions (cap + struggling pile + practice) | [`vocab-sessions.md`](vocab-sessions.md) ✅ PR #45 | `spec.md` §2.13, FR-VOC-015..016 |
+| Vocab card details (usage, conjugation, gender/article) | [`vocab-details.md`](vocab-details.md) 🚧 | `spec.md` §2.13, FR-VOC-017..020, AC-041..043 |
 | UI overhaul — design-token system | [`design-tokens.md`](design-tokens.md) ✅ PR #42 | `spec.md` §2.16, FR-DSN-001..004 |
 | Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) ✅ PR #29 | `spec.md` §2.9/§7 (dropped) |
 | Spotify queue-jump fast path | Issue #18 ✅ PR #24 | `spec.md` FR-SPT-007 |

@@ -17,7 +17,7 @@ decisions:
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   window: background mode — tray + autostart + always-on-bottom (built, PR #30)
   vocab: flashcard tile + drill popup + per-tile speech + SM-2 spaced repetition, mastery
-    buckets, capped sessions + practice mode (built, PRs #31, #33, #36, #43..#45)
+    buckets, capped sessions + practice mode, usage/conjugation detail (built, PRs #31, #33, #36, #43..#45)
   meme: rotation tile (top-100 + curated) + local captioning + expanded view + GIF/PNG export (built, PR #32)
   calendar: Vietnamese lunar + moon phase + holidays tile (built, PR #41)
   theming: 6 extra themes + global design-token layer + Design tab (built, PRs #35, #42)
@@ -179,7 +179,7 @@ first-class APIs.
 - **FR-WIN-005** Known quirks (accepted): Win+D minimizes the window (restore via tray icon);
   Alt-Tab focus keeps it visually behind other windows.
 
-### 2.13 Vocab: flashcard tile + drill popup + speech + spaced repetition (built — PRs #31, #33, #36, #43..#45)
+### 2.13 Vocab: flashcard tile + drill popup + speech + spaced repetition + usage/conjugation (built — PRs #31, #33, #36, #43..#45, details)
 
 Design: passive exposure lives on the board (infinite trilingual flashcard), active recall
 lives in a popup on the main screen (typing drill). This supersedes the earlier
@@ -234,6 +234,20 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-016** **Practice mode** (manual button in Settings and the Vocab tile) shall show
   **not-due struggling** cards for extra reps. Practice is **never graded** — it must not change
   the schedule or mastery, so only genuinely spaced (due) reviews count.
+- **FR-VOC-017** After a card is answered correctly or revealed, the popup shall show a compact
+  **Learn strip**: usage example sentence(s) in the target language(s) with the word highlighted,
+  an English gloss, and — for nouns — gender/article + plural; for verbs — a present-tense
+  mini-line. The strip shall not appear before grading (no answer leak).
+- **FR-VOC-018** An **Enlarge** action shall resize the drill popup in place to a larger detail
+  view showing all example sentences, full conjugation tables (ES & DE, all tenses), gender/
+  plural, part of speech and notes; the window returns to the compact size afterwards.
+- **FR-VOC-019** Conjugation shall be computed **locally at runtime** (offline) for single
+  infinitive targets. For **nouns**, the user may type the noun **with or without** its article;
+  a **wrong article/gender is not a failure** — the noun counts correct and the card advances,
+  but the UI highlights the article mistake and shows the correct article.
+- **FR-VOC-020** Usage/conjugation data shall come from an optional id-keyed enrichment file
+  (`resources/cards-extra.json`), generated offline by the dev batch tool and loaded lazily;
+  cards without enrichment drill exactly as before.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
@@ -528,6 +542,20 @@ mature buckets (mature = interval ≥ 21 days) and a per-category table with mas
 Given a session size of 5, when the drill opens, then it steps through up to 5 due cards and closes;
 and "Practice hard words" shows not-due struggling cards that are **never graded** (schedule/mastery
 unchanged).
+
+### AC-041: Learn strip on reveal/correct
+Given an enriched card, when the user answers correctly or reveals, then a Learn strip shows an
+example sentence (word highlighted) plus a gloss and, for nouns, the article/plural; nothing is
+shown before grading.
+
+### AC-042: Enlarge to full detail
+Given the Learn strip is shown, when the user clicks Enlarge, then the popup grows in place and
+shows full examples + conjugation tables, and Collapse returns it to the compact size.
+
+### AC-043: Article-optional noun matching
+Given a noun card, when the user types the noun with or without its article it counts correct; if
+the article/gender is wrong the noun still counts correct and the card advances, with the wrong
+article highlighted and the correct one shown.
 
 ---
 
