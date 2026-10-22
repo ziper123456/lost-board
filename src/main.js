@@ -109,10 +109,24 @@ function applyAppearance() {
     const alpha = (0.12 + dynAmt * 0.22).toFixed(2);
     effectiveTileShadow = `0 6px 22px rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
   }
+  // Surfaces: panels, borders, inputs, tiles and scrollbar get a subtle tint
+  // (own slider, kept low so text stays readable).
+  const surfAmt = dynOn ? pct(d.dynSurfaceMix, 30) / 100 : 0;
+  const mixSurf = (key, baseHex, factor, cssDefault) =>
+    dynOn && surfAmt > 0
+      ? Colors.mixHex(d[key] || baseHex, dynamicPalette.accent, surfAmt * factor)
+      : v(key, cssDefault);
+  const effectivePanel = mixSurf("panel", t.panel, 0.35, t.panel);
+  const effectivePanel2 = mixSurf("panel2", t.panel2, 0.35, t.panel2);
+  const effectiveBorder = mixSurf("borderColor", t.border, 0.5, t.border);
+  const effectiveTileBg = mixSurf("tileBg", t.panel, 0.3, "var(--panel)");
+  const effectiveInputBg = mixSurf("inputBg", t.panel2, 0.25, "var(--panel-2)");
+  const effectiveScroll = mixSurf("scrollThumb", t.panel2, 0.4, "var(--panel-2)");
+  const effectiveBtnHover = mixSurf("btnHoverBg", t.border, 0.4, "var(--border)");
   root.setProperty("--bg", v("bg", t.bg));
-  root.setProperty("--panel", v("panel", t.panel));
-  root.setProperty("--panel-2", v("panel2", t.panel2));
-  root.setProperty("--border", v("borderColor", t.border));
+  root.setProperty("--panel", effectivePanel);
+  root.setProperty("--panel-2", effectivePanel2);
+  root.setProperty("--border", effectiveBorder);
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
   root.setProperty("--accent", effectiveAccent);
@@ -127,16 +141,16 @@ function applyAppearance() {
   root.setProperty("--btn-bg", v("btnBg", "var(--panel-2)"));
   root.setProperty("--btn-text", v("btnText", "var(--text)"));
   root.setProperty("--btn-border", v("btnBorder", "var(--border)"));
-  root.setProperty("--btn-hover-bg", v("btnHoverBg", "var(--border)"));
+  root.setProperty("--btn-hover-bg", effectiveBtnHover);
   root.setProperty("--row-bg", v("rowBg", "transparent"));
-  root.setProperty("--input-bg", v("inputBg", "var(--panel-2)"));
-  root.setProperty("--tile-bg", v("tileBg", "var(--panel)"));
+  root.setProperty("--input-bg", effectiveInputBg);
+  root.setProperty("--tile-bg", effectiveTileBg);
   root.setProperty("--tile-border", effectiveTileBorder);
   root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
   root.setProperty("--tile-shadow", effectiveTileShadow);
   root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
   root.setProperty("--font-size", px("fontBase", 16));
-  root.setProperty("--scroll-thumb", v("scrollThumb", "var(--panel-2)"));
+  root.setProperty("--scroll-thumb", effectiveScroll);
   // Heading weight / transition are only set when overridden, so their per-element
   // CSS fallbacks preserve the current look until the user changes them.
   if (d.headingWeight != null) root.setProperty("--heading-weight", String(d.headingWeight));
@@ -150,9 +164,9 @@ function applyAppearance() {
     const popupCss =
       ":root{" +
       `--bg:${v("bg", t.bg)};` +
-      `--panel:${v("panel", t.panel)};` +
-      `--panel-2:${v("panel2", t.panel2)};` +
-      `--border:${v("borderColor", t.border)};` +
+      `--panel:${effectivePanel};` +
+      `--panel-2:${effectivePanel2};` +
+      `--border:${effectiveBorder};` +
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
       `--accent:${effectiveAccent};` +
@@ -5253,6 +5267,7 @@ function renderDesignSettings() {
   });
   numRow("Accent blend", "dynAccentMix", 0, 100, 5, "%", 60);
   numRow("Background blend", "dynBgMix", 0, 100, 5, "%", 35);
+  numRow("Surfaces blend", "dynSurfaceMix", 0, 100, 5, "%", 30);
   updateDynSwatch();
 
   // Presets

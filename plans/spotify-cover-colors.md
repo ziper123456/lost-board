@@ -12,7 +12,7 @@ follow. Opt-in, saved with the config, reverts to the theme when nothing is play
 ## Decisions
 
 - Controls live in a dedicated **"Spotify cover colors"** section at the **top of the Design tab**
-  (toggle + accent-blend + background-blend sliders + a live swatch/status).
+  (toggle + accent-blend + background-blend + surfaces-blend sliders + a live swatch/status).
 - Palette extraction happens in **Rust** (canvas would taint on the Spotify CDN).
 - Scope: **both** accent and board background; text/panels/borders stay from the theme (contrast).
 - Popup follows; **nothing playing → revert to theme**.
@@ -34,11 +34,15 @@ follow. Opt-in, saved with the config, reverts to the theme when nothing is play
   exists, `--accent = clampLightness(mix(themeAccent, coverAccent, accentMix))`,
   `--board-bg = gradient(mix(themeBg, coverAccent, bgMix), mix(themeBg, coverSecondary, bgMix*0.6))`,
   and **tiles** get a cover-tinted `--tile-border` plus a soft cover-coloured `--tile-shadow` glow
-  (both scaled by the accent blend). The popup CSS push uses the same effective accent/board-bg.
+  (both scaled by the accent blend); with the **surfaces blend**, `--panel`, `--panel-2`,
+  `--border`, `--input-bg`, `--tile-bg`, `--scroll-thumb` and `--btn-hover-bg` are subtly tinted
+  (kept low for readability). The popup CSS push uses the same effective tokens.
+- State also includes `dynSurfaceMix` (default 30).
 - `refreshDynamicPalette(discover)`: fetch when the cover URL changes (or on toggle via
   `spotifyNowPlaying`); stale-response guard; clears on "nothing playing"; keeps last on failure.
 - Spotify tile `refresh()` sets `lastSpotifyArt` and calls `refreshDynamicPalette()`.
-- State: `state.design.dynamicSpotify` (bool), `dynAccentMix` (default 60), `dynBgMix` (default 35)
+- State: `state.design.dynamicSpotify` (bool), `dynAccentMix` (default 60), `dynBgMix` (default 35),
+  `dynSurfaceMix` (default 30)
   — persisted in the dashboard config and included in export/import.
 
 ## Corrections log
