@@ -84,6 +84,7 @@
   .conj-table th.p, .conj-table td.p { position: sticky; left: 0; background: var(--board-bg, #141419); }
   .conj-extra { display: flex; flex-wrap: wrap; gap: 3px 14px; font-size: 0.72rem; margin-top: 5px; }
   .conj-extra i { color: var(--muted, #8b8b98); font-style: normal; margin-right: 4px; }
+  .conj-note { font-size: 0.64rem; color: var(--muted, #8b8b98); margin-top: 4px; font-style: italic; }
   .muted { color: var(--muted, #8b8b98); font-size: 0.78rem; }
 </style>
 </head>
@@ -105,6 +106,7 @@
   </div>
   <div class="error" id="error"></div>
 <script src="conjugate.js"></script>
+<script src="vocab-match.js"></script>
 <script>
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   // Port of vocab-app typingMatch: lowercase + NFD diacritic-strip + trim.
@@ -152,37 +154,13 @@
   const inputs = () => [...document.querySelectorAll(".answer input")];
 
   // ---- Article-aware matching (nouns) --------------------------------------
-  const ARTICLES = ["el", "la", "los", "las", "der", "die", "das"];
-  function splitArticle(s) {
-    const n = norm(s);
-    for (const a of ARTICLES) {
-      if (n === a) return { article: a, noun: "" };
-      if (n.startsWith(a + " ")) return { article: a, noun: n.slice(a.length + 1).trim() };
-    }
-    return { article: null, noun: n };
-  }
-  function expectedNoun(canonical, detailArticle) {
-    const parsed = splitArticle(canonical);
-    const art = parsed.article || norm(detailArticle || "");
-    return { article: art, noun: parsed.noun };
-  }
-  // -> { status: "ok"|"article-wrong"|"wrong", expectedArticle?, inputArticle? }
-  function evalOne(raw, canonical, noun) {
-    if (!noun) {
-      return norm(raw) === norm(canonical) ? { status: "ok" } : { status: "wrong" };
-    }
-    const got = splitArticle(raw);
-    if (!got.noun || got.noun !== noun.noun) return { status: "wrong" };
-    if (!got.article || !noun.article) return { status: "ok" };
-    if (got.article === noun.article) return { status: "ok" };
-    return { status: "article-wrong", expectedArticle: noun.article, inputArticle: got.article };
-  }
+  // Logic lives in vocab-match.js (also node-testable); see scripts/test-match.cjs.
   function evaluate() {
     const vals = inputs().map((i) => i.value);
     const slips = [];
     let ok = true;
     targets.forEach((t, i) => {
-      const res = evalOne(vals[i] || "", t, nounTargets[i]);
+      const res = VocabMatch.evalOne(vals[i] || "", t, nounTargets[i]);
       if (res.status === "wrong") ok = false;
       else if (res.status === "article-wrong") slips.push({ index: i, ...res });
     });
@@ -247,11 +225,31 @@
   }
 
   // ---- Learn strip ---------------------------------------------------------
+  function stripWithMap(s) {
+    let out = "";
+    const map = [];
+    for (let k = 0; k < s.length; k++) {
+      const base = s[k].normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      for (let m = 0; m < base.length; m++) { out += base[m]; map.push(k); }
+    }
+    return { text: out, map };
+  }
   function boldHl(text, hl) {
     if (!hl) return escapeHtml(text);
-    const i = text.toLowerCase().indexOf(hl.toLowerCase());
+    let i = text.toLowerCase().indexOf(hl.toLowerCase());
+    let len = hl.length;
+    if (i < 0) {
+      // Fall back to a diacritic-insensitive match (accents may differ).
+      const st = stripWithMap(text.toLowerCase());
+      const sh = stripWithMap(hl.toLowerCase());
+      const j = st.text.indexOf(sh.text);
+      if (j >= 0) {
+        i = st.map[j];
+        len = st.map[j + sh.text.length - 1] + 1 - i;
+      }
+    }
     if (i < 0) return escapeHtml(text);
-    return escapeHtml(text.slice(0, i)) + "<b>" + escapeHtml(text.slice(i, i + hl.length)) + "</b>" + escapeHtml(text.slice(i + hl.length));
+    return escapeHtml(text.slice(0, i)) + "<b>" + escapeHtml(text.slice(i, i + len)) + "</b>" + escapeHtml(text.slice(i + len));
   }
   function conjFor(langCode) {
     if (!window.VocabConjugate) return null;
@@ -330,6 +328,7 @@
         : [["du", c.imperative.du], ["ihr", c.imperative.ihr], ["Sie", c.imperative.sie]];
       html += `<div class="conj-extra"><span><i>Imperativo</i>${imp.map(([p, f]) => `${escapeHtml(p)} ${escapeHtml(f)}`).join(" · ")}</span></div>`;
     }
+    html += `<div class="conj-note">Auto-generated forms — irregular verbs may differ.</div>`;
     return html + `</div>`;
   }
   function showDetail() {
@@ -390,7 +389,7 @@
     learnEl.innerHTML = "";
     detailEl.hidden = true;
     detailEl.innerHTML = "";
-    await setExpanded(false); // always return to compact for a new card (idempotent)
+    if (expanded) await setExpanded(false); // return to compact for a new card
     promptEl.textContent = card.en;
     promptEl.title = card.en;
     labelEl.textContent =
@@ -410,7 +409,7 @@
     nounTargets = targets.map((t, i) => {
       if (!currentDetail || currentDetail.pos !== "noun") return null;
       const L = langForTarget(i);
-      return expectedNoun(t, currentDetail.article && currentDetail.article[L]);
+      return VocabMatch.expectedNoun(t, currentDetail.article && currentDetail.article[L]);
     });
     updateProgress();
     inputs()[0]?.focus();

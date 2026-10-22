@@ -154,3 +154,9 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
     captures the pre-resize geometry and repositions so the configured corner stays fixed
     (`bottom-*` keeps the bottom edge → enlarge grows up, collapse returns to the taskbar;
     `*-left/right/top/center` handled too). 16px gap above the taskbar preserved.
+  - **PR review follow-ups:** article matching extracted to `src/vocab-match.js` (+
+    `scripts/test-match.cjs`) and now accepts/ignores **indefinite** articles (un/una, ein/eine…);
+    a muted "auto-generated forms — irregular verbs may differ" caveat under each conjugation
+    table; resize computes the target position once (anchor + clamp) instead of reading back a
+    still-pending move; diacritic-insensitive highlight fallback; resize IPC skipped on cards that
+    never expanded; size constants moved above their doc comment; enrich `invalidCount` cumulative.

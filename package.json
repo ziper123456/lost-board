@@ -9,6 +9,7 @@
     "dev:frontend": "serve src --listen 1420",
     "build": "tauri build",
     "test:conjugate": "node scripts/test-conjugate.cjs",
+    "test:match": "node scripts/test-match.cjs",
     "enrich": "node scripts/enrich-vocab.mjs"
   },
   "devDependencies": {

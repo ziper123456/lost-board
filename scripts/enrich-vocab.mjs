@@ -279,7 +279,7 @@ async function main() {
     // Any card in the batch not returned/valid stays todo; record for a retry.
     for (const c of batch) if (!out[c.id]) failedIds.add(c.id);
     okCount += batch.filter((c) => out[c.id]).length;
-    invalidCount = batch.filter((c) => !out[c.id]).length;
+    invalidCount += batch.filter((c) => !out[c.id]).length;
     writeJsonAtomic(OUT, out);
     batchNo += 1;
     done += batch.length;

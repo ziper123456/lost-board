@@ -2037,12 +2037,20 @@ async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Resu
         } else {
             (old_h - new_h) / 2
         };
-        if dx != 0 || dy != 0 {
-            let _ = w.set_position(tauri::PhysicalPosition::new(pos.x + dx, pos.y + dy));
+        // Compute the final target once (anchor + clamp) to avoid reading back a
+        // stale position while the async window move is still pending.
+        let mut x = pos.x + dx;
+        let mut y = pos.y + dy;
+        if let Some((l, t, r, b)) = work_area_bounds(&w) {
+            x = x.min(r - new_w).max(l);
+            y = y.min(b - new_h).max(t);
         }
+        if x != pos.x || y != pos.y {
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    } else {
+        clamp_window_to_work_area(&w, new_w, new_h);
     }
-
-    clamp_window_to_work_area(&w, new_w, new_h);
     Ok(())
 }
 
@@ -2574,9 +2582,6 @@ fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
     Ok(VOCAB_POPUP.lock().unwrap().clone())
 }
 
-/// Map a 3x3 placement preset to logical-pixel coordinates on the primary
-/// monitor. Accepts either word order ("center-right" / "right-center").
-/// Unknown values fall back to bottom-right (the spec default).
 // Drill popup sizes must match `drill_position`'s placement math exactly, or a
 // bottom-anchored popup hangs off the bottom of the screen.
 const DRILL_W: f64 = 420.0;
@@ -2584,6 +2589,9 @@ const DRILL_H: f64 = 360.0;
 const DRILL_W_EXPANDED: f64 = 680.0;
 const DRILL_H_EXPANDED: f64 = 640.0;
 
+/// Map a 3x3 placement preset to logical-pixel coordinates on the primary
+/// monitor. Accepts either word order ("center-right" / "right-center").
+/// Unknown values fall back to bottom-right (the spec default).
 fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) -> (f64, f64) {
     const W: f64 = DRILL_W;
     const H: f64 = DRILL_H;
@@ -2637,13 +2645,10 @@ fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
     None
 }
 
-/// Clamp the window's top-left so its full `phys_w`×`phys_h` body stays inside
-/// the work area (taskbar-excluded) — the guard against off-screen windows.
-fn clamp_window_to_work_area(w: &tauri::WebviewWindow, phys_w: i32, phys_h: i32) {
-    let Ok(pos) = w.outer_position() else {
-        return;
-    };
-    let bounds = work_area_physical().or_else(|| {
+/// Current work-area bounds as physical `(left, top, right, bottom)`; falls back
+/// to the window's monitor when the OS work area is unavailable (non-Windows).
+fn work_area_bounds(w: &tauri::WebviewWindow) -> Option<(i32, i32, i32, i32)> {
+    work_area_physical().or_else(|| {
         w.current_monitor()
             .ok()
             .flatten()
@@ -2653,8 +2658,16 @@ fn clamp_window_to_work_area(w: &tauri::WebviewWindow, phys_w: i32, phys_h: i32)
                 let s = mon.size();
                 (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
             })
-    });
-    let Some((l, t, r, b)) = bounds else {
+    })
+}
+
+/// Clamp the window's top-left so its full `phys_w`×`phys_h` body stays inside
+/// the work area (taskbar-excluded) — the guard against off-screen windows.
+fn clamp_window_to_work_area(w: &tauri::WebviewWindow, phys_w: i32, phys_h: i32) {
+    let Ok(pos) = w.outer_position() else {
+        return;
+    };
+    let Some((l, t, r, b)) = work_area_bounds(w) else {
         return;
     };
     let x = pos.x.min(r - phys_w).max(l);
