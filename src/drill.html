@@ -128,6 +128,7 @@
   let mode = "review";        // "review" (graded) | "practice" (never graded)
   let lang = "es";
   let cats = [];              // category filter read from the popup config
+  let posFilter = [];         // part-of-speech filter read from the popup config
   let queue = [];             // [{ card, due }] — one session's worth of cards
   let idx = 0;
   let targets = [];           // accepted answers in order
@@ -429,32 +430,34 @@
       const cfg = (await invoke("vocab_popup_config").catch(() => ({}))) || {};
       lang = cfg.lang || "es";
       cats = Array.isArray(cfg.cats) ? cfg.cats : [];
+      posFilter = Array.isArray(cfg.pos) ? cfg.pos : [];
       mode = cfg.practice === true ? "practice" : "review";
       if (mode === "practice") {
         badgeEl.style.display = "inline-block";
         badgeEl.textContent = "Practice — not graded";
         // Practice has its own cap (defaults to 10) — not the review session cap.
         const practiceLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
-        const cards = await invoke("vocab_practice_batch", { categories: cats, limit: practiceLimit });
+        const cards = await invoke("vocab_practice_batch", { categories: cats, pos: posFilter, limit: practiceLimit });
         queue = (cards || []).map((c) => ({ card: c, due: false }));
       } else {
         const limit = Number(cfg.session_size) || 0; // 1 default; 0 = all due
         const batch = await invoke("vocab_due_batch", {
           categories: cats,
+          pos: posFilter,
           limit,
           preferStruggling: cfg.struggling_first !== false,
         });
         queue = (batch || []).map((d) => ({ card: d.card, due: d.due === true }));
         // Fetch the due/mastery snapshot once per session (updateProgress uses it).
         try {
-          sessionDue = await invoke("vocab_due_count", { categories: cats });
-          sessionStats = await invoke("vocab_srs_stats", { categories: cats }).catch(() => null);
+          sessionDue = await invoke("vocab_due_count", { categories: cats, pos: posFilter });
+          sessionStats = await invoke("vocab_srs_stats", { categories: cats, pos: posFilter }).catch(() => null);
         } catch { /* progress is optional */ }
       }
       if (!queue.length) {
         errorEl.textContent = mode === "practice"
-          ? "No struggling cards to practise right now."
-          : "No cards available — clear the category filter in Settings > Vocab.";
+          ? "No struggling cards match the current filters."
+          : "No cards available — clear the category / part-of-speech filter in Settings > Vocab.";
         return;
       }
       renderCard();

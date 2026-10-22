@@ -1691,6 +1691,7 @@ pub fn run() {
             autostart_enabled,
             read_vocab_cards,
             vocab_categories,
+            vocab_pos_counts,
             vocab_due_card,
             vocab_due_batch,
             vocab_practice_batch,
@@ -1854,6 +1855,8 @@ struct VocabPopupConfig {
     practice_size: usize,
     /// Placement preset (used so resize keeps the anchored corner fixed).
     position: String,
+    /// Part-of-speech filter (empty = all).
+    pos: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1873,6 +1876,7 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     practice: false,
     practice_size: 10,
     position: String::new(),
+    pos: Vec::new(),
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -2104,6 +2108,37 @@ fn vocab_categories(app: tauri::AppHandle) -> Result<Vec<VocabCategory>, String>
         .collect())
 }
 
+#[derive(serde::Serialize, Clone)]
+struct VocabPos {
+    pos: String,
+    count: usize,
+}
+
+static VOCAB_POS_COUNTS: std::sync::OnceLock<Vec<VocabPos>> = std::sync::OnceLock::new();
+
+/// Per-part-of-speech card counts (from enrichment), in a fixed display order.
+/// Cached — the enrichment set is immutable at runtime.
+#[tauri::command]
+fn vocab_pos_counts(app: tauri::AppHandle) -> Result<Vec<VocabPos>, String> {
+    let counts = VOCAB_POS_COUNTS.get_or_init(|| {
+        const ORDER: [&str; 6] = ["noun", "verb", "adjective", "adverb", "phrase", "other"];
+        let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+        let details = card_details(&app);
+        let mut counts = [0usize; 6];
+        for c in all.iter() {
+            let pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
+            let i = ORDER.iter().position(|p| *p == pos).unwrap_or(5);
+            counts[i] += 1;
+        }
+        ORDER
+            .iter()
+            .enumerate()
+            .map(|(i, p)| VocabPos { pos: (*p).to_string(), count: counts[i] })
+            .collect()
+    });
+    Ok(counts.clone())
+}
+
 fn read_vocab_section(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
     let path = match state_file_path(app) {
         Ok(p) => p,
@@ -2237,13 +2272,44 @@ fn vocab_matching<'a>(all: &'a [VocabCard], categories: &[String]) -> Vec<&'a Vo
         .collect()
 }
 
+/// True when the POS filter is empty, or the card's POS is among the selected.
+fn pos_passes(pos: &[String], card_pos: Option<&str>) -> bool {
+    pos.is_empty()
+        || card_pos
+            .map(|p| pos.iter().any(|x| x == p))
+            .unwrap_or(false)
+}
+
+/// Category filter AND part-of-speech filter (both empty = all). POS comes from
+/// the enrichment map, which is only loaded when a POS filter is active — so
+/// empty-filter calls (e.g. the tile's due count) stay cheap.
+fn vocab_filtered<'a>(
+    app: &tauri::AppHandle,
+    all: &'a [VocabCard],
+    categories: &[String],
+    pos: &[String],
+) -> Vec<&'a VocabCard> {
+    let base = vocab_matching(all, categories);
+    if pos.is_empty() {
+        return base;
+    }
+    let details = card_details(app);
+    base.into_iter()
+        .filter(|c| {
+            // Missing enrichment is treated as "other", matching vocab_pos_counts.
+            let card_pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
+            pos_passes(pos, Some(card_pos))
+        })
+        .collect()
+}
+
 /// One card for the drill: a due card (graded) when any are due, otherwise a
 /// random card flagged `due:false` for passive exposure (never graded — the
 /// methodology says don't pre-empt the schedule).
 #[tauri::command]
-fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>) -> Result<Option<DueCard>, String> {
+fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<String>) -> Result<Option<DueCard>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-    let matching = vocab_matching(all, &categories);
+    let matching = vocab_filtered(&app, all, &categories, &pos);
     if matching.is_empty() {
         return Ok(None);
     }
@@ -2311,11 +2377,12 @@ fn pick_due_batch<'a>(
 fn vocab_due_batch(
     app: tauri::AppHandle,
     categories: Vec<String>,
+    pos: Vec<String>,
     limit: usize,
     prefer_struggling: bool,
 ) -> Result<Vec<DueCard>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-    let matching = vocab_matching(all, &categories);
+    let matching = vocab_filtered(&app, all, &categories, &pos);
     if !srs_enabled(&app) {
         use rand::seq::SliceRandom;
         return Ok(matching
@@ -2357,10 +2424,11 @@ fn pick_practice_batch<'a>(
 fn vocab_practice_batch(
     app: tauri::AppHandle,
     categories: Vec<String>,
+    pos: Vec<String>,
     limit: usize,
 ) -> Result<Vec<VocabCard>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-    let matching = vocab_matching(all, &categories);
+    let matching = vocab_filtered(&app, all, &categories, &pos);
     let typed = parse_srs(&srs_map(&app));
     Ok(pick_practice_batch(&matching, &typed, now_secs(), limit)
         .into_iter()
@@ -2385,14 +2453,14 @@ fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) ->
 
 /// How many cards are due right now (for the tile badge). 0 when SRS is off.
 #[tauri::command]
-fn vocab_due_count(app: tauri::AppHandle, categories: Vec<String>) -> Result<usize, String> {
+fn vocab_due_count(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<String>) -> Result<usize, String> {
     if !srs_enabled(&app) {
         return Ok(0);
     }
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let now = now_secs();
     let typed = parse_srs(&srs_map(&app));
-    Ok(vocab_matching(all, &categories)
+    Ok(vocab_filtered(&app, all, &categories, &pos)
         .iter()
         .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
         .count())
@@ -2459,9 +2527,9 @@ struct SrsStats {
 
 /// Review progress for the settings tab: totals, due now, and mastery buckets.
 #[tauri::command]
-fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<SrsStats, String> {
+fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<String>) -> Result<SrsStats, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-    let matching = vocab_matching(all, &categories);
+    let matching = vocab_filtered(&app, all, &categories, &pos);
     let now = now_secs();
     let typed = parse_srs(&srs_map(&app));
     let mut s = SrsStats {
@@ -2523,12 +2591,12 @@ fn card_categories(c: &VocabCard) -> Vec<&str> {
 /// categories you've got and which are still stuck in learning. Scoped to the
 /// same `categories` filter as the mastery bar (empty = all). Sorted by size.
 #[tauri::command]
-fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>) -> Result<Vec<CategoryStat>, String> {
+fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<String>) -> Result<Vec<CategoryStat>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let typed = parse_srs(&srs_map(&app));
     let now = now_secs();
     let mut map: std::collections::HashMap<String, CategoryStat> = std::collections::HashMap::new();
-    for c in vocab_matching(all, &categories) {
+    for c in vocab_filtered(&app, all, &categories, &pos) {
         let e = typed.get(&c.id);
         let is_due = e.map(|e| e.due <= now).unwrap_or(true);
         let bucket = mastery_of(e);
@@ -2681,6 +2749,7 @@ fn open_drill_window(
     app: &tauri::AppHandle,
     lang: &str,
     cats: &[String],
+    pos_filter: &[String],
     position: &str,
     focus_existing: bool,
     practice: bool,
@@ -2707,6 +2776,7 @@ fn open_drill_window(
         practice,
         practice_size,
         position: position.to_string(),
+        pos: pos_filter.to_vec(),
     };
     if let Some(w) = app.get_webview_window("drill") {
         // A different mode must be honoured: reload the popup so it re-reads the
@@ -2776,10 +2846,11 @@ async fn open_vocab_popup(
     app: tauri::AppHandle,
     lang: String,
     categories: Vec<String>,
+    pos: Vec<String>,
     position: String,
     practice: bool,
 ) -> Result<String, String> {
-    open_drill_window(&app, &lang, &categories, &position, true, practice).map(|s| s.to_string())
+    open_drill_window(&app, &lang, &categories, &pos, &position, true, practice).map(|s| s.to_string())
 }
 
 /// Close the drill popup (called from the popup itself).
@@ -2904,11 +2975,20 @@ async fn vocab_tick(app: tauri::AppHandle) -> Result<String, String> {
                 .collect()
         })
         .unwrap_or_default();
+    let pos: Vec<String> = cfg
+        .get("drillPos")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     let position = cfg
         .get("popupPosition")
         .and_then(|v| v.as_str())
         .unwrap_or("bottom-right");
-    let status = open_drill_window(&app, lang, &cats, position, false, false)?;
+    let status = open_drill_window(&app, lang, &cats, &pos, position, false, false)?;
     if status == "opened" {
         *VOCAB_LAST_POPUP_AT.lock().unwrap() = now;
         let _ = write_vocab_keys(&app, &[("lastPopupAt", serde_json::Value::from(now))]);
@@ -3284,5 +3364,18 @@ mod srs_tests {
             .map(|c| c.id.clone())
             .collect();
         assert_eq!(ids, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn pos_filter_logic() {
+        // empty filter = everything
+        assert!(pos_passes(&[], Some("verb")));
+        assert!(pos_passes(&[], None));
+        // selected POS matches
+        assert!(pos_passes(&["verb".to_string()], Some("verb")));
+        assert!(pos_passes(&["noun".to_string(), "verb".to_string()], Some("verb")));
+        // mismatch or unknown POS excluded when a filter is set
+        assert!(!pos_passes(&["noun".to_string()], Some("verb")));
+        assert!(!pos_passes(&["verb".to_string()], None));
     }
 }

@@ -248,6 +248,10 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-020** Usage/conjugation data shall come from an optional id-keyed enrichment file
   (`resources/cards-extra.json`), generated offline by the dev batch tool and loaded lazily;
   cards without enrichment drill exactly as before.
+- **FR-VOC-021** The Vocab settings shall support a **part-of-speech** filter (noun / verb /
+  adjective / adverb / phrase / other) **in addition to** the category filter; when both are set
+  a card must match both (empty = all). POS comes from enrichment and scopes the drill popup and
+  the mastery stats; the tile (and its due badge) stay whole-deck.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
@@ -556,6 +560,11 @@ shows full examples + conjugation tables, and Collapse returns it to the compact
 Given a noun card, when the user types the noun with or without its article it counts correct; if
 the article/gender is wrong the noun still counts correct and the card advances, with the wrong
 article highlighted and the correct one shown.
+
+### AC-044: Part-of-speech filter
+Given the Vocab settings, when the user selects "Verbs" under Part of speech, then the drill and
+mastery stats include only cards enriched as verbs (combined with any category selection); the
+tile and its due badge remain whole-deck.
 
 ---
 
