@@ -141,3 +141,8 @@ Pure helper `parseNounAnswer(input, {article, noun}) -> "ok" | "article-wrong" |
     batches of 25, resumable with `.enrich/` checkpoints). Validation: 0 missing, 0 unknown ids,
     0 empty examples, 0 nouns without articles; ~4 MB resource. 26 entries have a highlight string
     that doesn't exactly appear in the sentence (bold omitted there — cosmetic).
+  - **Enlarge/collapse fix:** the popup stayed enlarged after Next/Collapse because resize state
+    was updated optimistically while the native resize was fire-and-forget, and the sync command
+    early-returned on an out-of-sync flag. `vocab_set_popup_expanded` is now **async + idempotent**
+    (always applies the size), the window is `resizable(true)`, and the drill updates its UI
+    immediately and **always resets to compact on each new card**.

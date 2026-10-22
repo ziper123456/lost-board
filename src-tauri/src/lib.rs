@@ -1863,7 +1863,6 @@ struct VocabCategory {
 static VOCAB: std::sync::OnceLock<Vec<VocabCard>> = std::sync::OnceLock::new();
 static CARD_DETAILS: std::sync::OnceLock<std::collections::HashMap<String, CardDetail>> =
     std::sync::OnceLock::new();
-static DRILL_EXPANDED: StdMutex<bool> = StdMutex::new(false);
 static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig {
     lang: String::new(),
     cats: Vec::new(),
@@ -1986,19 +1985,16 @@ fn vocab_card_detail(app: tauri::AppHandle, id: String) -> Result<Option<CardDet
     Ok(card_details(&app).get(&id).cloned())
 }
 
-/// Grow/shrink the drill popup in place (default ↔ full detail). Resizes first,
-/// then clamps the window inside the current monitor so a popup near any edge
-/// (e.g. bottom-left) never grows off-screen.
+/// Grow/shrink the drill popup (compact ↔ full detail). Async so it runs off the
+/// main/IPC path (blocking window getters won't stall the event loop), and
+/// idempotent — it always applies the requested size, so a missed call can never
+/// leave the popup stuck at the enlarged size.
 #[tauri::command]
-fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
     use tauri::Manager;
     let Some(w) = app.get_webview_window("drill") else {
         return Ok(());
     };
-    let mut cur = DRILL_EXPANDED.lock().unwrap();
-    if *cur == expanded {
-        return Ok(());
-    }
     let (width, height) = if expanded {
         (DRILL_W_EXPANDED, DRILL_H_EXPANDED)
     } else {
@@ -2011,7 +2007,6 @@ fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(),
     let win_w = (width * scale).round() as i32;
     let win_h = (height * scale).round() as i32;
     clamp_window_to_work_area(&w, win_w, win_h);
-    *cur = expanded;
     Ok(())
 }
 
@@ -2701,13 +2696,12 @@ fn open_drill_window(
         ),
     };
     let (x, y) = drill_position(position, bx, by, bw, bh);
-    *DRILL_EXPANDED.lock().unwrap() = false;
     let win = WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
         .inner_size(DRILL_W, DRILL_H)
         .position(x, y)
         .decorations(false)
-        .resizable(false)
+        .resizable(true)
         .always_on_top(true)
         .skip_taskbar(true)
         .focused(false)

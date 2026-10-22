@@ -209,8 +209,7 @@
   function nextCard() {
     if (!awaitingNext) return;
     awaitingNext = false;
-    if (expanded) setExpanded(false);
-    advance();
+    advance(); // renderCard() collapses to the compact size for the next card
   }
 
   function advance() {
@@ -358,11 +357,13 @@
   }
   async function setExpanded(on) {
     expanded = on;
-    try { await invoke("vocab_set_popup_expanded", { expanded: on }); } catch { /* keep going */ }
+    // Update the UI immediately (don't wait on the native resize) so a slow or
+    // failed resize can never leave the window and the UI out of sync.
     if (on) showDetail();
     else { detailEl.hidden = true; detailEl.innerHTML = ""; }
     const b = learnEl.querySelector("#btn-expand");
     if (b) b.textContent = on ? "Collapse" : "⤢ Enlarge";
+    try { await invoke("vocab_set_popup_expanded", { expanded: on }); } catch { /* keep going */ }
   }
 
   async function renderCard() {
@@ -378,7 +379,7 @@
     learnEl.innerHTML = "";
     detailEl.hidden = true;
     detailEl.innerHTML = "";
-    if (expanded) setExpanded(false);
+    await setExpanded(false); // always return to compact for a new card (idempotent)
     promptEl.textContent = card.en;
     promptEl.title = card.en;
     labelEl.textContent =
