@@ -96,6 +96,19 @@ function applyAppearance() {
   } else {
     boardBg = d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)";
   }
+  // Dynamic tiles: tint the border with the cover accent and give tiles a soft
+  // cover-coloured glow (both scale with the accent blend).
+  const dynAmt = pct(d.dynAccentMix, 60) / 100;
+  const tileBorderBase = d.tileBorderColor || v("borderColor", t.border);
+  const effectiveTileBorder = dynOn
+    ? Colors.mixHex(tileBorderBase, dynamicPalette.accent, dynAmt * 0.85)
+    : v("tileBorderColor", "var(--border)");
+  let effectiveTileShadow = v("tileShadow", "none");
+  if (dynOn) {
+    const c = Colors.hexToRgb(dynamicPalette.accent);
+    const alpha = (0.12 + dynAmt * 0.22).toFixed(2);
+    effectiveTileShadow = `0 6px 22px rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
+  }
   root.setProperty("--bg", v("bg", t.bg));
   root.setProperty("--panel", v("panel", t.panel));
   root.setProperty("--panel-2", v("panel2", t.panel2));
@@ -118,9 +131,9 @@ function applyAppearance() {
   root.setProperty("--row-bg", v("rowBg", "transparent"));
   root.setProperty("--input-bg", v("inputBg", "var(--panel-2)"));
   root.setProperty("--tile-bg", v("tileBg", "var(--panel)"));
-  root.setProperty("--tile-border", v("tileBorderColor", "var(--border)"));
+  root.setProperty("--tile-border", effectiveTileBorder);
   root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
-  root.setProperty("--tile-shadow", v("tileShadow", "none"));
+  root.setProperty("--tile-shadow", effectiveTileShadow);
   root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
   root.setProperty("--font-size", px("fontBase", 16));
   root.setProperty("--scroll-thumb", v("scrollThumb", "var(--panel-2)"));

@@ -31,9 +31,10 @@ follow. Opt-in, saved with the config, reverts to the theme when nothing is play
 - `src/colors.js` (loaded before `main.js`): `hexToRgb`, `mixHex`, `rgbToHsl`, `clampLightness`,
   `luminance`, `contrastOn` (+ node test `npm run test:colors`).
 - `applyAppearance()` computes effective tokens: when `state.design.dynamicSpotify` and a palette
-  exists, `--accent = clampLightness(mix(themeAccent, coverAccent, accentMix))` and
-  `--board-bg = gradient(mix(themeBg, coverAccent, bgMix), mix(themeBg, coverSecondary, bgMix*0.6))`.
-  The popup CSS push uses the same effective accent/board-bg.
+  exists, `--accent = clampLightness(mix(themeAccent, coverAccent, accentMix))`,
+  `--board-bg = gradient(mix(themeBg, coverAccent, bgMix), mix(themeBg, coverSecondary, bgMix*0.6))`,
+  and **tiles** get a cover-tinted `--tile-border` plus a soft cover-coloured `--tile-shadow` glow
+  (both scaled by the accent blend). The popup CSS push uses the same effective accent/board-bg.
 - `refreshDynamicPalette(discover)`: fetch when the cover URL changes (or on toggle via
   `spotifyNowPlaying`); stale-response guard; clears on "nothing playing"; keeps last on failure.
 - Spotify tile `refresh()` sets `lastSpotifyArt` and calls `refreshDynamicPalette()`.

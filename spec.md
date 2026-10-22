@@ -315,9 +315,10 @@ auth, custom images are user-supplied, captioning is fully local.
   background gradient and font size/weight.
 - **FR-DSN-005** The Design tab shall offer a **Spotify cover color** mode (top of the tab): a
   toggle plus **accent-blend** and **background-blend** sliders. When enabled and a track is
-  playing, the board accent and background gradient are derived from the current album cover
-  (extracted locally in Rust), the drill popup follows, and the setting **persists** with the
-  dashboard config. With no track playing, the theme is restored.
+  playing, the board accent, background gradient, **tile borders and tile shadow (a soft cover-
+  coloured glow)** are derived from the current album cover (extracted locally in Rust), the drill
+  popup follows, and the setting **persists** with the dashboard config. With no track playing,
+  the theme is restored.
 
 ### 2.17 UI polish: themes, tile context menu, hide header
 
