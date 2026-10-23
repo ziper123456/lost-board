@@ -1,7 +1,7 @@
 # Plan — Lyrics tile (synced, LRCLIB)
 
-Status: Phase 1 ✅ built. Phase 2 (translation) planned.
-Spec: `spec.md` §2.18, FR-LYR-001..005 / AC-046..048.
+Status: Phase 1 ✅ built. Phase 2 (translation) ✅ built.
+Spec: `spec.md` §2.18, FR-LYR-001..008 / AC-046..050.
 
 ## Goal
 
@@ -48,15 +48,37 @@ keyless) via Rust. No translation in Phase 1.
   (5 s otherwise), so seeks/scrubs catch up quicker.
 - **Transitions:** the active line fades/slides in (0.3 s), the full view scrolls smoothly, and
   `prefers-reduced-motion` disables both.
+- **Fixes after testing:** LRCLIB sometimes returns **bilingual** lines (`original^translation`);
+  the parser now splits them into `text` + `alt` (shown as a muted built-in translation when our
+  translator is off; plain lines keep only the original). The opencode call no longer uses `-f`
+  (its `--file` array swallowed the instruction — LLM always failed before); lines are inlined.
+  The lyrics tile body signature now includes the global translation setting + remembered
+  languages, so toggling translation actually rebuilds the tile.
 
-## Phase 2 (planned) — translation
-- Offline detection (`whatlang`); low confidence → prompt in the tile/Settings, remembered per
-  track.
-- Fixed target set {EN, DE, ES}: source EN→DE+ES, DE→EN+ES, ES→EN+DE, VI→DE+ES, other→ask.
-- One global "Show translations (up to 2)" setting.
-- **LLM default** via `opencode run` (aligned JSON, validated line counts), **DeepL fallback**
-  (order-preserving line batch). Cache per `(track, targets, provider)`. No LGPL code copied.
-- Non-blocking: originals first, translations fill in.
+## Phase 2 (built) — translation
+- **Detection:** `whatlang` (offline) in Rust (`lyrics_detect`), returns lang + confidence;
+  confidence < 0.35 or an unsupported language → a prompt in the tile, remembered per track
+  (`state.lyricsLang`).
+- **Targets:** configurable per source language (`state.lyricsTargets`, max 2 per source):
+  defaults EN→DE+ES, DE→EN+ES, ES→EN+DE, VI→DE+ES, and **Other → EN** (languages outside the
+  four). Edited in Settings → Lyrics → "Targets per language".
+- **Setting:** one global "Show translations (up to 2)" toggle (`state.lyricsTranslate`).
+- **Provider:** `lyrics_translate` tries the **opencode LLM** first (`opencode run --format json`,
+  aligned JSON validated line-by-line), then **DeepL** per target (order-preserving batch; source
+  omitted for unsupported DeepL source languages).
+- **UI:** translations render under each line (full view: all; focus: current line); in-memory
+  cache per `(track, source, targets)`; "Translating…"/"Translation unavailable" status; privacy
+  note in Settings. No LGPL code copied.
+- **Persistent translation cache:** `lyrics-translations.json` in the app-data dir (loaded once,
+  atomic writes, capped at 1000 entries), keyed by a hash of the exact lines + source + targets, so
+  translations survive restarts and replays don't re-spend tokens. "Clear translation cache" in
+  Settings clears both the disk and in-memory caches.
+- **Export/import:** Settings can export the cache to JSON and import one; **import merges**
+  (`merge_translations`) and never overwrites existing entries (only new keys are added). Tested.
+- **Review follow-ups:** skip-while-translating now re-triggers the new track (finally block);
+  `kill_on_drop(true)` on the opencode run/delete commands (no orphan process on timeout);
+  per-source **target languages are configurable** in Settings (max 2), with "Other" → English for
+  unsupported languages; language detection no longer dead-ends on non-EN/DE/ES/VI songs.
 
 ## Corrections log
 

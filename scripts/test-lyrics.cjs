@@ -25,9 +25,19 @@ assert.equal(L.positionMs({ progress_ms: 1000, playing: false, duration_ms: 1000
 assert.equal(L.positionMs(null, 0, 0, 0), 0);
 
 assert.deepEqual(L.parsePlain("a\n  b \n\nc\r\n"), ["a", "b", "c"]);
+assert.deepEqual(L.parsePlain("Hola mundo^Hello world\nOtra linea^Another line"), ["Hola mundo", "Otra linea"]);
 
 assert.equal(L.trackKey({ title: "T", artist: "A", album: "Al", duration_ms: 123 }), "T|A|Al|123");
 assert.equal(L.trackKey(null), "");
 assert.equal(L.trackKey({ title: "T" }), "T|||0");
+
+const targetMap = { en: ["de", "es"], de: ["en", "es"], es: ["en", "de"], vi: ["de", "es"], default: ["en"] };
+assert.deepEqual(L.targetsFor(targetMap, "en"), ["de", "es"]);
+assert.deepEqual(L.targetsFor(targetMap, "fra"), ["en"]); // Other → English
+assert.deepEqual(L.targetsFor(targetMap, "EN"), ["de", "es"]); // case-insensitive
+// never translate to the source, cap at 2, and empty list = no targets
+assert.deepEqual(L.targetsFor({ en: ["en", "de", "es"] }, "en"), ["de", "es"]);
+assert.deepEqual(L.targetsFor({ fr: [] }, "fr"), []);
+assert.deepEqual(L.targetsFor(null, "ja"), ["en"]);
 
 console.log("lyrics: all assertions passed");

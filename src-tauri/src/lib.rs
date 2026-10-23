@@ -1470,6 +1470,9 @@ async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
 struct LyricsLine {
     t_ms: u64,
     text: String,
+    /// Built-in bilingual translation (LRCLIB sometimes stores `original^translation`).
+    #[serde(default)]
+    alt: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -1583,17 +1586,44 @@ fn parse_lrc(raw: &str) -> Vec<LyricsLine> {
             let _ = had_meta;
             continue;
         }
-        let text = rest.trim().to_string();
+        let raw = rest.trim();
+        // Some providers store bilingual lines as `original^translation`.
+        let (text, alt) = match raw.split_once('^') {
+            Some((left, right)) => (
+                left.trim().to_string(),
+                Some(right.trim().to_string()).filter(|s| !s.is_empty()),
+            ),
+            None => (raw.to_string(), None),
+        };
         if text.is_empty() {
             continue;
         }
         for t in stamps {
             let t = (t as i64 + offset_ms).max(0) as u64;
-            out.push(LyricsLine { t_ms: t, text: text.clone() });
+            out.push(LyricsLine { t_ms: t, text: text.clone(), alt: alt.clone() });
         }
     }
     out.sort_by_key(|l| l.t_ms);
     out
+}
+
+/// Split legacy cached bilingual lines (`original^translation`) that predate
+/// the parser change.
+fn normalize_bilingual(result: &mut LyricsResult) {
+    for line in result.synced.iter_mut() {
+        if line.alt.is_none() {
+            let split = line
+                .text
+                .split_once('^')
+                .map(|(left, right)| (left.trim().to_string(), right.trim().to_string()));
+            if let Some((left, right)) = split {
+                line.text = left;
+                if !right.is_empty() {
+                    line.alt = Some(right);
+                }
+            }
+        }
+    }
 }
 
 fn parse_lrclib_record(v: &serde_json::Value, source: &str) -> Option<(LyricsResult, i64)> {
@@ -1730,8 +1760,12 @@ async fn lyrics_get(
     let secs = duration_ms / 1000;
     let key = format!("{title}\u{1f}{artist}\u{1f}{album}\u{1f}{secs}");
     ensure_lyrics_cache_loaded(&app);
-    if let Some(hit) = lyrics_cache().lock().unwrap().get(&key) {
-        return Ok(hit.clone());
+    let cached = lyrics_cache().lock().unwrap().get(&key).cloned();
+    if let Some(mut hit) = cached {
+        if let Some(result) = hit.as_mut() {
+            normalize_bilingual(result);
+        }
+        return Ok(hit);
     }
 
     let client = reqwest::Client::new();
@@ -1785,6 +1819,426 @@ async fn lyrics_get(
     }
     persist_lyrics_cache(&app);
     Ok(result)
+}
+
+const LYRICS_LLM_MODEL: &str = "opencode-go/deepseek-v4.1-flash";
+
+#[derive(serde::Serialize)]
+struct LyricsLang {
+    lang: String,
+    confidence: f64,
+}
+
+fn lang_code(lang: whatlang::Lang) -> String {
+    use whatlang::Lang;
+    match lang {
+        Lang::Eng => "en",
+        Lang::Deu => "de",
+        Lang::Spa => "es",
+        Lang::Vie => "vi",
+        other => other.code(),
+    }
+    .to_string()
+}
+
+/// Detect the dominant language of lyric text (offline).
+#[tauri::command]
+fn lyrics_detect(text: String) -> Result<LyricsLang, String> {
+    match whatlang::detect(&text) {
+        Some(info) => Ok(LyricsLang { lang: lang_code(info.lang()), confidence: info.confidence() }),
+        None => Ok(LyricsLang { lang: String::new(), confidence: 0.0 }),
+    }
+}
+
+fn deepl_lang(code: &str, target: bool) -> String {
+    match code.to_ascii_uppercase().as_str() {
+        "EN" if target => "EN-US".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Batch-translate lines with DeepL, preserving order (one request per ≤50 lines).
+async fn deepl_translate_batch(
+    lines: &[String],
+    source: &str,
+    target: &str,
+) -> Result<Vec<String>, String> {
+    let key = keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .and_then(|e| e.get_password())
+        .map_err(|_| "No DeepL API key configured".to_string())?;
+    if key.is_empty() {
+        return Err("No DeepL API key configured".into());
+    }
+    let endpoint = if key.trim_end().ends_with(":fx") {
+        "https://api-free.deepl.com/v2/translate"
+    } else {
+        "https://api.deepl.com/v2/translate"
+    };
+    let client = reqwest::Client::new();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    for chunk in lines.chunks(50) {
+        let mut form: Vec<(&str, String)> = Vec::new();
+        for line in chunk {
+            form.push(("text", line.clone()));
+        }
+        form.push(("target_lang", deepl_lang(target, true)));
+        if !source.is_empty() {
+            form.push(("source_lang", deepl_lang(source, false)));
+        }
+        let resp = client
+            .post(endpoint)
+            .header("Authorization", format!("DeepL-Auth-Key {key}"))
+            .form(&form)
+            .timeout(std::time::Duration::from_secs(25))
+            .send()
+            .await
+            .map_err(|e| format!("DeepL request failed: {e}"))?;
+        let status = resp.status();
+        let body = resp.text().await.map_err(|e| format!("DeepL read failed: {e}"))?;
+        if !status.is_success() {
+            return Err(format!("DeepL HTTP {status}: {body}"));
+        }
+        let parsed: DeepLResponse =
+            serde_json::from_str(&body).map_err(|e| format!("DeepL parse failed: {e}"))?;
+        if parsed.translations.len() != chunk.len() {
+            return Err("DeepL returned a mismatched line count".into());
+        }
+        out.extend(parsed.translations.into_iter().map(|t| t.text));
+    }
+    Ok(out)
+}
+
+/// Resolve the opencode executable (direct exe, else the PATH shim via `cmd /C`).
+fn opencode_program() -> (String, Vec<String>) {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("OPENCODE_BIN") {
+        candidates.push(p.into());
+    }
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        candidates.push(
+            std::path::PathBuf::from(pf).join("nodejs/node_modules/opencode-ai/bin/opencode.exe"),
+        );
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(
+            std::path::PathBuf::from(appdata).join("npm/node_modules/opencode-ai/bin/opencode.exe"),
+        );
+    }
+    for c in candidates {
+        if c.is_file() {
+            return (c.to_string_lossy().to_string(), Vec::new());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return ("cmd".to_string(), vec!["/C".to_string(), "opencode".to_string()]);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("opencode".to_string(), Vec::new())
+    }
+}
+
+fn parse_opencode_text(stdout: &str) -> String {
+    let mut text = String::new();
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if v.get("type").and_then(|x| x.as_str()) == Some("text") {
+                if let Some(t) = v
+                    .get("part")
+                    .and_then(|p| p.get("text"))
+                    .and_then(|x| x.as_str())
+                {
+                    text.push_str(t);
+                } else if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
+                    text.push_str(t);
+                }
+            }
+        }
+    }
+    text
+}
+
+fn parse_opencode_session_id(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(id) = v.get("sessionID").and_then(|x| x.as_str()) {
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort removal of the one-shot session created by `opencode run`, so the
+/// user's session list doesn't grow by one per translation.
+async fn delete_opencode_session(id: &str) {
+    let (program, leading) = opencode_program();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args(["session", "delete", id]);
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    cmd.kill_on_drop(true);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.status()).await;
+}
+
+fn extract_json_object(text: &str) -> Option<serde_json::Value> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    serde_json::from_str(&text[start..=end]).ok()
+}
+
+/// Translate aligned lines with the opencode LLM (strict JSON). Returns None when
+/// the CLI is unavailable / fails / returns a mismatched line count.
+async fn llm_translate_lines(
+    lines: &[String],
+    targets: &[String],
+    source: &str,
+) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    let payload = serde_json::to_string(lines).ok()?;
+    let targets_note = targets.join(", ");
+    // Inline the lines (do NOT use `-f`: opencode's --file is an array and would
+    // swallow the instruction as another file path).
+    let instruction = format!(
+        "You are translating song lyrics (source language: {source}). Translate EACH line in this JSON array into these target languages: {targets_note}. \
+Return ONLY JSON (no markdown, no prose, no tool calls) shaped exactly as {{\"translations\":{{\"<lang>\":[\"...\"]}}}} with exactly the same number of strings per language, \
+in the same order. Keep lines short and natural; do not merge or split lines; use an empty string for empty/instrumental lines. Lines: {payload}"
+    );
+    let (program, leading) = opencode_program();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args([
+        "run",
+        "--agent",
+        "plan",
+        "--format",
+        "json",
+        "-m",
+        LYRICS_LLM_MODEL,
+        "--title",
+        "lost-board lyrics",
+        &instruction,
+    ]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // Do not leave a session behind for every translation.
+    if let Some(session_id) = parse_opencode_session_id(&stdout) {
+        delete_opencode_session(&session_id).await;
+    }
+    if !output.status.success() {
+        return None;
+    }
+    let text = parse_opencode_text(&stdout);
+    let obj = extract_json_object(&text)?;
+    let tr = obj.get("translations")?.as_object()?;
+    let mut out = std::collections::HashMap::new();
+    for t in targets {
+        let key = t.to_lowercase();
+        let arr = tr.get(&key)?.as_array()?;
+        let lines_out: Vec<String> = arr
+            .iter()
+            .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
+        if lines_out.len() != lines.len() {
+            return None;
+        }
+        out.insert(key, lines_out);
+    }
+    Some(out)
+}
+
+#[derive(serde::Serialize, Clone)]
+struct LyricsTranslation {
+    provider: String,
+    translations: std::collections::HashMap<String, Vec<String>>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct TranslationEntry {
+    provider: String,
+    translations: std::collections::HashMap<String, Vec<String>>,
+}
+
+const TRANSLATION_CACHE_MAX: usize = 1000;
+
+static TRANSLATION_CACHE: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, TranslationEntry>>,
+> = std::sync::OnceLock::new();
+static TRANSLATION_DISK_LOADED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn translation_cache() -> &'static StdMutex<std::collections::HashMap<String, TranslationEntry>> {
+    TRANSLATION_CACHE.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn translation_cache_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("lyrics-translations.json"))
+}
+
+fn ensure_translation_cache_loaded(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if TRANSLATION_DISK_LOADED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(path) = translation_cache_file(app) else { return };
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(map) = serde_json::from_str(&text) {
+            *translation_cache().lock().unwrap() = map;
+        }
+    }
+}
+
+fn persist_translation_cache(app: &tauri::AppHandle) {
+    let Some(path) = translation_cache_file(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let map = translation_cache().lock().unwrap().clone();
+    if let Ok(text) = serde_json::to_string(&map) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Cache key: hash of the exact lines + source + targets (edited lyrics or a
+/// different target set re-translate).
+fn translation_key(lines: &[String], source: &str, targets: &[String]) -> String {
+    format!(
+        "{}|{}|{}",
+        sha256_hex(lines.join("\n").as_bytes()),
+        source.to_ascii_lowercase(),
+        targets.join(",")
+    )
+}
+
+/// Translate lyric lines: disk cache → LLM (opencode) → DeepL fallback.
+#[tauri::command]
+async fn lyrics_translate(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+    source: String,
+    targets: Vec<String>,
+) -> Result<LyricsTranslation, String> {
+    if lines.is_empty() || targets.is_empty() {
+        return Err("no lines or targets".into());
+    }
+    ensure_translation_cache_loaded(&app);
+    let key = translation_key(&lines, &source, &targets);
+    if let Some(entry) = translation_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(LyricsTranslation { provider: entry.provider, translations: entry.translations });
+    }
+
+    let (provider, translations) =
+        if let Some(translations) = llm_translate_lines(&lines, &targets, &source).await {
+            ("opencode".to_string(), translations)
+        } else {
+            // DeepL only supports a subset of source languages; auto-detect otherwise.
+            let dl_source = if ["en", "de", "es"].contains(&source.to_ascii_lowercase().as_str()) {
+                source.clone()
+            } else {
+                String::new()
+            };
+            let mut m = std::collections::HashMap::new();
+            for target in &targets {
+                let out =
+                    deepl_translate_batch(&lines, &dl_source, &target.to_ascii_uppercase()).await?;
+                m.insert(target.to_ascii_lowercase(), out);
+            }
+            ("deepl".to_string(), m)
+        };
+
+    {
+        let mut cache = translation_cache().lock().unwrap();
+        if cache.len() > TRANSLATION_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(
+            key,
+            TranslationEntry { provider: provider.clone(), translations: translations.clone() },
+        );
+    }
+    persist_translation_cache(&app);
+    Ok(LyricsTranslation { provider, translations })
+}
+
+/// Clear the persisted translation cache.
+#[tauri::command]
+fn lyrics_translations_clear(app: tauri::AppHandle) -> Result<(), String> {
+    ensure_translation_cache_loaded(&app);
+    translation_cache().lock().unwrap().clear();
+    persist_translation_cache(&app);
+    Ok(())
+}
+
+/// Export the translation cache to a JSON file. Returns the entry count, or None
+/// when the dialog is cancelled.
+#[tauri::command]
+async fn lyrics_translations_export(app: tauri::AppHandle) -> Result<Option<usize>, String> {
+    ensure_translation_cache_loaded(&app);
+    let map = translation_cache().lock().unwrap().clone();
+    let text =
+        serde_json::to_string_pretty(&map).map_err(|e| format!("serialize translations: {e}"))?;
+    let dest = rfd::AsyncFileDialog::new()
+        .set_title("Export lyric translations")
+        .set_file_name("lyrics-translations.json")
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await;
+    let Some(dest) = dest else { return Ok(None) };
+    fs::write(dest.path(), text).map_err(|e| format!("write translations: {e}"))?;
+    Ok(Some(map.len()))
+}
+
+/// Merge imported entries into the cache without overwriting existing keys.
+/// Returns the number of newly added entries. Pure (unit-tested).
+fn merge_translations(
+    cache: &mut std::collections::HashMap<String, TranslationEntry>,
+    imported: std::collections::HashMap<String, TranslationEntry>,
+) -> usize {
+    let mut added = 0;
+    for (key, entry) in imported {
+        if !cache.contains_key(&key) {
+            cache.insert(key, entry);
+            added += 1;
+        }
+    }
+    added
+}
+
+/// Import a translation cache file, **merging** into the existing cache without
+/// overwriting existing entries. Returns how many new entries were added.
+#[tauri::command]
+async fn lyrics_translations_import(app: tauri::AppHandle) -> Result<Option<usize>, String> {
+    ensure_translation_cache_loaded(&app);
+    let src = rfd::AsyncFileDialog::new()
+        .set_title("Import lyric translations")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .await;
+    let Some(src) = src else { return Ok(None) };
+    let text = fs::read_to_string(src.path()).map_err(|e| format!("read translations: {e}"))?;
+    let imported: std::collections::HashMap<String, TranslationEntry> =
+        serde_json::from_str(&text).map_err(|e| format!("invalid translations file: {e}"))?;
+    let added = {
+        let mut cache = translation_cache().lock().unwrap();
+        merge_translations(&mut cache, imported)
+    };
+    persist_translation_cache(&app);
+    Ok(Some(added))
 }
 
 /// Toggle regular shuffle on the active device.
@@ -2160,6 +2614,11 @@ pub fn run() {
             spotify_now_playing,
             spotify_cover_palette,
             lyrics_get,
+            lyrics_detect,
+            lyrics_translate,
+            lyrics_translations_clear,
+            lyrics_translations_export,
+            lyrics_translations_import,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -3832,6 +4291,13 @@ mod srs_tests {
         // 1- and 3-digit fractions.
         assert_eq!(parse_lrc("[00:01.5]a")[0].t_ms, 1500);
         assert_eq!(parse_lrc("[00:01.123]a")[0].t_ms, 1123);
+
+        // Bilingual lines (`original^translation`) split into text + alt.
+        let bilingual = parse_lrc("[00:01.00]Hola^Hello\n[00:02.00]Mundo");
+        assert_eq!(bilingual[0].text, "Hola");
+        assert_eq!(bilingual[0].alt.as_deref(), Some("Hello"));
+        assert_eq!(bilingual[1].text, "Mundo");
+        assert_eq!(bilingual[1].alt, None);
     }
 
     #[test]
@@ -3840,5 +4306,34 @@ mod srs_tests {
         assert_eq!(clean_title("A (Live) B"), "A B");
         assert_eq!(clean_title("Plain Title"), "Plain Title");
         assert_eq!(clean_title("(Intro)"), "");
+    }
+
+    #[test]
+    fn detects_common_lyric_languages() {
+        assert_eq!(lang_code(whatlang::detect("Hello, how are you today? I like music and the sun.").unwrap().lang()), "en");
+        assert_eq!(lang_code(whatlang::detect("Hola, ¿cómo estás? Me gusta la música y el sol.").unwrap().lang()), "es");
+        assert_eq!(lang_code(whatlang::detect("Hallo, wie geht es dir? Ich mag Musik und die Sonne.").unwrap().lang()), "de");
+    }
+
+    #[test]
+    fn translation_import_merges_without_overwriting() {
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            "a".to_string(),
+            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new() },
+        );
+        let mut imported = std::collections::HashMap::new();
+        imported.insert(
+            "a".to_string(),
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+        );
+        imported.insert(
+            "b".to_string(),
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+        );
+        let added = merge_translations(&mut cache, imported);
+        assert_eq!(added, 1, "only the new key is added");
+        assert_eq!(cache.get("a").unwrap().provider, "opencode", "existing entry kept");
+        assert!(cache.contains_key("b"));
     }
 }

@@ -44,6 +44,9 @@ const DEFAULT_STATE = {
   wall: false,
   backgroundMode: false,
   lyricsOffsets: {},
+  lyricsTranslate: false,
+  lyricsLang: {},
+  lyricsTargets: {},
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -51,6 +54,25 @@ const DEFAULT_STATE = {
     { id: "lch", kind: "launcher", title: "Folders & Files", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
+
+// Default translation targets per source language. Languages outside
+// EN/DE/ES/VI fall back to `default` (English).
+const DEFAULT_LYRICS_TARGETS = {
+  en: ["de", "es"],
+  de: ["en", "es"],
+  es: ["en", "de"],
+  vi: ["de", "es"],
+  default: ["en"],
+};
+
+function lyricsTargetsConfig() {
+  if (!state.lyricsTargets || typeof state.lyricsTargets !== "object") state.lyricsTargets = {};
+  const map = state.lyricsTargets;
+  for (const key of ["en", "de", "es", "vi", "default"]) {
+    if (!Array.isArray(map[key])) map[key] = [...DEFAULT_LYRICS_TARGETS[key]];
+  }
+  return map;
+}
 
 // Built-in themes: CSS variable palettes applied to :root.
 const THEMES = {
@@ -351,6 +373,26 @@ async openFolder(path) {
   },
   async lyricsGet(title, artist, album, durationMs) {
     if (window.__TAURI__) return invoke("lyrics_get", { title, artist, album, durationMs });
+    return null;
+  },
+  async lyricsDetect(text) {
+    if (window.__TAURI__) return invoke("lyrics_detect", { text });
+    return null;
+  },
+  async lyricsTranslate(lines, source, targets) {
+    if (window.__TAURI__) return invoke("lyrics_translate", { lines, source, targets });
+    return null;
+  },
+  async lyricsTranslationsClear() {
+    if (window.__TAURI__) return invoke("lyrics_translations_clear");
+    return null;
+  },
+  async lyricsTranslationsExport() {
+    if (window.__TAURI__) return invoke("lyrics_translations_export");
+    return null;
+  },
+  async lyricsTranslationsImport() {
+    if (window.__TAURI__) return invoke("lyrics_translations_import");
     return null;
   },
   async spotifyPlay(play) {
@@ -654,7 +696,13 @@ function tileHeaderSig(c) {
   });
 }
 function tileBodySig(c) {
-  return JSON.stringify({ k: c.kind, d: c.data || {} });
+  // Lyrics also depend on the global translation setting + remembered languages,
+  // so toggling those must rebuild the tile body.
+  const extra =
+    c.kind === "lyrics"
+      ? { tr: state.lyricsTranslate === true, langs: state.lyricsLang || {}, targets: state.lyricsTargets || {} }
+      : {};
+  return JSON.stringify({ k: c.kind, d: c.data || {}, ...extra });
 }
 function tileIconHtml(c) {
   if (!c.icon) return "";
@@ -1408,6 +1456,9 @@ function vocabConfig() {
 // shared playback sample. Focus = prev/current/next; Full = whole song, and the
 // fallback when there's no synced/current line. Inherits theme/design tokens.
 // ---------------------------------------------------------------------------
+// Translation results keyed by `${trackKey}|${source}|${targets}` (in-memory).
+const lyricsTranslationCache = new Map();
+
 async function renderLyricsBody(c, body) {
   const data = c.data || (c.data = {});
   const clampN = (v, d) => {
@@ -1439,6 +1490,8 @@ async function renderLyricsBody(c, body) {
   let fullRenderKey = "";
   let follow = true;
   let autoScrolling = false;
+  let translations = null; // { lang: [line, ...] } aligned to the current lines
+  let translating = false;
 
   body.innerHTML = `
     <div class="lyr-wrap">
@@ -1451,12 +1504,14 @@ async function renderLyricsBody(c, body) {
           <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
         </span>
       </div>
+      <div class="lyr-trans" hidden></div>
       <div class="lyr-lines"></div>
       <div class="lyr-empty" hidden></div>
     </div>`;
   const trackEl = body.querySelector(".lyr-track");
   const modeBtn = body.querySelector(".lyr-mode");
   const offEl = body.querySelector(".lyr-off");
+  const transEl = body.querySelector(".lyr-trans");
   const linesEl = body.querySelector(".lyr-lines");
   const emptyEl = body.querySelector(".lyr-empty");
   linesEl.style.textAlign = align;
@@ -1494,6 +1549,26 @@ async function renderLyricsBody(c, body) {
     }, 0);
   };
 
+  // Aligned translation lines under an original line. In focus mode only the
+  // current line shows translations (space); full mode shows them all.
+  const trHtml = (i, all) => {
+    if (!translations) return "";
+    return Object.entries(translations)
+      .map(([lang, arr]) => {
+        const text = arr && arr[i];
+        if (!text) return "";
+        return `<div class="lyr-tr"><span class="lyr-tr-lang">${escapeHtml(lang.toUpperCase())}</span>${escapeHtml(text)}</div>`;
+      })
+      .join("");
+  };
+
+  // Built-in bilingual line from the provider (`original^translation`). Shown as
+  // a muted secondary line only when our own translation isn't present.
+  const altHtml = (line) =>
+    !translations && line && line.alt
+      ? `<div class="lyr-tr lyr-tr-b">${escapeHtml(line.alt)}</div>`
+      : "";
+
   const renderLines = () => {
     const plainFallback = synced.length === 0 && plainLines.length > 0;
     const effectiveFull = full || plainFallback || currentIdx < 0;
@@ -1509,11 +1584,14 @@ async function renderLyricsBody(c, body) {
     linesEl.classList.toggle("focus", !effectiveFull);
 
     if (effectiveFull) {
-      const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}`;
+      const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}|${translations ? "tr" : ""}`;
       if (fullRenderKey !== key) {
         const lines = synced.length ? synced.map((l) => l.text) : plainLines;
         linesEl.innerHTML = lines
-          .map((text, i) => `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}</div>`)
+          .map(
+            (text, i) =>
+              `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}${altHtml(synced.length ? synced[i] : null)}${trHtml(i, true)}</div>`
+          )
           .join("");
         fullRenderKey = key;
       }
@@ -1530,7 +1608,7 @@ async function renderLyricsBody(c, body) {
         .map((l, k) => {
           const i = win.start + k;
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
-          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}</div>`;
+          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
         .join("");
     }
@@ -1552,6 +1630,112 @@ async function renderLyricsBody(c, body) {
     trackEl.title = trackEl.textContent;
   };
 
+  const showTransStatus = (msg) => {
+    transEl.textContent = msg || "";
+    transEl.hidden = !msg;
+  };
+
+  const targetsFor = (source) => LyricsUtil.targetsFor(lyricsTargetsConfig(), source);
+
+  // Low-confidence/unknown language: let the user pick (remembered per track).
+  const showLangPrompt = (detected) => {
+    transEl.hidden = false;
+    transEl.innerHTML = "";
+    const label = document.createElement("span");
+    label.className = "lyr-trans-label";
+    label.textContent = "Language?";
+    const sel = document.createElement("select");
+    for (const [code, name] of [["en", "English"], ["de", "German"], ["es", "Spanish"], ["vi", "Vietnamese"]]) {
+      const o = document.createElement("option");
+      o.value = code;
+      o.textContent = name;
+      if (detected && code === String(detected).toLowerCase()) o.selected = true;
+      sel.appendChild(o);
+    }
+    const ok = document.createElement("button");
+    ok.className = "btn ghost";
+    ok.textContent = "Translate";
+    ok.addEventListener("click", () => {
+      if (!currentTrack) return;
+      const key = LyricsUtil.trackKey(currentTrack);
+      if (!state.lyricsLang) state.lyricsLang = {};
+      state.lyricsLang[key] = sel.value;
+      saveState();
+      showTransStatus("");
+      void startTranslation(currentTrack, key);
+    });
+    transEl.append(label, sel, ok);
+  };
+
+  const translateLines = async (lines, source, targets, key) => {
+    const cacheKey = `${key}|${source}|${targets.join(",")}`;
+    if (lyricsTranslationCache.has(cacheKey)) {
+      translations = lyricsTranslationCache.get(cacheKey);
+      fullRenderKey = "";
+      renderLines();
+      showTransStatus("");
+      return;
+    }
+    if (translating) return;
+    translating = true;
+    showTransStatus("Translating…");
+    try {
+      const res = await native.lyricsTranslate(lines, source, targets);
+      if (!body.isConnected || key !== trackKey) return;
+      if (!res || !res.translations) {
+        showTransStatus("Translation unavailable");
+        return;
+      }
+      lyricsTranslationCache.set(cacheKey, res.translations);
+      translations = res.translations;
+      fullRenderKey = "";
+      renderLines();
+      showTransStatus("");
+    } catch {
+      if (body.isConnected && key === trackKey) showTransStatus("Translation unavailable");
+    } finally {
+      translating = false;
+      // If the track changed while translating, the new one was skipped by the
+      // guard above — translate it now.
+      if (body.isConnected && state.lyricsTranslate && currentTrack) {
+        const curKey = LyricsUtil.trackKey(currentTrack);
+        if (curKey !== key) void startTranslation(currentTrack, curKey);
+      }
+    }
+  };
+
+  const startTranslation = async (track, key) => {
+    if (!state.lyricsTranslate) return;
+    const lines = synced.length ? synced.map((l) => l.text) : plainLines;
+    if (!lines.length) return;
+    let source = (state.lyricsLang || {})[key] || "";
+    if (!source) {
+      let detected = "";
+      let confidence = 0;
+      try {
+        const det = await native.lyricsDetect(lines.join("\n"));
+        detected = det && det.lang ? String(det.lang).toLowerCase() : "";
+        confidence = det ? Number(det.confidence) || 0 : 0;
+      } catch {
+        /* detection optional */
+      }
+      const known = ["en", "de", "es", "vi"].includes(detected);
+      // Unsupported languages (FR, JA, …) use the configurable "Other" targets
+      // (English by default) instead of asking with a limited list.
+      if (detected && (known ? confidence >= 0.35 : true)) source = detected;
+      else {
+        showLangPrompt(known ? detected : "");
+        return;
+      }
+    }
+    const targets = targetsFor(source);
+    if (!targets.length) {
+      showTransStatus("No target languages set");
+      return;
+    }
+    await translateLines(lines, source, targets, key);
+  };
+
   const loadLyrics = async (track) => {
     const key = LyricsUtil.trackKey(track);
     currentTrack = track;
@@ -1566,6 +1750,8 @@ async function renderLyricsBody(c, body) {
     instrumental = false;
     currentIdx = -1;
     follow = true;
+    translations = null;
+    showTransStatus("");
     status = "loading";
     setTrackLabel(track);
     renderLines();
@@ -1585,6 +1771,7 @@ async function renderLyricsBody(c, body) {
       status = "ready";
       renderLines();
       updateCurrent();
+      void startTranslation(track, key);
     } catch {
       if (my !== token || !body.isConnected) return;
       // Allow a later retry (5s, 10s, 20s, 40s, capped at 60s).
@@ -1610,6 +1797,8 @@ async function renderLyricsBody(c, body) {
       status = "idle";
       currentTrack = null;
       trackOffset = 0;
+      translations = null;
+      showTransStatus("");
       updateOffsetLabel();
       setTrackLabel(null);
       emptyMsg("Nothing playing");
@@ -4204,13 +4393,119 @@ function renderLyricsSettings() {
   hint.innerHTML = `<span class="muted">Focus shows the current line with the configured previous/next lines. Full view toggles from the tile and is the fallback when there is no synced line.</span>`;
   panel.appendChild(hint);
 
+  const trRow = document.createElement("div");
+  trRow.className = "item-row";
+  trRow.innerHTML = `<label>Show translations (up to 2) <input type="checkbox" id="lyr-translate" ${state.lyricsTranslate ? "checked" : ""} /></label>
+    <span class="muted">Detects the lyrics language, then translates into the other two of EN/DE/ES (VI → DE+ES). LLM via opencode first, DeepL fallback — lyrics are sent to that provider.</span>`;
+  panel.appendChild(trRow);
+  trRow.querySelector("#lyr-translate").addEventListener("change", (e) => {
+    state.lyricsTranslate = e.target.checked;
+    saveState();
+    render();
+    renderLyricsSettings();
+  });
+
+  const ioRow = document.createElement("div");
+  ioRow.className = "item-row";
+  ioRow.innerHTML = `<button class="btn ghost" id="lyr-tr-export">Export translation cache</button>
+    <button class="btn ghost" id="lyr-tr-import">Import translation cache</button>
+    <span id="lyr-tr-io" class="muted"></span>`;
+  panel.appendChild(ioRow);
+  const ioStatus = ioRow.querySelector("#lyr-tr-io");
+  ioRow.querySelector("#lyr-tr-export").addEventListener("click", async () => {
+    ioStatus.textContent = "exporting…";
+    try {
+      const n = await native.lyricsTranslationsExport();
+      ioStatus.textContent = n === null || n === undefined ? "cancelled" : `exported ${n} entries`;
+    } catch (e) {
+      ioStatus.textContent = `failed: ${e.message || e}`;
+    }
+  });
+  ioRow.querySelector("#lyr-tr-import").addEventListener("click", async () => {
+    ioStatus.textContent = "importing…";
+    try {
+      const n = await native.lyricsTranslationsImport();
+      if (n === null || n === undefined) {
+        ioStatus.textContent = "cancelled";
+        return;
+      }
+      // Drop the in-memory cache so the imported disk entries are used.
+      lyricsTranslationCache.clear();
+      ioStatus.textContent = `added ${n} new entries (existing kept)`;
+      render();
+    } catch (e) {
+      ioStatus.textContent = `failed: ${e.message || e}`;
+    }
+  });
+
+  // Per-source-language translation targets (max 2; "Other" covers the rest).
+  const tgtHead = document.createElement("div");
+  tgtHead.className = "item-row";
+  tgtHead.innerHTML = `<label>Targets per language</label><span class="muted">max 2 per source; “Other” handles languages outside EN/DE/ES/VI</span>`;
+  panel.appendChild(tgtHead);
+  const tgtGrid = document.createElement("div");
+  tgtGrid.className = "lyr-targets";
+  panel.appendChild(tgtGrid);
+  const tgtMap = lyricsTargetsConfig();
+  const SOURCES = [["en", "English"], ["de", "German"], ["es", "Spanish"], ["vi", "Vietnamese"], ["default", "Other"]];
+  const TARGET_CODES = [["en", "EN"], ["de", "DE"], ["es", "ES"], ["vi", "VI"]];
+  for (const [src, srcLabel] of SOURCES) {
+    const row = document.createElement("div");
+    row.className = "lyr-target-row";
+    const label = document.createElement("span");
+    label.className = "lyr-target-src";
+    label.textContent = srcLabel;
+    row.appendChild(label);
+    const selected = new Set(tgtMap[src] || []);
+    for (const [code, codeLabel] of TARGET_CODES) {
+      const lab = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.dataset.t = code;
+      box.checked = selected.has(code);
+      if (src !== "default" && code === src) box.disabled = true; // can't translate to itself
+      box.addEventListener("change", () => {
+        const checked = [...row.querySelectorAll("input:checked")].map((b) => b.dataset.t);
+        if (checked.length > 2) {
+          box.checked = false;
+          return;
+        }
+        tgtMap[src] = checked;
+        saveState();
+        render();
+      });
+      lab.append(box, document.createTextNode(codeLabel));
+      row.appendChild(lab);
+    }
+    tgtGrid.appendChild(row);
+  }
+
   const resetRow = document.createElement("div");
   resetRow.className = "item-row";
-  resetRow.innerHTML = `<button class="btn ghost" id="lyr-reset-offsets">Reset per-track offsets</button><span class="muted">Clears the song-specific sync adjustments made on the tile.</span>`;
+  resetRow.innerHTML = `<button class="btn ghost" id="lyr-reset-offsets">Reset per-track offsets</button>
+    <button class="btn ghost" id="lyr-reset-langs">Reset detected languages</button>
+    <button class="btn ghost" id="lyr-clear-tr">Clear translation cache</button>
+    <span class="muted">Clear song-specific sync offsets / remembered language choices / cached translations.</span>`;
   panel.appendChild(resetRow);
   resetRow.querySelector("#lyr-reset-offsets").addEventListener("click", () => {
     state.lyricsOffsets = {};
     saveState();
+    render();
+    renderLyricsSettings();
+  });
+  resetRow.querySelector("#lyr-reset-langs").addEventListener("click", () => {
+    state.lyricsLang = {};
+    saveState();
+    render();
+    renderLyricsSettings();
+  });
+  resetRow.querySelector("#lyr-clear-tr").addEventListener("click", async () => {
+    try {
+      await native.lyricsTranslationsClear();
+    } catch {
+      /* best effort */
+    }
+    lyricsTranslationCache.clear();
     render();
     renderLyricsSettings();
   });
