@@ -27,7 +27,8 @@ keyless) via Rust. No translation in Phase 1.
 
 **Lyrics tile (JS/CSS)**
 - New `lyrics` kind + Settings tab (tile selector, previous/next counts 0–10 default 3/3, sync
-  offset ms) + Add-a-tile option + `KIND_DEFAULTS`.
+  offset ms, text alignment left/center/right) + Add-a-tile option (Settings and background
+  right-click menu) + `KIND_DEFAULTS`.
 - Focus view: previous/current/next (current in `--accent`); **Full** toggle (scrollable,
   auto-scroll on line change).
 - Fallback: no synced/current line → Full plain list; instrumental → "Instrumental"; none → empty
@@ -49,3 +50,5 @@ keyless) via Rust. No translation in Phase 1.
 
 - Built as planned. `image`/network not needed (lyrics are JSON). The Spotify tile now uses the
   shared poller. LRCLIB search falls back to the closest duration when the exact `get` misses.
+- Follow-ups: lyrics text uses `em` so the per-tile **font size** works; added a **text align**
+  setting (left/center/right); added Lyrics to the background right-click add-tile menu.

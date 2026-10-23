@@ -942,7 +942,7 @@ function openTileMenu(clientX, clientY, compId) {
 function openGridMenu(clientX, clientY) {
   const order = [
     ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
-    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
     ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
     ["system", "System"],
   ];
@@ -1404,6 +1404,7 @@ async function renderLyricsBody(c, body) {
   const prevN = clampN(data.prevLines, 3);
   const nextN = clampN(data.nextLines, 3);
   const offsetMs = Number(data.offsetMs) || 0;
+  const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
   let full = data.full === true;
 
   let synced = [];
@@ -1428,6 +1429,8 @@ async function renderLyricsBody(c, body) {
   const modeBtn = body.querySelector(".lyr-mode");
   const linesEl = body.querySelector(".lyr-lines");
   const emptyEl = body.querySelector(".lyr-empty");
+  linesEl.style.textAlign = align;
+  emptyEl.style.textAlign = align;
 
   const posMs = () => {
     if (!sample || !sample.track) return 0;
@@ -4098,7 +4101,10 @@ function renderLyricsSettings() {
   row2.innerHTML = `
     <label>Previous lines <input id="lyr-prev" type="number" min="0" max="10" value="${clampN(comp.data.prevLines ?? 3)}" /></label>
     <label>Next lines <input id="lyr-next" type="number" min="0" max="10" value="${clampN(comp.data.nextLines ?? 3)}" /></label>
-    <label>Sync offset <input id="lyr-offset" type="number" min="-5000" max="5000" step="100" value="${Number(comp.data.offsetMs) || 0}" /> ms</label>`;
+    <label>Sync offset <input id="lyr-offset" type="number" min="-5000" max="5000" step="100" value="${Number(comp.data.offsetMs) || 0}" /> ms</label>
+    <label>Align <select id="lyr-align">${["left", "center", "right"]
+      .map((v) => `<option value="${v}" ${(comp.data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
+      .join("")}</select></label>`;
   panel.appendChild(row2);
   const commit = () => {
     saveState();
@@ -4118,6 +4124,10 @@ function renderLyricsSettings() {
   });
   row2.querySelector("#lyr-offset").addEventListener("change", (e) => {
     comp.data.offsetMs = Math.max(-5000, Math.min(5000, Number(e.target.value) || 0));
+    commit();
+  });
+  row2.querySelector("#lyr-align").addEventListener("change", (e) => {
+    comp.data.align = e.target.value;
     commit();
   });
 
@@ -5692,7 +5702,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
-  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, full: false } },
+  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false } },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },
