@@ -58,7 +58,15 @@
     return `${track.title || ""}|${track.artist || ""}|${track.album || ""}|${track.duration_ms || 0}`;
   }
 
-  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey };
+  // Resolve target languages for a source from a `{lang: [targets], default: []}`
+  // map: use the source's list (or `default`), never itself, max 2.
+  function targetsFor(map, source) {
+    const key = String(source || "").toLowerCase();
+    const list = (map && (map[key] || map.default)) || ["en"];
+    return list.filter((t) => t !== key).slice(0, 2);
+  }
+
+  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey, targetsFor };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   global.LyricsUtil = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

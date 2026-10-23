@@ -1027,6 +1027,10 @@ input[type="color"]:hover { border-color: var(--accent); }
 .lyr-tr { font-size: 0.82em; color: var(--muted); font-weight: 400; line-height: 1.3; margin-top: 1px; }
 .lyr-tr-lang { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.4px; color: var(--accent); opacity: 0.75; margin-right: 4px; }
 .lyr-tr-b { font-style: italic; }
+.lyr-targets { display: flex; flex-direction: column; gap: 4px; }
+.lyr-target-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 0.8rem; }
+.lyr-target-src { min-width: 84px; color: var(--muted); }
+.lyr-target-row label { display: inline-flex; align-items: center; gap: 3px; }
 .lyr-tools { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .lyr-nudge { font-size: 0.66em; padding: 0 6px; line-height: 1.3; }
 .lyr-off { font-size: 0.62em; color: var(--muted); min-width: 2.6em; text-align: right; font-variant-numeric: tabular-nums; }

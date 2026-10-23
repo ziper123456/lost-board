@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
   lyricsOffsets: {},
   lyricsTranslate: false,
   lyricsLang: {},
+  lyricsTargets: {},
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -53,6 +54,25 @@ const DEFAULT_STATE = {
     { id: "lch", kind: "launcher", title: "Folders & Files", x: 0, y: 2, w: 6, h: 3, data: { items: [] } },
   ],
 };
+
+// Default translation targets per source language. Languages outside
+// EN/DE/ES/VI fall back to `default` (English).
+const DEFAULT_LYRICS_TARGETS = {
+  en: ["de", "es"],
+  de: ["en", "es"],
+  es: ["en", "de"],
+  vi: ["de", "es"],
+  default: ["en"],
+};
+
+function lyricsTargetsConfig() {
+  if (!state.lyricsTargets || typeof state.lyricsTargets !== "object") state.lyricsTargets = {};
+  const map = state.lyricsTargets;
+  for (const key of ["en", "de", "es", "vi", "default"]) {
+    if (!Array.isArray(map[key])) map[key] = [...DEFAULT_LYRICS_TARGETS[key]];
+  }
+  return map;
+}
 
 // Built-in themes: CSS variable palettes applied to :root.
 const THEMES = {
@@ -678,7 +698,10 @@ function tileHeaderSig(c) {
 function tileBodySig(c) {
   // Lyrics also depend on the global translation setting + remembered languages,
   // so toggling those must rebuild the tile body.
-  const extra = c.kind === "lyrics" ? { tr: state.lyricsTranslate === true, langs: state.lyricsLang || {} } : {};
+  const extra =
+    c.kind === "lyrics"
+      ? { tr: state.lyricsTranslate === true, langs: state.lyricsLang || {}, targets: state.lyricsTargets || {} }
+      : {};
   return JSON.stringify({ k: c.kind, d: c.data || {}, ...extra });
 }
 function tileIconHtml(c) {
@@ -1612,15 +1635,7 @@ async function renderLyricsBody(c, body) {
     transEl.hidden = !msg;
   };
 
-  const targetsFor = (source) => {
-    switch (String(source || "").toLowerCase()) {
-      case "en": return ["de", "es"];
-      case "de": return ["en", "es"];
-      case "es": return ["en", "de"];
-      case "vi": return ["de", "es"];
-      default: return null;
-    }
-  };
+  const targetsFor = (source) => LyricsUtil.targetsFor(lyricsTargetsConfig(), source);
 
   // Low-confidence/unknown language: let the user pick (remembered per track).
   const showLangPrompt = (detected) => {
@@ -1680,6 +1695,12 @@ async function renderLyricsBody(c, body) {
       if (body.isConnected && key === trackKey) showTransStatus("Translation unavailable");
     } finally {
       translating = false;
+      // If the track changed while translating, the new one was skipped by the
+      // guard above — translate it now.
+      if (body.isConnected && state.lyricsTranslate && currentTrack) {
+        const curKey = LyricsUtil.trackKey(currentTrack);
+        if (curKey !== key) void startTranslation(currentTrack, curKey);
+      }
     }
   };
 
@@ -1699,15 +1720,17 @@ async function renderLyricsBody(c, body) {
         /* detection optional */
       }
       const known = ["en", "de", "es", "vi"].includes(detected);
-      if (known && confidence >= 0.35) source = detected;
+      // Unsupported languages (FR, JA, …) use the configurable "Other" targets
+      // (English by default) instead of asking with a limited list.
+      if (detected && (known ? confidence >= 0.35 : true)) source = detected;
       else {
         showLangPrompt(known ? detected : "");
         return;
       }
     }
     const targets = targetsFor(source);
-    if (!targets) {
-      showLangPrompt(source);
+    if (!targets.length) {
+      showTransStatus("No target languages set");
       return;
     }
     await translateLines(lines, source, targets, key);
@@ -4414,6 +4437,48 @@ function renderLyricsSettings() {
       ioStatus.textContent = `failed: ${e.message || e}`;
     }
   });
+
+  // Per-source-language translation targets (max 2; "Other" covers the rest).
+  const tgtHead = document.createElement("div");
+  tgtHead.className = "item-row";
+  tgtHead.innerHTML = `<label>Targets per language</label><span class="muted">max 2 per source; “Other” handles languages outside EN/DE/ES/VI</span>`;
+  panel.appendChild(tgtHead);
+  const tgtGrid = document.createElement("div");
+  tgtGrid.className = "lyr-targets";
+  panel.appendChild(tgtGrid);
+  const tgtMap = lyricsTargetsConfig();
+  const SOURCES = [["en", "English"], ["de", "German"], ["es", "Spanish"], ["vi", "Vietnamese"], ["default", "Other"]];
+  const TARGET_CODES = [["en", "EN"], ["de", "DE"], ["es", "ES"], ["vi", "VI"]];
+  for (const [src, srcLabel] of SOURCES) {
+    const row = document.createElement("div");
+    row.className = "lyr-target-row";
+    const label = document.createElement("span");
+    label.className = "lyr-target-src";
+    label.textContent = srcLabel;
+    row.appendChild(label);
+    const selected = new Set(tgtMap[src] || []);
+    for (const [code, codeLabel] of TARGET_CODES) {
+      const lab = document.createElement("label");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.dataset.t = code;
+      box.checked = selected.has(code);
+      if (src !== "default" && code === src) box.disabled = true; // can't translate to itself
+      box.addEventListener("change", () => {
+        const checked = [...row.querySelectorAll("input:checked")].map((b) => b.dataset.t);
+        if (checked.length > 2) {
+          box.checked = false;
+          return;
+        }
+        tgtMap[src] = checked;
+        saveState();
+        render();
+      });
+      lab.append(box, document.createTextNode(codeLabel));
+      row.appendChild(lab);
+    }
+    tgtGrid.appendChild(row);
+  }
 
   const resetRow = document.createElement("div");
   resetRow.className = "item-row";

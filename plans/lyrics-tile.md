@@ -59,7 +59,9 @@ keyless) via Rust. No translation in Phase 1.
 - **Detection:** `whatlang` (offline) in Rust (`lyrics_detect`), returns lang + confidence;
   confidence < 0.35 or an unsupported language → a prompt in the tile, remembered per track
   (`state.lyricsLang`).
-- **Targets:** fixed set {EN, DE, ES}: EN→DE+ES, DE→EN+ES, ES→EN+DE, VI→DE+ES.
+- **Targets:** configurable per source language (`state.lyricsTargets`, max 2 per source):
+  defaults EN→DE+ES, DE→EN+ES, ES→EN+DE, VI→DE+ES, and **Other → EN** (languages outside the
+  four). Edited in Settings → Lyrics → "Targets per language".
 - **Setting:** one global "Show translations (up to 2)" toggle (`state.lyricsTranslate`).
 - **Provider:** `lyrics_translate` tries the **opencode LLM** first (`opencode run --format json`,
   aligned JSON validated line-by-line), then **DeepL** per target (order-preserving batch; source
@@ -73,6 +75,10 @@ keyless) via Rust. No translation in Phase 1.
   Settings clears both the disk and in-memory caches.
 - **Export/import:** Settings can export the cache to JSON and import one; **import merges**
   (`merge_translations`) and never overwrites existing entries (only new keys are added). Tested.
+- **Review follow-ups:** skip-while-translating now re-triggers the new track (finally block);
+  `kill_on_drop(true)` on the opencode run/delete commands (no orphan process on timeout);
+  per-source **target languages are configurable** in Settings (max 2), with "Other" → English for
+  unsupported languages; language detection no longer dead-ends on non-EN/DE/ES/VI songs.
 
 ## Corrections log
 

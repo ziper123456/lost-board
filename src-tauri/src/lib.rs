@@ -1981,6 +1981,7 @@ async fn delete_opencode_session(id: &str) {
     cmd.args(["session", "delete", id]);
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
+    cmd.kill_on_drop(true);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.status()).await;
 }
 
@@ -2023,6 +2024,7 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
     ]);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
     let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
         .await
         .ok()?

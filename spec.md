@@ -350,11 +350,12 @@ auth, custom images are user-supplied, captioning is fully local.
   optional dynamic Spotify cover colours). Per-tile settings: previous/next line counts and a
   sync offset (ms).
 - **FR-LYR-006** When **translation** is enabled, the tile shall detect the lyrics' language
-  offline; on low confidence or an unsupported language it shall prompt the user to choose, and
-  remember the choice per track.
+  offline. If detection is empty/low-confidence it shall prompt the user (remembered per track).
+  Languages outside the supported set (EN/DE/ES/VI) shall use the configurable **"Other"** targets
+  (English by default) rather than prompting.
 - **FR-LYR-007** With translation enabled, the tile shall show the original lyrics plus **up to
-  two** translations into the other of {EN, DE, ES} — source EN → DE+ES, DE → EN+ES, ES → EN+DE,
-  VI → DE+ES — aligned line-for-line with the original.
+  two** translations, aligned line-for-line. Target languages are **configurable per source
+  language** (max 2): defaults EN → DE+ES, DE → EN+ES, ES → EN+DE, VI → DE+ES, Other → EN.
 - **FR-LYR-008** Translation shall use the **LLM (opencode) first**, with **DeepL as fallback**;
   results are cached in memory and **persisted** to `lyrics-translations.json` in the app-data dir
   (keyed by a hash of the lines + target languages), with a clear action in Settings. The cache
