@@ -1415,6 +1415,15 @@ async function renderLyricsBody(c, body) {
   let sample = null; // { track, at }
   let token = 0;
   let status = "idle";
+  // Transient fetch failures retry with backoff instead of blocking the track.
+  let retryKey = "";
+  let retryAt = 0;
+  let attempts = 0;
+  // Full view is built once per track; only the active line changes. `follow`
+  // stops auto-scroll once the user scrolls the list themselves.
+  let fullRenderKey = "";
+  let follow = true;
+  let autoScrolling = false;
 
   body.innerHTML = `
     <div class="lyr-wrap">
@@ -1432,36 +1441,24 @@ async function renderLyricsBody(c, body) {
   linesEl.style.textAlign = align;
   emptyEl.style.textAlign = align;
 
-  const posMs = () => {
-    if (!sample || !sample.track) return 0;
-    const t = sample.track;
-    let p = Number(t.progress_ms) || 0;
-    if (t.playing) p += performance.now() - sample.at;
-    const dur = Number(t.duration_ms) || 0;
-    if (dur > 0) p = Math.min(p, dur);
-    return Math.max(0, p + offsetMs);
-  };
-
-  const idxAt = (ms) => {
-    if (!synced.length) return -1;
-    let lo = 0;
-    let hi = synced.length - 1;
-    let ans = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (synced[mid].t_ms <= ms) {
-        ans = mid;
-        lo = mid + 1;
-      } else hi = mid - 1;
-    }
-    return ans;
-  };
+  const posMs = () => LyricsUtil.positionMs(sample && sample.track, sample && sample.at, performance.now(), offsetMs);
 
   const emptyMsg = (msg) => {
+    fullRenderKey = "";
     linesEl.innerHTML = "";
     linesEl.hidden = true;
     emptyEl.hidden = false;
     emptyEl.textContent = msg;
+  };
+
+  const scrollCurrent = () => {
+    const cur = linesEl.querySelector(".lyr-line.cur");
+    if (!cur) return;
+    autoScrolling = true;
+    cur.scrollIntoView({ block: "nearest" });
+    setTimeout(() => {
+      autoScrolling = false;
+    }, 0);
   };
 
   const renderLines = () => {
@@ -1479,24 +1476,26 @@ async function renderLyricsBody(c, body) {
     linesEl.classList.toggle("focus", !effectiveFull);
 
     if (effectiveFull) {
-      const lines = synced.length ? synced.map((l) => l.text) : plainLines;
-      linesEl.innerHTML = lines
-        .map((text, i) => {
-          const cur = synced.length && i === currentIdx ? " cur" : "";
-          return `<div class="lyr-line${cur}" data-i="${i}">${escapeHtml(text)}</div>`;
-        })
-        .join("");
-      if (synced.length && currentIdx >= 0) {
-        const cur = linesEl.querySelector(".lyr-line.cur");
-        if (cur) cur.scrollIntoView({ block: "nearest" });
+      const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}`;
+      if (fullRenderKey !== key) {
+        const lines = synced.length ? synced.map((l) => l.text) : plainLines;
+        linesEl.innerHTML = lines
+          .map((text, i) => `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}</div>`)
+          .join("");
+        fullRenderKey = key;
       }
+      const kids = linesEl.children;
+      for (let i = 0; i < kids.length; i++) {
+        kids[i].classList.toggle("cur", synced.length > 0 && i === currentIdx);
+      }
+      if (follow && synced.length && currentIdx >= 0) scrollCurrent();
     } else {
-      const start = Math.max(0, currentIdx - prevN);
-      const end = Math.min(synced.length, currentIdx + nextN + 1);
+      fullRenderKey = "";
+      const win = LyricsUtil.focusWindow(synced.length, currentIdx, prevN, nextN);
       linesEl.innerHTML = synced
-        .slice(start, end)
+        .slice(win.start, win.end)
         .map((l, k) => {
-          const i = start + k;
+          const i = win.start + k;
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
           return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}</div>`;
         })
@@ -1509,7 +1508,7 @@ async function renderLyricsBody(c, body) {
 
   const updateCurrent = () => {
     if (!synced.length) return;
-    const i = idxAt(posMs());
+    const i = LyricsUtil.activeIndex(synced, posMs());
     if (i === currentIdx) return;
     currentIdx = i;
     renderLines();
@@ -1523,34 +1522,40 @@ async function renderLyricsBody(c, body) {
   const loadLyrics = async (track) => {
     const key = `${track.title}|${track.artist}|${track.album}|${track.duration_ms || 0}`;
     if (key === trackKey) return;
+    if (key === retryKey && Date.now() < retryAt) return;
     trackKey = key;
     const my = ++token;
     synced = [];
     plainLines = [];
     instrumental = false;
     currentIdx = -1;
+    follow = true;
     status = "loading";
     setTrackLabel(track);
     renderLines();
     try {
       const res = await native.lyricsGet(track.title, track.artist, track.album, track.duration_ms || 0);
       if (my !== token || !body.isConnected) return;
+      retryKey = "";
+      attempts = 0;
       if (!res) {
         status = "none";
         renderLines();
         return;
       }
       synced = Array.isArray(res.synced) ? res.synced : [];
-      plainLines =
-        typeof res.plain === "string"
-          ? res.plain.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-          : [];
+      plainLines = typeof res.plain === "string" ? LyricsUtil.parsePlain(res.plain) : [];
       instrumental = res.instrumental === true;
       status = "ready";
       renderLines();
       updateCurrent();
     } catch {
       if (my !== token || !body.isConnected) return;
+      // Allow a later retry (5s, 10s, 20s, 40s, capped at 60s).
+      trackKey = "";
+      retryKey = key;
+      attempts += 1;
+      retryAt = Date.now() + Math.min(60000, 5000 * 2 ** Math.min(attempts, 4));
       status = "error";
       renderLines();
     }
@@ -1579,9 +1584,13 @@ async function renderLyricsBody(c, body) {
     if (modeBtn.disabled) return;
     full = !full;
     data.full = full;
+    follow = true;
     saveState();
     renderLines();
   });
+  // Stop auto-scrolling if the user scrolls the full list.
+  linesEl.addEventListener("wheel", () => { if (!autoScrolling) follow = false; }, { passive: true });
+  linesEl.addEventListener("touchstart", () => { if (!autoScrolling) follow = false; }, { passive: true });
 
   subscribePlayback(body, onTrack);
   const t = setInterval(updateCurrent, 400);

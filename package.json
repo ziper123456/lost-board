@@ -11,6 +11,7 @@
     "test:conjugate": "node scripts/test-conjugate.cjs",
     "test:match": "node scripts/test-match.cjs",
     "test:colors": "node scripts/test-colors.cjs",
+    "test:lyrics": "node scripts/test-lyrics.cjs",
     "enrich": "node scripts/enrich-vocab.mjs"
   },
   "devDependencies": {

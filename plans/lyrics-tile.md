@@ -52,3 +52,9 @@ keyless) via Rust. No translation in Phase 1.
   shared poller. LRCLIB search falls back to the closest duration when the exact `get` misses.
 - Follow-ups: lyrics text uses `em` so the per-tile **font size** works; added a **text align**
   setting (left/center/right); added Lyrics to the background right-click add-tile menu.
+- Simplification/quality pass (`code-simplification`): pure helpers extracted to `src/lyrics.js`
+  (`activeIndex`, `focusWindow`, `positionMs`, `parsePlain`) + `scripts/test-lyrics.cjs`; the Full
+  view now builds once per track and only toggles the active-line class (no per-line innerHTML
+  rebuild) with auto-scroll stopping when the user scrolls; transient fetch failures retry with
+  exponential backoff instead of blocking the track; LRCLIB matching retries without the album and
+  searches with a cleaned title (`clean_title`, unit-tested).

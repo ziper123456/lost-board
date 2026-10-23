@@ -1582,6 +1582,55 @@ fn parse_lrclib_record(v: &serde_json::Value, source: &str) -> Option<(LyricsRes
     ))
 }
 
+/// Strip parenthetical/bracketed qualifiers ("(feat. …)", "[Remastered]") and
+/// collapse whitespace so the search query matches more often.
+fn clean_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for ch in title.chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+async fn lrclib_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    secs: u64,
+    timeout: std::time::Duration,
+) -> Option<LyricsResult> {
+    let mut params: Vec<(&str, String)> = vec![
+        ("artist_name", artist.to_string()),
+        ("track_name", title.to_string()),
+        ("duration", secs.to_string()),
+    ];
+    if let Some(a) = album {
+        if !a.is_empty() {
+            params.push(("album_name", a.to_string()));
+        }
+    }
+    let resp = client
+        .get("https://lrclib.net/api/get")
+        .query(&params)
+        .header("User-Agent", LYRICS_UA)
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    parse_lrclib_record(&v, "lrclib").map(|(r, _)| r)
+}
+
 /// Fetch lyrics from LRCLIB (exact get, then search + closest duration). Returns
 /// None when nothing is available. Cached (including negative results) by track.
 #[tauri::command]
@@ -1605,31 +1654,15 @@ async fn lyrics_get(
 
     let client = reqwest::Client::new();
     let timeout = std::time::Duration::from_secs(12);
-    let secs_s = secs.to_string();
-    let mut result: Option<LyricsResult> = None;
-
-    if let Ok(resp) = client
-        .get("https://lrclib.net/api/get")
-        .query(&[
-            ("artist_name", artist.as_str()),
-            ("track_name", title.as_str()),
-            ("album_name", album.as_str()),
-            ("duration", secs_s.as_str()),
-        ])
-        .header("User-Agent", LYRICS_UA)
-        .timeout(timeout)
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>().await {
-                result = parse_lrclib_record(&v, "lrclib").map(|(r, _)| r);
-            }
-        }
+    let mut result = lrclib_get(&client, &artist, &title, Some(&album), secs, timeout).await;
+    // Some LRCLIB entries have a different album name; retry without it.
+    if result.is_none() && !album.is_empty() {
+        result = lrclib_get(&client, &artist, &title, None, secs, timeout).await;
     }
 
     if result.is_none() {
-        let q = format!("{artist} {title}");
+        let search_title = clean_title(&title);
+        let q = format!("{artist} {search_title}");
         if let Ok(resp) = client
             .get("https://lrclib.net/api/search")
             .query(&[("q", q.as_str())])
@@ -3710,5 +3743,13 @@ mod srs_tests {
         // 1- and 3-digit fractions.
         assert_eq!(parse_lrc("[00:01.5]a")[0].t_ms, 1500);
         assert_eq!(parse_lrc("[00:01.123]a")[0].t_ms, 1123);
+    }
+
+    #[test]
+    fn clean_title_strips_qualifiers() {
+        assert_eq!(clean_title("Song (feat. Someone) [Remastered]"), "Song");
+        assert_eq!(clean_title("A (Live) B"), "A B");
+        assert_eq!(clean_title("Plain Title"), "Plain Title");
+        assert_eq!(clean_title("(Intro)"), "");
     }
 }
