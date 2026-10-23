@@ -1959,6 +1959,31 @@ fn parse_opencode_text(stdout: &str) -> String {
     text
 }
 
+fn parse_opencode_session_id(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(id) = v.get("sessionID").and_then(|x| x.as_str()) {
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort removal of the one-shot session created by `opencode run`, so the
+/// user's session list doesn't grow by one per translation.
+async fn delete_opencode_session(id: &str) {
+    let (program, leading) = opencode_program();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args(["session", "delete", id]);
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.status()).await;
+}
+
 fn extract_json_object(text: &str) -> Option<serde_json::Value> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
@@ -1992,6 +2017,8 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         "json",
         "-m",
         LYRICS_LLM_MODEL,
+        "--title",
+        "lost-board lyrics",
         &instruction,
     ]);
     cmd.stdout(std::process::Stdio::piped());
@@ -2000,10 +2027,15 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         .await
         .ok()?
         .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // Do not leave a session behind for every translation.
+    if let Some(session_id) = parse_opencode_session_id(&stdout) {
+        delete_opencode_session(&session_id).await;
+    }
     if !output.status.success() {
         return None;
     }
-    let text = parse_opencode_text(&String::from_utf8_lossy(&output.stdout));
+    let text = parse_opencode_text(&stdout);
     let obj = extract_json_object(&text)?;
     let tr = obj.get("translations")?.as_object()?;
     let mut out = std::collections::HashMap::new();
