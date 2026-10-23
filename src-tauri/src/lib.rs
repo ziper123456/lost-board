@@ -1466,13 +1466,13 @@ async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
     Ok(palette)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct LyricsLine {
     t_ms: u64,
     text: String,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct LyricsResult {
     synced: Vec<LyricsLine>,
     plain: String,
@@ -1481,14 +1481,53 @@ struct LyricsResult {
 }
 
 const LYRICS_UA: &str = "lost-board/0.1 (+https://github.com/ziper123456/lost-board)";
-const LYRICS_CACHE_MAX: usize = 256;
+const LYRICS_CACHE_MAX: usize = 500;
 
 static LYRICS_CACHE: std::sync::OnceLock<
     StdMutex<std::collections::HashMap<String, Option<LyricsResult>>>,
 > = std::sync::OnceLock::new();
+static LYRICS_DISK_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn lyrics_cache() -> &'static StdMutex<std::collections::HashMap<String, Option<LyricsResult>>> {
     LYRICS_CACHE.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn lyrics_cache_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("lyrics-cache.json"))
+}
+
+/// Load the on-disk cache once per process (so replays/restarts are instant and
+/// work offline). Missing/corrupt files are ignored.
+fn ensure_lyrics_cache_loaded(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if LYRICS_DISK_LOADED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(path) = lyrics_cache_file(app) else { return };
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(map) =
+            serde_json::from_str::<std::collections::HashMap<String, Option<LyricsResult>>>(&text)
+        {
+            *lyrics_cache().lock().unwrap() = map;
+        }
+    }
+}
+
+fn persist_lyrics_cache(app: &tauri::AppHandle) {
+    let Some(path) = lyrics_cache_file(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let map = lyrics_cache().lock().unwrap().clone();
+    if let Ok(text) = serde_json::to_string(&map) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &path);
+        }
+    }
 }
 
 /// Parse an LRC tag like `mm:ss.xx` / `mm:ss.xxx` into milliseconds.
@@ -1631,10 +1670,52 @@ async fn lrclib_get(
     parse_lrclib_record(&v, "lrclib").map(|(r, _)| r)
 }
 
+/// Plain-lyrics fallback from lyrics.ovh (keyless, unsynced). Used only when
+/// LRCLIB has nothing; failures are ignored.
+async fn lyrics_ovh_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    timeout: std::time::Duration,
+) -> Option<LyricsResult> {
+    if artist.is_empty() || title.is_empty() {
+        return None;
+    }
+    let mut url = url::Url::parse("https://api.lyrics.ovh/v1/").ok()?;
+    url.path_segments_mut().ok()?.push(artist).push(title);
+    let resp = client
+        .get(url)
+        .header("User-Agent", LYRICS_UA)
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let lyrics = v
+        .get("lyrics")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if lyrics.is_empty() {
+        return None;
+    }
+    Some(LyricsResult {
+        synced: Vec::new(),
+        plain: lyrics,
+        instrumental: false,
+        source: "lyrics.ovh".into(),
+    })
+}
+
 /// Fetch lyrics from LRCLIB (exact get, then search + closest duration). Returns
 /// None when nothing is available. Cached (including negative results) by track.
 #[tauri::command]
 async fn lyrics_get(
+    app: tauri::AppHandle,
     title: String,
     artist: String,
     album: String,
@@ -1648,6 +1729,7 @@ async fn lyrics_get(
     }
     let secs = duration_ms / 1000;
     let key = format!("{title}\u{1f}{artist}\u{1f}{album}\u{1f}{secs}");
+    ensure_lyrics_cache_loaded(&app);
     if let Some(hit) = lyrics_cache().lock().unwrap().get(&key) {
         return Ok(hit.clone());
     }
@@ -1690,11 +1772,18 @@ async fn lyrics_get(
         }
     }
 
-    let mut cache = lyrics_cache().lock().unwrap();
-    if cache.len() > LYRICS_CACHE_MAX {
-        cache.clear();
+    if result.is_none() {
+        result = lyrics_ovh_get(&client, &artist, &title, timeout).await;
     }
-    cache.insert(key, result.clone());
+
+    {
+        let mut cache = lyrics_cache().lock().unwrap();
+        if cache.len() > LYRICS_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(key, result.clone());
+    }
+    persist_lyrics_cache(&app);
     Ok(result)
 }
 

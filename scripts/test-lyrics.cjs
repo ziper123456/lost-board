@@ -26,4 +26,8 @@ assert.equal(L.positionMs(null, 0, 0, 0), 0);
 
 assert.deepEqual(L.parsePlain("a\n  b \n\nc\r\n"), ["a", "b", "c"]);
 
+assert.equal(L.trackKey({ title: "T", artist: "A", album: "Al", duration_ms: 123 }), "T|A|Al|123");
+assert.equal(L.trackKey(null), "");
+assert.equal(L.trackKey({ title: "T" }), "T|||0");
+
 console.log("lyrics: all assertions passed");

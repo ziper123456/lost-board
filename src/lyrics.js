@@ -50,7 +50,13 @@
       .filter(Boolean);
   }
 
-  const api = { activeIndex, focusWindow, positionMs, parsePlain };
+  // Stable key for a track (used for per-track sync offsets).
+  function trackKey(track) {
+    if (!track) return "";
+    return `${track.title || ""}|${track.artist || ""}|${track.album || ""}|${track.duration_ms || 0}`;
+  }
+
+  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   global.LyricsUtil = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

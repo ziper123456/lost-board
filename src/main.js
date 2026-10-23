@@ -43,6 +43,7 @@ const DEFAULT_STATE = {
   cornerRadius: 10,
   wall: false,
   backgroundMode: false,
+  lyricsOffsets: {},
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -538,6 +539,7 @@ function clearBodyTimers(body) {
 // ---------------------------------------------------------------------------
 const playbackSubs = new Set();
 let playbackTimer = null;
+let playbackIntervalMs = 0;
 
 async function pollPlayback() {
   if (!playbackSubs.size) return;
@@ -557,19 +559,30 @@ async function pollPlayback() {
   }
 }
 
-function subscribePlayback(body, fn) {
-  const entry = { fn };
+// Lyrics want a tighter cadence for seek responsiveness; 5s otherwise.
+function desiredPlaybackInterval() {
+  return playbackSubs.size && [...playbackSubs].some((e) => e.fast) ? 2500 : 5000;
+}
+
+function ensurePlaybackTimer() {
+  const ms = desiredPlaybackInterval();
+  if (playbackTimer && playbackIntervalMs === ms) return;
+  if (playbackTimer) clearInterval(playbackTimer);
+  playbackTimer = null;
+  playbackIntervalMs = 0;
+  if (!playbackSubs.size) return;
+  playbackIntervalMs = ms;
+  playbackTimer = setInterval(pollPlayback, ms);
+  void pollPlayback();
+}
+
+function subscribePlayback(body, fn, opts) {
+  const entry = { fn, fast: !!(opts && opts.fast) };
   playbackSubs.add(entry);
-  if (!playbackTimer) {
-    playbackTimer = setInterval(pollPlayback, 5000);
-    void pollPlayback();
-  }
+  ensurePlaybackTimer();
   addTimer(body, () => {
     playbackSubs.delete(entry);
-    if (!playbackSubs.size && playbackTimer) {
-      clearInterval(playbackTimer);
-      playbackTimer = null;
-    }
+    ensurePlaybackTimer();
   });
 }
 
@@ -1415,6 +1428,8 @@ async function renderLyricsBody(c, body) {
   let sample = null; // { track, at }
   let token = 0;
   let status = "idle";
+  let currentTrack = null;
+  let trackOffset = 0; // per-track sync offset (ms), persisted in state.lyricsOffsets
   // Transient fetch failures retry with backoff instead of blocking the track.
   let retryKey = "";
   let retryAt = 0;
@@ -1429,19 +1444,37 @@ async function renderLyricsBody(c, body) {
     <div class="lyr-wrap">
       <div class="lyr-head">
         <span class="lyr-track" title=""></span>
-        <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
+        <span class="lyr-tools">
+          <button class="btn ghost lyr-nudge" data-d="-100" title="Lyrics 0.1s earlier">−</button>
+          <span class="lyr-off" title="Per-track lyric offset">0.0s</span>
+          <button class="btn ghost lyr-nudge" data-d="100" title="Lyrics 0.1s later">+</button>
+          <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
+        </span>
       </div>
       <div class="lyr-lines"></div>
       <div class="lyr-empty" hidden></div>
     </div>`;
   const trackEl = body.querySelector(".lyr-track");
   const modeBtn = body.querySelector(".lyr-mode");
+  const offEl = body.querySelector(".lyr-off");
   const linesEl = body.querySelector(".lyr-lines");
   const emptyEl = body.querySelector(".lyr-empty");
   linesEl.style.textAlign = align;
   emptyEl.style.textAlign = align;
 
-  const posMs = () => LyricsUtil.positionMs(sample && sample.track, sample && sample.at, performance.now(), offsetMs);
+  const updateOffsetLabel = () => {
+    offEl.textContent = `${(trackOffset / 1000).toFixed(1)}s`;
+    offEl.title = `Per-track offset: ${trackOffset} ms`;
+  };
+  updateOffsetLabel();
+
+  const posMs = () =>
+    LyricsUtil.positionMs(
+      sample && sample.track,
+      sample && sample.at,
+      performance.now(),
+      offsetMs + trackOffset
+    );
 
   const emptyMsg = (msg) => {
     fullRenderKey = "";
@@ -1520,7 +1553,10 @@ async function renderLyricsBody(c, body) {
   };
 
   const loadLyrics = async (track) => {
-    const key = `${track.title}|${track.artist}|${track.album}|${track.duration_ms || 0}`;
+    const key = LyricsUtil.trackKey(track);
+    currentTrack = track;
+    trackOffset = Number((state.lyricsOffsets || {})[key]) || 0;
+    updateOffsetLabel();
     if (key === trackKey) return;
     if (key === retryKey && Date.now() < retryAt) return;
     trackKey = key;
@@ -1572,6 +1608,9 @@ async function renderLyricsBody(c, body) {
       instrumental = false;
       currentIdx = -1;
       status = "idle";
+      currentTrack = null;
+      trackOffset = 0;
+      updateOffsetLabel();
       setTrackLabel(null);
       emptyMsg("Nothing playing");
       return;
@@ -1588,11 +1627,31 @@ async function renderLyricsBody(c, body) {
     saveState();
     renderLines();
   });
+  body.querySelectorAll(".lyr-nudge").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!currentTrack) return;
+      const key = LyricsUtil.trackKey(currentTrack);
+      const delta = Number(btn.dataset.d) || 0;
+      const cur = Number((state.lyricsOffsets || {})[key]) || 0;
+      const next = Math.max(-5000, Math.min(5000, cur + delta));
+      if (!state.lyricsOffsets) state.lyricsOffsets = {};
+      state.lyricsOffsets[key] = next;
+      trackOffset = next;
+      updateOffsetLabel();
+      saveState();
+      const i = LyricsUtil.activeIndex(synced, posMs());
+      if (i !== currentIdx) {
+        currentIdx = i;
+        renderLines();
+      }
+    });
+  });
+
   // Stop auto-scrolling if the user scrolls the full list.
   linesEl.addEventListener("wheel", () => { if (!autoScrolling) follow = false; }, { passive: true });
   linesEl.addEventListener("touchstart", () => { if (!autoScrolling) follow = false; }, { passive: true });
 
-  subscribePlayback(body, onTrack);
+  subscribePlayback(body, onTrack, { fast: true });
   const t = setInterval(updateCurrent, 400);
   addTimer(body, t);
   setTrackLabel(null);
@@ -4144,6 +4203,17 @@ function renderLyricsSettings() {
   hint.className = "item-row";
   hint.innerHTML = `<span class="muted">Focus shows the current line with the configured previous/next lines. Full view toggles from the tile and is the fallback when there is no synced line.</span>`;
   panel.appendChild(hint);
+
+  const resetRow = document.createElement("div");
+  resetRow.className = "item-row";
+  resetRow.innerHTML = `<button class="btn ghost" id="lyr-reset-offsets">Reset per-track offsets</button><span class="muted">Clears the song-specific sync adjustments made on the tile.</span>`;
+  panel.appendChild(resetRow);
+  resetRow.querySelector("#lyr-reset-offsets").addEventListener("click", () => {
+    state.lyricsOffsets = {};
+    saveState();
+    render();
+    renderLyricsSettings();
+  });
 }
 
 function renderProjectsSettings() {

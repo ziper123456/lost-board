@@ -37,6 +37,16 @@ keyless) via Rust. No translation in Phase 1.
   highlight updates only when the line index changes (400 ms check).
 - Follows theme/design tokens, including the dynamic Spotify cover colours.
 
+**Follow-ups (implemented)**
+- **Disk cache:** LRCLIB results (including negatives) persist to `lyrics-cache.json` in the
+  app-data dir (loaded once, atomic writes) → instant replays and offline restarts.
+- **Second provider (plain fallback):** when LRCLIB has nothing, `lyrics.ovh` supplies plain
+  lyrics (unsynced). Provider is recorded in `source`.
+- **Per-track sync offset:** `state.lyricsOffsets[trackKey]` (persisted, ±5 s) adjusted with the
+  tile's `−`/`+` (0.1 s steps); "Reset per-track offsets" in the Lyrics tab.
+- **Faster sync:** the shared playback poll tightens to **2.5 s while a Lyrics tile is visible**
+  (5 s otherwise), so seeks/scrubs catch up quicker.
+
 ## Phase 2 (planned) — translation
 - Offline detection (`whatlang`); low confidence → prompt in the tile/Settings, remembered per
   track.
