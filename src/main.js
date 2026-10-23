@@ -348,6 +348,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("spotify_cover_palette", { url });
     return null;
   },
+  async lyricsGet(title, artist, album, durationMs) {
+    if (window.__TAURI__) return invoke("lyrics_get", { title, artist, album, durationMs });
+    return null;
+  },
   async spotifyPlay(play) {
     if (window.__TAURI__) return invoke("spotify_play", { play });
   },
@@ -517,13 +521,56 @@ function addTimer(body, t) {
 function clearBodyTimers(body) {
   const arr = compartmentTimers.get(body);
   if (arr) {
-    arr.forEach(clearInterval);
+    // Entries are interval ids or cleanup functions (e.g. shared-poll unsubscribes).
+    arr.forEach((t) => (typeof t === "function" ? t() : clearInterval(t)));
     compartmentTimers.delete(body);
   }
   if (vocabSpeakingBodies.has(body)) {
     vocabSpeakingBodies.delete(body);
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared Spotify playback: ONE 5s now-playing poll feeds every Spotify and
+// Lyrics tile (avoids duplicate API traffic). Consumers register a callback and
+// an unsubscribe is tied to the tile body via addTimer.
+// ---------------------------------------------------------------------------
+const playbackSubs = new Set();
+let playbackTimer = null;
+
+async function pollPlayback() {
+  if (!playbackSubs.size) return;
+  let track = null;
+  try {
+    track = await native.spotifyNowPlaying();
+  } catch {
+    track = null;
+  }
+  const at = performance.now();
+  for (const entry of [...playbackSubs]) {
+    try {
+      entry.fn(track, at);
+    } catch {
+      /* one consumer must not break the others */
+    }
+  }
+}
+
+function subscribePlayback(body, fn) {
+  const entry = { fn };
+  playbackSubs.add(entry);
+  if (!playbackTimer) {
+    playbackTimer = setInterval(pollPlayback, 5000);
+    void pollPlayback();
+  }
+  addTimer(body, () => {
+    playbackSubs.delete(entry);
+    if (!playbackSubs.size && playbackTimer) {
+      clearInterval(playbackTimer);
+      playbackTimer = null;
+    }
+  });
 }
 
 const ROW_H = 44;
@@ -1181,6 +1228,8 @@ async function renderCompartmentBody(c, body) {
     renderFrameBody(c, body);
   } else if (c.kind === "spotify") {
     renderSpotifyBody(c, body);
+  } else if (c.kind === "lyrics") {
+    renderLyricsBody(c, body);
   } else if (c.kind === "project") {
     renderProjectsBody(c, body);
   } else if (c.kind === "vocab") {
@@ -1339,6 +1388,203 @@ function vocabConfig() {
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
   if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
   return v;
+}
+
+// ---------------------------------------------------------------------------
+// Lyrics tile — synced lyrics from LRCLIB (fetched in Rust), driven by the
+// shared playback sample. Focus = prev/current/next; Full = whole song, and the
+// fallback when there's no synced/current line. Inherits theme/design tokens.
+// ---------------------------------------------------------------------------
+async function renderLyricsBody(c, body) {
+  const data = c.data || (c.data = {});
+  const clampN = (v, d) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
+  };
+  const prevN = clampN(data.prevLines, 3);
+  const nextN = clampN(data.nextLines, 3);
+  const offsetMs = Number(data.offsetMs) || 0;
+  let full = data.full === true;
+
+  let synced = [];
+  let plainLines = [];
+  let instrumental = false;
+  let trackKey = "";
+  let currentIdx = -1;
+  let sample = null; // { track, at }
+  let token = 0;
+  let status = "idle";
+
+  body.innerHTML = `
+    <div class="lyr-wrap">
+      <div class="lyr-head">
+        <span class="lyr-track" title=""></span>
+        <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
+      </div>
+      <div class="lyr-lines"></div>
+      <div class="lyr-empty" hidden></div>
+    </div>`;
+  const trackEl = body.querySelector(".lyr-track");
+  const modeBtn = body.querySelector(".lyr-mode");
+  const linesEl = body.querySelector(".lyr-lines");
+  const emptyEl = body.querySelector(".lyr-empty");
+
+  const posMs = () => {
+    if (!sample || !sample.track) return 0;
+    const t = sample.track;
+    let p = Number(t.progress_ms) || 0;
+    if (t.playing) p += performance.now() - sample.at;
+    const dur = Number(t.duration_ms) || 0;
+    if (dur > 0) p = Math.min(p, dur);
+    return Math.max(0, p + offsetMs);
+  };
+
+  const idxAt = (ms) => {
+    if (!synced.length) return -1;
+    let lo = 0;
+    let hi = synced.length - 1;
+    let ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (synced[mid].t_ms <= ms) {
+        ans = mid;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    return ans;
+  };
+
+  const emptyMsg = (msg) => {
+    linesEl.innerHTML = "";
+    linesEl.hidden = true;
+    emptyEl.hidden = false;
+    emptyEl.textContent = msg;
+  };
+
+  const renderLines = () => {
+    const plainFallback = synced.length === 0 && plainLines.length > 0;
+    const effectiveFull = full || plainFallback || currentIdx < 0;
+    if (synced.length === 0 && plainLines.length === 0) {
+      modeBtn.disabled = true;
+      if (instrumental) emptyMsg("Instrumental");
+      else if (status === "loading") emptyMsg("Loading lyrics…");
+      else emptyMsg("No lyrics for this track.");
+      return;
+    }
+    emptyEl.hidden = true;
+    linesEl.hidden = false;
+    linesEl.classList.toggle("focus", !effectiveFull);
+
+    if (effectiveFull) {
+      const lines = synced.length ? synced.map((l) => l.text) : plainLines;
+      linesEl.innerHTML = lines
+        .map((text, i) => {
+          const cur = synced.length && i === currentIdx ? " cur" : "";
+          return `<div class="lyr-line${cur}" data-i="${i}">${escapeHtml(text)}</div>`;
+        })
+        .join("");
+      if (synced.length && currentIdx >= 0) {
+        const cur = linesEl.querySelector(".lyr-line.cur");
+        if (cur) cur.scrollIntoView({ block: "nearest" });
+      }
+    } else {
+      const start = Math.max(0, currentIdx - prevN);
+      const end = Math.min(synced.length, currentIdx + nextN + 1);
+      linesEl.innerHTML = synced
+        .slice(start, end)
+        .map((l, k) => {
+          const i = start + k;
+          const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
+          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}</div>`;
+        })
+        .join("");
+    }
+    modeBtn.disabled = plainFallback;
+    modeBtn.textContent = effectiveFull ? "Focus" : "Full";
+    modeBtn.title = plainFallback ? "No synced lyrics — showing full list" : "Toggle full lyrics";
+  };
+
+  const updateCurrent = () => {
+    if (!synced.length) return;
+    const i = idxAt(posMs());
+    if (i === currentIdx) return;
+    currentIdx = i;
+    renderLines();
+  };
+
+  const setTrackLabel = (t) => {
+    trackEl.textContent = t ? `${t.title}${t.artist ? " — " + t.artist : ""}` : "Nothing playing";
+    trackEl.title = trackEl.textContent;
+  };
+
+  const loadLyrics = async (track) => {
+    const key = `${track.title}|${track.artist}|${track.album}|${track.duration_ms || 0}`;
+    if (key === trackKey) return;
+    trackKey = key;
+    const my = ++token;
+    synced = [];
+    plainLines = [];
+    instrumental = false;
+    currentIdx = -1;
+    status = "loading";
+    setTrackLabel(track);
+    renderLines();
+    try {
+      const res = await native.lyricsGet(track.title, track.artist, track.album, track.duration_ms || 0);
+      if (my !== token || !body.isConnected) return;
+      if (!res) {
+        status = "none";
+        renderLines();
+        return;
+      }
+      synced = Array.isArray(res.synced) ? res.synced : [];
+      plainLines =
+        typeof res.plain === "string"
+          ? res.plain.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+          : [];
+      instrumental = res.instrumental === true;
+      status = "ready";
+      renderLines();
+      updateCurrent();
+    } catch {
+      if (my !== token || !body.isConnected) return;
+      status = "error";
+      renderLines();
+    }
+  };
+
+  const onTrack = (track, at) => {
+    sample = { track, at };
+    if (!body.isConnected) return;
+    if (!track || !track.title) {
+      trackKey = "";
+      token++;
+      synced = [];
+      plainLines = [];
+      instrumental = false;
+      currentIdx = -1;
+      status = "idle";
+      setTrackLabel(null);
+      emptyMsg("Nothing playing");
+      return;
+    }
+    void loadLyrics(track);
+    updateCurrent();
+  };
+
+  modeBtn.addEventListener("click", () => {
+    if (modeBtn.disabled) return;
+    full = !full;
+    data.full = full;
+    saveState();
+    renderLines();
+  });
+
+  subscribePlayback(body, onTrack);
+  const t = setInterval(updateCurrent, 400);
+  addTimer(body, t);
+  setTrackLabel(null);
+  emptyMsg("Waiting for Spotify…");
 }
 
 async function renderVocabBody(c, body) {
@@ -1778,12 +2024,14 @@ async function renderSpotifyBody(c, body) {
       refresh(true);
     }
   };
-  const refresh = async (forceQueue) => {
-    let track = null;
-    try {
-      track = await native.spotifyNowPlaying();
-    } catch (e) {
-      track = null;
+  const refresh = async (forceQueue, givenTrack) => {
+    let track = givenTrack;
+    if (track === undefined) {
+      try {
+        track = await native.spotifyNowPlaying();
+      } catch {
+        track = null;
+      }
     }
     if (!body.isConnected) return;
     if (!track || !track.title) {
@@ -1918,10 +2166,11 @@ async function renderSpotifyBody(c, body) {
   });
 
   await refresh(true);
-  // Metadata (track/queue/shuffle/repeat) poll — slower now that the progress
-  // bar advances locally; end-of-track triggers an extra refresh via renderProgress.
-  const t = setInterval(() => refresh(false), 5000);
-  addTimer(body, t);
+  // Metadata (track/queue/shuffle/repeat) updates come from the shared 5s
+  // playback poller (also used by the Lyrics tile), so there's only one poll.
+  subscribePlayback(body, (track) => {
+    if (body.isConnected) void refresh(false, track);
+  });
   // Local progress interpolation — smooth, no API traffic.
   const pt = setInterval(renderProgress, 250);
   addTimer(body, pt);
@@ -2404,6 +2653,7 @@ function activateTab(tabName) {
   if (tabName === "translate") renderTranslateSettings();
   if (tabName === "frame") renderFrameSettings();
   if (tabName === "spotify") renderSpotifySettings();
+  if (tabName === "lyrics") renderLyricsSettings();
   if (tabName === "projects") renderProjectsSettings();
   if (tabName === "config") renderConfigSettings();
   if (tabName === "vocab") renderVocabSettings();
@@ -2424,6 +2674,7 @@ const KIND_TAB = {
   translate: "translate",
   frame: "frame",
   spotify: "spotify",
+  lyrics: "lyrics",
   project: "projects",
   vocab: "vocab",
   meme: "meme",
@@ -2443,6 +2694,7 @@ function openTileSettings(id) {
   if (comp.kind === "translate") selectedTranslateId = id;
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
+  if (comp.kind === "lyrics") selectedLyricsId = id;
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
@@ -3649,6 +3901,7 @@ function renderFrameSettings() {
 // callback). Per-tile name/icon/colors handled by the shared rows.
 // ---------------------------------------------------------------------------
 let selectedSpotifyId = null;
+let selectedLyricsId = null;
 function ensureSpotifyComp() {
   const comps = state.compartments.filter((c) => c.kind === "spotify");
   if (comps.length === 0) {
@@ -3817,6 +4070,63 @@ function commitProject(comp) {
     console.error("Failed to render grid:", e);
   }
 }
+function renderLyricsSettings() {
+  const panel = document.getElementById("lyrics-list");
+  if (!panel) return;
+  const comps = state.compartments.filter((c) => c.kind === "lyrics");
+  panel.innerHTML = "";
+  if (!comps.length) {
+    panel.innerHTML = `<div class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile.</div>`;
+    return;
+  }
+  const comp = comps.find((c) => c.id === selectedLyricsId) || comps[0];
+  selectedLyricsId = comp.id;
+  comp.data = comp.data || {};
+
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `<label>Tile</label><select id="lyrics-select">${comps
+    .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+    .join("")}</select>`;
+  panel.appendChild(row);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const clampN = (v) => Math.min(10, Math.max(0, Number(v) || 0));
+  const row2 = document.createElement("div");
+  row2.className = "item-row";
+  row2.innerHTML = `
+    <label>Previous lines <input id="lyr-prev" type="number" min="0" max="10" value="${clampN(comp.data.prevLines ?? 3)}" /></label>
+    <label>Next lines <input id="lyr-next" type="number" min="0" max="10" value="${clampN(comp.data.nextLines ?? 3)}" /></label>
+    <label>Sync offset <input id="lyr-offset" type="number" min="-5000" max="5000" step="100" value="${Number(comp.data.offsetMs) || 0}" /> ms</label>`;
+  panel.appendChild(row2);
+  const commit = () => {
+    saveState();
+    render();
+  };
+  row.querySelector("#lyrics-select").addEventListener("change", (e) => {
+    selectedLyricsId = e.target.value;
+    renderLyricsSettings();
+  });
+  row2.querySelector("#lyr-prev").addEventListener("change", (e) => {
+    comp.data.prevLines = clampN(e.target.value);
+    commit();
+  });
+  row2.querySelector("#lyr-next").addEventListener("change", (e) => {
+    comp.data.nextLines = clampN(e.target.value);
+    commit();
+  });
+  row2.querySelector("#lyr-offset").addEventListener("change", (e) => {
+    comp.data.offsetMs = Math.max(-5000, Math.min(5000, Number(e.target.value) || 0));
+    commit();
+  });
+
+  const hint = document.createElement("div");
+  hint.className = "item-row";
+  hint.innerHTML = `<span class="muted">Focus shows the current line with the configured previous/next lines. Full view toggles from the tile and is the fallback when there is no synced line.</span>`;
+  panel.appendChild(hint);
+}
+
 function renderProjectsSettings() {
   const panel = document.getElementById("project-list");
   if (!panel) return;
@@ -5382,6 +5692,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
+  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, full: false } },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },

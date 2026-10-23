@@ -31,6 +31,7 @@ Read the relevant file before implementing.
 | Vocab card details (usage, conjugation, gender/article) | [`vocab-details.md`](vocab-details.md) ✅ PR #47 | `spec.md` §2.13, FR-VOC-017..020, AC-041..043 |
 | Vocab part-of-speech filter | [`vocab-pos-filter.md`](vocab-pos-filter.md) ✅ | `spec.md` §2.13, FR-VOC-021, AC-044 |
 | Dynamic board colours from the Spotify cover | [`spotify-cover-colors.md`](spotify-cover-colors.md) ✅ | `spec.md` §2.16, FR-DSN-005, AC-045 |
+| Lyrics tile (synced, LRCLIB) | [`lyrics-tile.md`](lyrics-tile.md) ✅ Phase 1 | `spec.md` §2.18, FR-LYR-001..005, AC-046..048 |
 | UI overhaul — design-token system | [`design-tokens.md`](design-tokens.md) ✅ PR #42 | `spec.md` §2.16, FR-DSN-001..004 |
 | Healthcheck tab removal | [`healthcheck-tab-removal.md`](healthcheck-tab-removal.md) ✅ PR #29 | `spec.md` §2.9/§7 (dropped) |
 | Spotify queue-jump fast path | Issue #18 ✅ PR #24 | `spec.md` FR-SPT-007 |

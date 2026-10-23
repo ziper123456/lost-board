@@ -999,3 +999,16 @@ input[type="color"]:hover { border-color: var(--accent); }
 
 /* Spotify cover-colour swatch (Design tab) */
 .dyn-swatch { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border); display: inline-block; background: transparent; vertical-align: middle; }
+
+/* Lyrics tile */
+.lyr-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.lyr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.lyr-track { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyr-mode { font-size: 0.66rem; padding: 1px 8px; flex: 0 0 auto; }
+.lyr-lines { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.lyr-lines.focus { justify-content: center; overflow: hidden; }
+.lyr-line { font-size: 0.82rem; line-height: 1.35; padding: 1px 0; color: var(--muted); transition: color 0.2s, opacity 0.2s; }
+.lyr-line.cur { color: var(--accent); font-weight: 600; }
+.lyr-line.prev { opacity: 0.45; }
+.lyr-line.next { opacity: 0.72; }
+.lyr-empty { color: var(--muted); font-size: 0.8rem; padding: 6px 0; }

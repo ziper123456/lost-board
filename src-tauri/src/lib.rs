@@ -1466,6 +1466,205 @@ async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
     Ok(palette)
 }
 
+#[derive(serde::Serialize, Clone)]
+struct LyricsLine {
+    t_ms: u64,
+    text: String,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct LyricsResult {
+    synced: Vec<LyricsLine>,
+    plain: String,
+    instrumental: bool,
+    source: String,
+}
+
+const LYRICS_UA: &str = "lost-board/0.1 (+https://github.com/ziper123456/lost-board)";
+const LYRICS_CACHE_MAX: usize = 256;
+
+static LYRICS_CACHE: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, Option<LyricsResult>>>,
+> = std::sync::OnceLock::new();
+
+fn lyrics_cache() -> &'static StdMutex<std::collections::HashMap<String, Option<LyricsResult>>> {
+    LYRICS_CACHE.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+/// Parse an LRC tag like `mm:ss.xx` / `mm:ss.xxx` into milliseconds.
+fn parse_time_tag(tag: &str) -> Option<u64> {
+    let (min_s, rest) = tag.split_once(':')?;
+    let minutes: u64 = min_s.trim().parse().ok()?;
+    let (sec_s, frac) = match rest.split_once('.') {
+        Some((s, f)) => (s, f),
+        None => (rest, ""),
+    };
+    let seconds: u64 = sec_s.trim().parse().ok()?;
+    let frac = frac.trim();
+    let ms = match frac.len() {
+        0 => 0,
+        1 => frac.parse::<u64>().ok()? * 100,
+        2 => frac.parse::<u64>().ok()? * 10,
+        _ => frac.get(..3)?.parse::<u64>().ok()?,
+    };
+    Some(minutes * 60_000 + seconds * 1000 + ms)
+}
+
+/// Parse LRC text into sorted lines. Handles multiple timestamps per line,
+/// `[offset:]` (ms) and metadata tags. Pure, unit-tested.
+fn parse_lrc(raw: &str) -> Vec<LyricsLine> {
+    let mut offset_ms: i64 = 0;
+    for line in raw.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("[offset:").and_then(|x| x.strip_suffix(']')) {
+            if let Ok(n) = v.trim().parse::<i64>() {
+                offset_ms = n;
+            }
+        }
+    }
+    let mut out: Vec<LyricsLine> = Vec::new();
+    for line in raw.lines() {
+        let mut rest = line.trim();
+        let mut stamps: Vec<u64> = Vec::new();
+        let mut had_meta = false;
+        while let Some(after) = rest.strip_prefix('[') {
+            let Some(end) = after.find(']') else { break };
+            let tag = &after[..end];
+            match parse_time_tag(tag) {
+                Some(t) => stamps.push(t),
+                None => {
+                    if tag.contains(':') {
+                        had_meta = true;
+                    }
+                }
+            }
+            rest = after[end + 1..].trim_start();
+        }
+        if stamps.is_empty() {
+            let _ = had_meta;
+            continue;
+        }
+        let text = rest.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        for t in stamps {
+            let t = (t as i64 + offset_ms).max(0) as u64;
+            out.push(LyricsLine { t_ms: t, text: text.clone() });
+        }
+    }
+    out.sort_by_key(|l| l.t_ms);
+    out
+}
+
+fn parse_lrclib_record(v: &serde_json::Value, source: &str) -> Option<(LyricsResult, i64)> {
+    let synced_raw = v.get("syncedLyrics").and_then(|x| x.as_str()).unwrap_or("");
+    let plain = v
+        .get("plainLyrics")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let instrumental = v.get("instrumental").and_then(|x| x.as_bool()).unwrap_or(false);
+    let duration = v.get("duration").and_then(|x| x.as_f64()).unwrap_or(0.0).round() as i64;
+    let synced = parse_lrc(synced_raw);
+    if synced.is_empty() && plain.is_empty() && !instrumental {
+        return None;
+    }
+    Some((
+        LyricsResult {
+            synced,
+            plain,
+            instrumental,
+            source: source.to_string(),
+        },
+        duration,
+    ))
+}
+
+/// Fetch lyrics from LRCLIB (exact get, then search + closest duration). Returns
+/// None when nothing is available. Cached (including negative results) by track.
+#[tauri::command]
+async fn lyrics_get(
+    title: String,
+    artist: String,
+    album: String,
+    duration_ms: u64,
+) -> Result<Option<LyricsResult>, String> {
+    let title = title.trim().to_string();
+    let artist = artist.trim().to_string();
+    let album = album.trim().to_string();
+    if title.is_empty() {
+        return Ok(None);
+    }
+    let secs = duration_ms / 1000;
+    let key = format!("{title}\u{1f}{artist}\u{1f}{album}\u{1f}{secs}");
+    if let Some(hit) = lyrics_cache().lock().unwrap().get(&key) {
+        return Ok(hit.clone());
+    }
+
+    let client = reqwest::Client::new();
+    let timeout = std::time::Duration::from_secs(12);
+    let secs_s = secs.to_string();
+    let mut result: Option<LyricsResult> = None;
+
+    if let Ok(resp) = client
+        .get("https://lrclib.net/api/get")
+        .query(&[
+            ("artist_name", artist.as_str()),
+            ("track_name", title.as_str()),
+            ("album_name", album.as_str()),
+            ("duration", secs_s.as_str()),
+        ])
+        .header("User-Agent", LYRICS_UA)
+        .timeout(timeout)
+        .send()
+        .await
+    {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>().await {
+                result = parse_lrclib_record(&v, "lrclib").map(|(r, _)| r);
+            }
+        }
+    }
+
+    if result.is_none() {
+        let q = format!("{artist} {title}");
+        if let Ok(resp) = client
+            .get("https://lrclib.net/api/search")
+            .query(&[("q", q.as_str())])
+            .header("User-Agent", LYRICS_UA)
+            .timeout(timeout)
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(arr) = resp.json::<Vec<serde_json::Value>>().await {
+                    let target = secs as i64;
+                    let mut best: Option<(i64, LyricsResult)> = None;
+                    for v in arr.iter() {
+                        if let Some((r, dur)) = parse_lrclib_record(v, "lrclib-search") {
+                            let score = if r.synced.is_empty() { 1_000_000 } else { 0 }
+                                + (dur - target).abs();
+                            if best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
+                                best = Some((score, r));
+                            }
+                        }
+                    }
+                    result = best.map(|(_, r)| r);
+                }
+            }
+        }
+    }
+
+    let mut cache = lyrics_cache().lock().unwrap();
+    if cache.len() > LYRICS_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, result.clone());
+    Ok(result)
+}
+
 /// Toggle regular shuffle on the active device.
 /// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
 /// and surfaced through `smart_shuffle` in now-playing.)
@@ -1838,6 +2037,7 @@ pub fn run() {
             spotify_capture,
             spotify_now_playing,
             spotify_cover_palette,
+            lyrics_get,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -3487,5 +3687,28 @@ mod srs_tests {
         }
         let (accent, _secondary) = pick_palette(px.into_iter());
         assert_eq!(accent, (200, 20, 20));
+    }
+
+    #[test]
+    fn lrc_parsing_handles_timestamps_offsets_and_metadata() {
+        let lrc = "[ar:Artist]\n[ti:Title]\n[00:01.50]First line\n[00:05.00][00:09.20]Repeated\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].t_ms, 1500);
+        assert_eq!(lines[0].text, "First line");
+        assert_eq!(lines[1].t_ms, 5000);
+        assert_eq!(lines[1].text, "Repeated");
+        assert_eq!(lines[2].t_ms, 9200);
+
+        // [offset:] shifts every timestamp (positive ms).
+        let shifted = parse_lrc("[offset:500]\n[00:02.00]Shift");
+        assert_eq!(shifted.len(), 1);
+        assert_eq!(shifted[0].t_ms, 2500);
+
+        // Metadata-only lines and empty lyric lines are dropped.
+        assert!(parse_lrc("[ar:Only]\n[00:03.00]\n").is_empty());
+        // 1- and 3-digit fractions.
+        assert_eq!(parse_lrc("[00:01.5]a")[0].t_ms, 1500);
+        assert_eq!(parse_lrc("[00:01.123]a")[0].t_ms, 1123);
     }
 }

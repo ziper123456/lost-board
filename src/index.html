@@ -47,6 +47,7 @@
           <button class="tab" data-tab="bookmarks">Bookmarks</button>
           <button class="tab" data-tab="azure">Azure</button>
           <button class="tab" data-tab="spotify">Spotify</button>
+          <button class="tab" data-tab="lyrics">Lyrics</button>
           <button class="tab" data-tab="weather">Weather</button>
           <button class="tab" data-tab="news">News</button>
           <button class="tab" data-tab="translate">Translate</button>
@@ -132,6 +133,7 @@
                   <option value="meme">Memes</option>
                   <option value="calendar">Calendar</option>
                   <option value="spotify">Spotify</option>
+                  <option value="lyrics">Lyrics</option>
                   <option value="system">System</option>
                 </select>
                 <button id="btn-add-compartment" class="btn primary">+ Add tile</button>
@@ -157,6 +159,10 @@
           <div class="tab-panel" data-panel="spotify">
             <p>Enter your Spotify developer client id, then Connect. The tile controls the Spotify app / a Connect device (it does not stream audio itself).</p>
             <div id="spotify-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="lyrics">
+            <p>Synced lyrics from LRCLIB, driven by the shared Spotify playback. Focus shows the current line with previous/next lines; Full scrolls the whole song (and is the fallback when there is no synced line).</p>
+            <div id="lyrics-list"></div>
           </div>
           <div class="tab-panel" data-panel="weather">
             <p>Each Weather tile has its own location. Type a city and Look up, or enter lat/lon.</p>
