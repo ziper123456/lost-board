@@ -349,6 +349,15 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-LYR-005** The Lyrics tile shall follow the active theme/design tokens (including the
   optional dynamic Spotify cover colours). Per-tile settings: previous/next line counts and a
   sync offset (ms).
+- **FR-LYR-006** When **translation** is enabled, the tile shall detect the lyrics' language
+  offline; on low confidence or an unsupported language it shall prompt the user to choose, and
+  remember the choice per track.
+- **FR-LYR-007** With translation enabled, the tile shall show the original lyrics plus **up to
+  two** translations into the other of {EN, DE, ES} — source EN → DE+ES, DE → EN+ES, ES → EN+DE,
+  VI → DE+ES — aligned line-for-line with the original.
+- **FR-LYR-008** Translation shall use the **LLM (opencode) first**, with **DeepL as fallback**;
+  results are cached per track/languages, and the UI shall note that lyrics are sent to the
+  selected provider.
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
@@ -609,6 +618,15 @@ available via the tile's toggle.
 ### AC-048: Lyrics settings
 Given a Lyrics tile, the settings tab lets the user set previous and next line counts (0–10,
 default 3/3) and a sync offset in ms; the shared now-playing poll is not duplicated by the tile.
+
+### AC-049: Lyrics translation
+Given translation enabled and a playing track with lyrics, when the language is detected, then the
+tile shows the original plus up to 2 aligned translations (per the mapping); on low confidence it
+prompts, and the choice is remembered for that track.
+
+### AC-050: Translation provider
+Given translation is requested, the LLM (opencode) is tried first and DeepL is used if it fails;
+results are cached so replaying a track does not re-translate.
 
 ---
 

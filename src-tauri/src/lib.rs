@@ -1787,6 +1787,245 @@ async fn lyrics_get(
     Ok(result)
 }
 
+const LYRICS_LLM_MODEL: &str = "opencode-go/deepseek-v4.1-flash";
+
+#[derive(serde::Serialize)]
+struct LyricsLang {
+    lang: String,
+    confidence: f64,
+}
+
+fn lang_code(lang: whatlang::Lang) -> String {
+    use whatlang::Lang;
+    match lang {
+        Lang::Eng => "en",
+        Lang::Deu => "de",
+        Lang::Spa => "es",
+        Lang::Vie => "vi",
+        other => other.code(),
+    }
+    .to_string()
+}
+
+/// Detect the dominant language of lyric text (offline).
+#[tauri::command]
+fn lyrics_detect(text: String) -> Result<LyricsLang, String> {
+    match whatlang::detect(&text) {
+        Some(info) => Ok(LyricsLang { lang: lang_code(info.lang()), confidence: info.confidence() }),
+        None => Ok(LyricsLang { lang: String::new(), confidence: 0.0 }),
+    }
+}
+
+fn deepl_lang(code: &str, target: bool) -> String {
+    match code.to_ascii_uppercase().as_str() {
+        "EN" if target => "EN-US".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Batch-translate lines with DeepL, preserving order (one request per ≤50 lines).
+async fn deepl_translate_batch(
+    lines: &[String],
+    source: &str,
+    target: &str,
+) -> Result<Vec<String>, String> {
+    let key = keyring::Entry::new(KEYRING_SERVICE, DEEPL_KEY_USER)
+        .and_then(|e| e.get_password())
+        .map_err(|_| "No DeepL API key configured".to_string())?;
+    if key.is_empty() {
+        return Err("No DeepL API key configured".into());
+    }
+    let endpoint = if key.trim_end().ends_with(":fx") {
+        "https://api-free.deepl.com/v2/translate"
+    } else {
+        "https://api.deepl.com/v2/translate"
+    };
+    let client = reqwest::Client::new();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    for chunk in lines.chunks(50) {
+        let mut form: Vec<(&str, String)> = Vec::new();
+        for line in chunk {
+            form.push(("text", line.clone()));
+        }
+        form.push(("target_lang", deepl_lang(target, true)));
+        if !source.is_empty() {
+            form.push(("source_lang", deepl_lang(source, false)));
+        }
+        let resp = client
+            .post(endpoint)
+            .header("Authorization", format!("DeepL-Auth-Key {key}"))
+            .form(&form)
+            .timeout(std::time::Duration::from_secs(25))
+            .send()
+            .await
+            .map_err(|e| format!("DeepL request failed: {e}"))?;
+        let status = resp.status();
+        let body = resp.text().await.map_err(|e| format!("DeepL read failed: {e}"))?;
+        if !status.is_success() {
+            return Err(format!("DeepL HTTP {status}: {body}"));
+        }
+        let parsed: DeepLResponse =
+            serde_json::from_str(&body).map_err(|e| format!("DeepL parse failed: {e}"))?;
+        if parsed.translations.len() != chunk.len() {
+            return Err("DeepL returned a mismatched line count".into());
+        }
+        out.extend(parsed.translations.into_iter().map(|t| t.text));
+    }
+    Ok(out)
+}
+
+/// Resolve the opencode executable (direct exe, else the PATH shim via `cmd /C`).
+fn opencode_program() -> (String, Vec<String>) {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("OPENCODE_BIN") {
+        candidates.push(p.into());
+    }
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        candidates.push(
+            std::path::PathBuf::from(pf).join("nodejs/node_modules/opencode-ai/bin/opencode.exe"),
+        );
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        candidates.push(
+            std::path::PathBuf::from(appdata).join("npm/node_modules/opencode-ai/bin/opencode.exe"),
+        );
+    }
+    for c in candidates {
+        if c.is_file() {
+            return (c.to_string_lossy().to_string(), Vec::new());
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return ("cmd".to_string(), vec!["/C".to_string(), "opencode".to_string()]);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("opencode".to_string(), Vec::new())
+    }
+}
+
+fn parse_opencode_text(stdout: &str) -> String {
+    let mut text = String::new();
+    for line in stdout.lines() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            if v.get("type").and_then(|x| x.as_str()) == Some("text") {
+                if let Some(t) = v
+                    .get("part")
+                    .and_then(|p| p.get("text"))
+                    .and_then(|x| x.as_str())
+                {
+                    text.push_str(t);
+                } else if let Some(t) = v.get("text").and_then(|x| x.as_str()) {
+                    text.push_str(t);
+                }
+            }
+        }
+    }
+    text
+}
+
+fn extract_json_object(text: &str) -> Option<serde_json::Value> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    serde_json::from_str(&text[start..=end]).ok()
+}
+
+/// Translate aligned lines with the opencode LLM (strict JSON). Returns None when
+/// the CLI is unavailable / fails / returns a mismatched line count.
+async fn llm_translate_lines(
+    lines: &[String],
+    targets: &[String],
+    source: &str,
+) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    let payload = serde_json::to_string(lines).ok()?;
+    let file = std::env::temp_dir().join(format!("lost-board-lyrics-{}.json", now_secs()));
+    fs::write(&file, payload).ok()?;
+    let targets_note = targets.join(", ");
+    let instruction = format!(
+        "You are translating song lyrics (source language: {source}). The attached JSON file is an array of lyric lines in order. \
+Translate EACH line into these target languages: {targets_note}. Return ONLY JSON (no markdown, no prose, no tool calls) \
+shaped exactly as {{\"translations\":{{\"<lang>\":[\"...\"]}}}} with exactly the same number of strings per language, \
+in the same order. Keep lines short and natural; do not merge or split lines; use an empty string for empty/instrumental lines."
+    );
+    let (program, leading) = opencode_program();
+    let file_str = file.to_string_lossy().to_string();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args([
+        "run",
+        "--agent",
+        "plan",
+        "--format",
+        "json",
+        "-m",
+        LYRICS_LLM_MODEL,
+        "-f",
+        &file_str,
+        &instruction,
+    ]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    let _ = fs::remove_file(&file);
+    if !output.status.success() {
+        return None;
+    }
+    let text = parse_opencode_text(&String::from_utf8_lossy(&output.stdout));
+    let obj = extract_json_object(&text)?;
+    let tr = obj.get("translations")?.as_object()?;
+    let mut out = std::collections::HashMap::new();
+    for t in targets {
+        let key = t.to_lowercase();
+        let arr = tr.get(&key)?.as_array()?;
+        let lines_out: Vec<String> = arr
+            .iter()
+            .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
+        if lines_out.len() != lines.len() {
+            return None;
+        }
+        out.insert(key, lines_out);
+    }
+    Some(out)
+}
+
+#[derive(serde::Serialize)]
+struct LyricsTranslation {
+    provider: String,
+    translations: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// Translate lyric lines: LLM (opencode) first, DeepL as fallback.
+#[tauri::command]
+async fn lyrics_translate(
+    lines: Vec<String>,
+    source: String,
+    targets: Vec<String>,
+) -> Result<LyricsTranslation, String> {
+    if lines.is_empty() || targets.is_empty() {
+        return Err("no lines or targets".into());
+    }
+    if let Some(translations) = llm_translate_lines(&lines, &targets, &source).await {
+        return Ok(LyricsTranslation { provider: "opencode".into(), translations });
+    }
+    // DeepL only supports a subset of source languages; auto-detect otherwise.
+    let dl_source = if ["en", "de", "es"].contains(&source.to_ascii_lowercase().as_str()) {
+        source.clone()
+    } else {
+        String::new()
+    };
+    let mut translations = std::collections::HashMap::new();
+    for target in &targets {
+        let out = deepl_translate_batch(&lines, &dl_source, &target.to_ascii_uppercase()).await?;
+        translations.insert(target.to_ascii_lowercase(), out);
+    }
+    Ok(LyricsTranslation { provider: "deepl".into(), translations })
+}
+
 /// Toggle regular shuffle on the active device.
 /// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
 /// and surfaced through `smart_shuffle` in now-playing.)
@@ -2160,6 +2399,8 @@ pub fn run() {
             spotify_now_playing,
             spotify_cover_palette,
             lyrics_get,
+            lyrics_detect,
+            lyrics_translate,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -3840,5 +4081,12 @@ mod srs_tests {
         assert_eq!(clean_title("A (Live) B"), "A B");
         assert_eq!(clean_title("Plain Title"), "Plain Title");
         assert_eq!(clean_title("(Intro)"), "");
+    }
+
+    #[test]
+    fn detects_common_lyric_languages() {
+        assert_eq!(lang_code(whatlang::detect("Hello, how are you today? I like music and the sun.").unwrap().lang()), "en");
+        assert_eq!(lang_code(whatlang::detect("Hola, ¿cómo estás? Me gusta la música y el sol.").unwrap().lang()), "es");
+        assert_eq!(lang_code(whatlang::detect("Hallo, wie geht es dir? Ich mag Musik und die Sonne.").unwrap().lang()), "de");
     }
 }
