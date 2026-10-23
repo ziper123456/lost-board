@@ -356,8 +356,9 @@ auth, custom images are user-supplied, captioning is fully local.
   two** translations into the other of {EN, DE, ES} — source EN → DE+ES, DE → EN+ES, ES → EN+DE,
   VI → DE+ES — aligned line-for-line with the original.
 - **FR-LYR-008** Translation shall use the **LLM (opencode) first**, with **DeepL as fallback**;
-  results are cached per track/languages, and the UI shall note that lyrics are sent to the
-  selected provider.
+  results are cached in memory and **persisted** to `lyrics-translations.json` in the app-data dir
+  (keyed by a hash of the lines + target languages), with a clear action in Settings. The UI shall
+  note that lyrics are sent to the selected provider.
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 

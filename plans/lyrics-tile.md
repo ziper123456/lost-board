@@ -67,6 +67,10 @@ keyless) via Rust. No translation in Phase 1.
 - **UI:** translations render under each line (full view: all; focus: current line); in-memory
   cache per `(track, source, targets)`; "Translating…"/"Translation unavailable" status; privacy
   note in Settings. No LGPL code copied.
+- **Persistent translation cache:** `lyrics-translations.json` in the app-data dir (loaded once,
+  atomic writes, capped at 1000 entries), keyed by a hash of the exact lines + source + targets, so
+  translations survive restarts and replays don't re-spend tokens. "Clear translation cache" in
+  Settings clears both the disk and in-memory caches.
 
 ## Corrections log
 

@@ -2054,15 +2054,79 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
     Some(out)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 struct LyricsTranslation {
     provider: String,
     translations: std::collections::HashMap<String, Vec<String>>,
 }
 
-/// Translate lyric lines: LLM (opencode) first, DeepL as fallback.
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct TranslationEntry {
+    provider: String,
+    translations: std::collections::HashMap<String, Vec<String>>,
+}
+
+const TRANSLATION_CACHE_MAX: usize = 1000;
+
+static TRANSLATION_CACHE: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, TranslationEntry>>,
+> = std::sync::OnceLock::new();
+static TRANSLATION_DISK_LOADED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn translation_cache() -> &'static StdMutex<std::collections::HashMap<String, TranslationEntry>> {
+    TRANSLATION_CACHE.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn translation_cache_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("lyrics-translations.json"))
+}
+
+fn ensure_translation_cache_loaded(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if TRANSLATION_DISK_LOADED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(path) = translation_cache_file(app) else { return };
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(map) = serde_json::from_str(&text) {
+            *translation_cache().lock().unwrap() = map;
+        }
+    }
+}
+
+fn persist_translation_cache(app: &tauri::AppHandle) {
+    let Some(path) = translation_cache_file(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let map = translation_cache().lock().unwrap().clone();
+    if let Ok(text) = serde_json::to_string(&map) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Cache key: hash of the exact lines + source + targets (edited lyrics or a
+/// different target set re-translate).
+fn translation_key(lines: &[String], source: &str, targets: &[String]) -> String {
+    format!(
+        "{}|{}|{}",
+        sha256_hex(lines.join("\n").as_bytes()),
+        source.to_ascii_lowercase(),
+        targets.join(",")
+    )
+}
+
+/// Translate lyric lines: disk cache → LLM (opencode) → DeepL fallback.
 #[tauri::command]
 async fn lyrics_translate(
+    app: tauri::AppHandle,
     lines: Vec<String>,
     source: String,
     targets: Vec<String>,
@@ -2070,21 +2134,52 @@ async fn lyrics_translate(
     if lines.is_empty() || targets.is_empty() {
         return Err("no lines or targets".into());
     }
-    if let Some(translations) = llm_translate_lines(&lines, &targets, &source).await {
-        return Ok(LyricsTranslation { provider: "opencode".into(), translations });
+    ensure_translation_cache_loaded(&app);
+    let key = translation_key(&lines, &source, &targets);
+    if let Some(entry) = translation_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(LyricsTranslation { provider: entry.provider, translations: entry.translations });
     }
-    // DeepL only supports a subset of source languages; auto-detect otherwise.
-    let dl_source = if ["en", "de", "es"].contains(&source.to_ascii_lowercase().as_str()) {
-        source.clone()
-    } else {
-        String::new()
-    };
-    let mut translations = std::collections::HashMap::new();
-    for target in &targets {
-        let out = deepl_translate_batch(&lines, &dl_source, &target.to_ascii_uppercase()).await?;
-        translations.insert(target.to_ascii_lowercase(), out);
+
+    let (provider, translations) =
+        if let Some(translations) = llm_translate_lines(&lines, &targets, &source).await {
+            ("opencode".to_string(), translations)
+        } else {
+            // DeepL only supports a subset of source languages; auto-detect otherwise.
+            let dl_source = if ["en", "de", "es"].contains(&source.to_ascii_lowercase().as_str()) {
+                source.clone()
+            } else {
+                String::new()
+            };
+            let mut m = std::collections::HashMap::new();
+            for target in &targets {
+                let out =
+                    deepl_translate_batch(&lines, &dl_source, &target.to_ascii_uppercase()).await?;
+                m.insert(target.to_ascii_lowercase(), out);
+            }
+            ("deepl".to_string(), m)
+        };
+
+    {
+        let mut cache = translation_cache().lock().unwrap();
+        if cache.len() > TRANSLATION_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(
+            key,
+            TranslationEntry { provider: provider.clone(), translations: translations.clone() },
+        );
     }
-    Ok(LyricsTranslation { provider: "deepl".into(), translations })
+    persist_translation_cache(&app);
+    Ok(LyricsTranslation { provider, translations })
+}
+
+/// Clear the persisted translation cache.
+#[tauri::command]
+fn lyrics_translations_clear(app: tauri::AppHandle) -> Result<(), String> {
+    ensure_translation_cache_loaded(&app);
+    translation_cache().lock().unwrap().clear();
+    persist_translation_cache(&app);
+    Ok(())
 }
 
 /// Toggle regular shuffle on the active device.
@@ -2462,6 +2557,7 @@ pub fn run() {
             lyrics_get,
             lyrics_detect,
             lyrics_translate,
+            lyrics_translations_clear,
             spotify_play,
             spotify_skip,
             spotify_jump,

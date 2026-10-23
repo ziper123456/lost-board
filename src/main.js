@@ -363,6 +363,10 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("lyrics_translate", { lines, source, targets });
     return null;
   },
+  async lyricsTranslationsClear() {
+    if (window.__TAURI__) return invoke("lyrics_translations_clear");
+    return null;
+  },
   async spotifyPlay(play) {
     if (window.__TAURI__) return invoke("spotify_play", { play });
   },
@@ -4374,7 +4378,8 @@ function renderLyricsSettings() {
   resetRow.className = "item-row";
   resetRow.innerHTML = `<button class="btn ghost" id="lyr-reset-offsets">Reset per-track offsets</button>
     <button class="btn ghost" id="lyr-reset-langs">Reset detected languages</button>
-    <span class="muted">Clear song-specific sync offsets / remembered language choices.</span>`;
+    <button class="btn ghost" id="lyr-clear-tr">Clear translation cache</button>
+    <span class="muted">Clear song-specific sync offsets / remembered language choices / cached translations.</span>`;
   panel.appendChild(resetRow);
   resetRow.querySelector("#lyr-reset-offsets").addEventListener("click", () => {
     state.lyricsOffsets = {};
@@ -4385,6 +4390,16 @@ function renderLyricsSettings() {
   resetRow.querySelector("#lyr-reset-langs").addEventListener("click", () => {
     state.lyricsLang = {};
     saveState();
+    render();
+    renderLyricsSettings();
+  });
+  resetRow.querySelector("#lyr-clear-tr").addEventListener("click", async () => {
+    try {
+      await native.lyricsTranslationsClear();
+    } catch {
+      /* best effort */
+    }
+    lyricsTranslationCache.clear();
     render();
     renderLyricsSettings();
   });
