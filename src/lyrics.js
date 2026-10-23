@@ -42,11 +42,13 @@
     return Math.max(0, p + (Number(offset) || 0));
   }
 
-  // Plain lyrics → non-empty trimmed lines.
+  // Plain lyrics → non-empty trimmed lines. Providers sometimes store bilingual
+  // lines as `original^translation`; keep the original (our translator handles
+  // the rest).
   function parsePlain(text) {
     return String(text || "")
       .split(/\r?\n/)
-      .map((s) => s.trim())
+      .map((s) => s.split("^")[0].trim())
       .filter(Boolean);
   }
 

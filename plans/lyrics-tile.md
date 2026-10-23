@@ -48,6 +48,12 @@ keyless) via Rust. No translation in Phase 1.
   (5 s otherwise), so seeks/scrubs catch up quicker.
 - **Transitions:** the active line fades/slides in (0.3 s), the full view scrolls smoothly, and
   `prefers-reduced-motion` disables both.
+- **Fixes after testing:** LRCLIB sometimes returns **bilingual** lines (`original^translation`);
+  the parser now splits them into `text` + `alt` (shown as a muted built-in translation when our
+  translator is off; plain lines keep only the original). The opencode call no longer uses `-f`
+  (its `--file` array swallowed the instruction — LLM always failed before); lines are inlined.
+  The lyrics tile body signature now includes the global translation setting + remembered
+  languages, so toggling translation actually rebuilds the tile.
 
 ## Phase 2 (built) — translation
 - **Detection:** `whatlang` (offline) in Rust (`lyrics_detect`), returns lang + confidence;

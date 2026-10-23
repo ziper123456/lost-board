@@ -664,7 +664,10 @@ function tileHeaderSig(c) {
   });
 }
 function tileBodySig(c) {
-  return JSON.stringify({ k: c.kind, d: c.data || {} });
+  // Lyrics also depend on the global translation setting + remembered languages,
+  // so toggling those must rebuild the tile body.
+  const extra = c.kind === "lyrics" ? { tr: state.lyricsTranslate === true, langs: state.lyricsLang || {} } : {};
+  return JSON.stringify({ k: c.kind, d: c.data || {}, ...extra });
 }
 function tileIconHtml(c) {
   if (!c.icon) return "";
@@ -1524,6 +1527,13 @@ async function renderLyricsBody(c, body) {
       .join("");
   };
 
+  // Built-in bilingual line from the provider (`original^translation`). Shown as
+  // a muted secondary line only when our own translation isn't present.
+  const altHtml = (line) =>
+    !translations && line && line.alt
+      ? `<div class="lyr-tr lyr-tr-b">${escapeHtml(line.alt)}</div>`
+      : "";
+
   const renderLines = () => {
     const plainFallback = synced.length === 0 && plainLines.length > 0;
     const effectiveFull = full || plainFallback || currentIdx < 0;
@@ -1543,7 +1553,10 @@ async function renderLyricsBody(c, body) {
       if (fullRenderKey !== key) {
         const lines = synced.length ? synced.map((l) => l.text) : plainLines;
         linesEl.innerHTML = lines
-          .map((text, i) => `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}${trHtml(i, true)}</div>`)
+          .map(
+            (text, i) =>
+              `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}${altHtml(synced.length ? synced[i] : null)}${trHtml(i, true)}</div>`
+          )
           .join("");
         fullRenderKey = key;
       }
@@ -1560,7 +1573,7 @@ async function renderLyricsBody(c, body) {
         .map((l, k) => {
           const i = win.start + k;
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
-          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
+          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
         .join("");
     }

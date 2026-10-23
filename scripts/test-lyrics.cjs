@@ -25,6 +25,7 @@ assert.equal(L.positionMs({ progress_ms: 1000, playing: false, duration_ms: 1000
 assert.equal(L.positionMs(null, 0, 0, 0), 0);
 
 assert.deepEqual(L.parsePlain("a\n  b \n\nc\r\n"), ["a", "b", "c"]);
+assert.deepEqual(L.parsePlain("Hola mundo^Hello world\nOtra linea^Another line"), ["Hola mundo", "Otra linea"]);
 
 assert.equal(L.trackKey({ title: "T", artist: "A", album: "Al", duration_ms: 123 }), "T|A|Al|123");
 assert.equal(L.trackKey(null), "");

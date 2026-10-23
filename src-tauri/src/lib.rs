@@ -1470,6 +1470,9 @@ async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
 struct LyricsLine {
     t_ms: u64,
     text: String,
+    /// Built-in bilingual translation (LRCLIB sometimes stores `original^translation`).
+    #[serde(default)]
+    alt: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -1583,17 +1586,44 @@ fn parse_lrc(raw: &str) -> Vec<LyricsLine> {
             let _ = had_meta;
             continue;
         }
-        let text = rest.trim().to_string();
+        let raw = rest.trim();
+        // Some providers store bilingual lines as `original^translation`.
+        let (text, alt) = match raw.split_once('^') {
+            Some((left, right)) => (
+                left.trim().to_string(),
+                Some(right.trim().to_string()).filter(|s| !s.is_empty()),
+            ),
+            None => (raw.to_string(), None),
+        };
         if text.is_empty() {
             continue;
         }
         for t in stamps {
             let t = (t as i64 + offset_ms).max(0) as u64;
-            out.push(LyricsLine { t_ms: t, text: text.clone() });
+            out.push(LyricsLine { t_ms: t, text: text.clone(), alt: alt.clone() });
         }
     }
     out.sort_by_key(|l| l.t_ms);
     out
+}
+
+/// Split legacy cached bilingual lines (`original^translation`) that predate
+/// the parser change.
+fn normalize_bilingual(result: &mut LyricsResult) {
+    for line in result.synced.iter_mut() {
+        if line.alt.is_none() {
+            let split = line
+                .text
+                .split_once('^')
+                .map(|(left, right)| (left.trim().to_string(), right.trim().to_string()));
+            if let Some((left, right)) = split {
+                line.text = left;
+                if !right.is_empty() {
+                    line.alt = Some(right);
+                }
+            }
+        }
+    }
 }
 
 fn parse_lrclib_record(v: &serde_json::Value, source: &str) -> Option<(LyricsResult, i64)> {
@@ -1730,8 +1760,12 @@ async fn lyrics_get(
     let secs = duration_ms / 1000;
     let key = format!("{title}\u{1f}{artist}\u{1f}{album}\u{1f}{secs}");
     ensure_lyrics_cache_loaded(&app);
-    if let Some(hit) = lyrics_cache().lock().unwrap().get(&key) {
-        return Ok(hit.clone());
+    let cached = lyrics_cache().lock().unwrap().get(&key).cloned();
+    if let Some(mut hit) = cached {
+        if let Some(result) = hit.as_mut() {
+            normalize_bilingual(result);
+        }
+        return Ok(hit);
     }
 
     let client = reqwest::Client::new();
@@ -1939,17 +1973,15 @@ async fn llm_translate_lines(
     source: &str,
 ) -> Option<std::collections::HashMap<String, Vec<String>>> {
     let payload = serde_json::to_string(lines).ok()?;
-    let file = std::env::temp_dir().join(format!("lost-board-lyrics-{}.json", now_secs()));
-    fs::write(&file, payload).ok()?;
     let targets_note = targets.join(", ");
+    // Inline the lines (do NOT use `-f`: opencode's --file is an array and would
+    // swallow the instruction as another file path).
     let instruction = format!(
-        "You are translating song lyrics (source language: {source}). The attached JSON file is an array of lyric lines in order. \
-Translate EACH line into these target languages: {targets_note}. Return ONLY JSON (no markdown, no prose, no tool calls) \
-shaped exactly as {{\"translations\":{{\"<lang>\":[\"...\"]}}}} with exactly the same number of strings per language, \
-in the same order. Keep lines short and natural; do not merge or split lines; use an empty string for empty/instrumental lines."
+        "You are translating song lyrics (source language: {source}). Translate EACH line in this JSON array into these target languages: {targets_note}. \
+Return ONLY JSON (no markdown, no prose, no tool calls) shaped exactly as {{\"translations\":{{\"<lang>\":[\"...\"]}}}} with exactly the same number of strings per language, \
+in the same order. Keep lines short and natural; do not merge or split lines; use an empty string for empty/instrumental lines. Lines: {payload}"
     );
     let (program, leading) = opencode_program();
-    let file_str = file.to_string_lossy().to_string();
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(&leading);
     cmd.args([
@@ -1960,8 +1992,6 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         "json",
         "-m",
         LYRICS_LLM_MODEL,
-        "-f",
-        &file_str,
         &instruction,
     ]);
     cmd.stdout(std::process::Stdio::piped());
@@ -1970,7 +2000,6 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         .await
         .ok()?
         .ok()?;
-    let _ = fs::remove_file(&file);
     if !output.status.success() {
         return None;
     }
@@ -4073,6 +4102,13 @@ mod srs_tests {
         // 1- and 3-digit fractions.
         assert_eq!(parse_lrc("[00:01.5]a")[0].t_ms, 1500);
         assert_eq!(parse_lrc("[00:01.123]a")[0].t_ms, 1123);
+
+        // Bilingual lines (`original^translation`) split into text + alt.
+        let bilingual = parse_lrc("[00:01.00]Hola^Hello\n[00:02.00]Mundo");
+        assert_eq!(bilingual[0].text, "Hola");
+        assert_eq!(bilingual[0].alt.as_deref(), Some("Hello"));
+        assert_eq!(bilingual[1].text, "Mundo");
+        assert_eq!(bilingual[1].alt, None);
     }
 
     #[test]
