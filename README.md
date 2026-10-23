@@ -86,9 +86,11 @@ plans/                # per-feature implementation plans + corrections logs
 Everything planned is built: fixed-column grid (drag + snap + resize, editable zoom),
 Folders & Files, Projects (root scanning), Bookmarks, Azure deep-links, Weather (with an
 animated weather card) + world clocks, News, Translate, Frame, System stats, Spotify
-(playback + shuffle/repeat + queue jump + seek), Calendar (Vietnamese lunar + moon phase +
+(playback + shuffle/repeat + queue jump + seek), **Lyrics (synced from LRCLIB)**, Calendar
+(Vietnamese lunar + moon phase +
 holidays), Background mode (tray + autostart + always-on-bottom), Config export/import, six
-extra themes plus a design-token layer (Design tab), per-tile right-click context menus and a
+extra themes plus a design-token layer (Design tab, including optional dynamic colours from the
+Spotify cover), per-tile right-click context menus and a
 Hide-header mode, and Vocab (flashcard tile + drill popup + per-tile speech + **SM-2 spaced
 repetition** with mastery buckets, a per-category breakdown, capped drill sessions, a
 struggling-first pile and an ungraded practice mode). Service Healthcheck was dropped and its

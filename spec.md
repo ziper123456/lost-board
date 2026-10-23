@@ -6,13 +6,13 @@ date: 2026-10-15
 status: living (all planned features built — see PLAN.md; Phase 3 backlog open)
 decisions:
   arch: A (Tauri desktop app, local-only)
-  scope: MVP all compartments except synced lyrics (dropped)
+  scope: all planned compartments built (synced lyrics via LRCLIB added)
   grid: fixed-column grid (snap to rows/columns)
   azure: deep-links only (PAT live tiles dropped — deep-links sufficient)
-  spotify: play/pause/next/prev/volume + shuffle/repeat + queue + seek in v1; synced lyrics dropped
+  spotify: play/pause/next/prev/volume + shuffle/repeat + queue + seek in v1; synced lyrics via a separate LRCLIB tile
   weather: per-compartment locations + world-clock time per location + animated country card
   healthcheck: dropped (probe tile deemed unnecessary)
-  lyrics: dropped (was phase 2; no longer wanted)
+  lyrics: separate synced Lyrics tile from LRCLIB (synced + plain fallback; no translation in v1)
   launcher: folders + any file (open via OS association), plus Projects tile with root scanning
   extras: Translate (DeepL) + Frame (photo/GIF) tiles added beyond original scope
   window: background mode — tray + autostart + always-on-bottom (built, PR #30)
@@ -313,6 +313,12 @@ auth, custom images are user-supplied, captioning is fully local.
   generic categories + a custom family field).
 - **FR-DSN-004** Per-tile decoration extends to tile border color/width, radius, shadow,
   background gradient and font size/weight.
+- **FR-DSN-005** The Design tab shall offer a **Spotify cover color** mode (top of the tab): a
+  toggle plus **accent-blend**, **background-blend** and **surfaces-blend** sliders. When enabled
+  and a track is playing, the board accent, background gradient, surfaces (panels, borders,
+  inputs, scrollbar), **tile borders and tile shadow (a soft cover-coloured glow)** are derived
+  from the current album cover (extracted locally in Rust), the drill popup follows, and the
+  setting **persists** with the dashboard config. With no track playing, the theme is restored.
 
 ### 2.17 UI polish: themes, tile context menu, hide header
 
@@ -325,6 +331,24 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-UI-004** The Weather tile shall render an animated, country-themed conditions card.
 - **FR-UI-005** The Spotify tile volume shall be responsive and its progress bar locally
   interpolated; clicking/dragging the bar seeks.
+
+### 2.18 Lyrics tile (synced, LRCLIB)
+
+- **FR-LYR-001** The dashboard shall provide a separate **Lyrics** tile showing the current track's
+  lyrics, synced to playback: the current line highlighted with configurable **previous** and
+  **next** lines (0–10 each; defaults 3/3). A button toggles **Full** (scrollable whole song,
+  auto-scrolled to the current line).
+- **FR-LYR-002** **Fallback:** when there is no synced/current line, the tile shall show the
+  scrollable full list (plain lyrics). Instrumental tracks show "Instrumental"; unknown tracks
+  show a clear empty state.
+- **FR-LYR-003** Lyrics shall be fetched from **LRCLIB** in Rust (exact lookup, then search by
+  closest duration), cached per track (including negative results). No translation in this
+  version.
+- **FR-LYR-004** The Spotify and Lyrics tiles shall share a single now-playing poll (one request
+  every ~5 s) rather than polling independently; the highlight updates only when the line changes.
+- **FR-LYR-005** The Lyrics tile shall follow the active theme/design tokens (including the
+  optional dynamic Spotify cover colours). Per-tile settings: previous/next line counts and a
+  sync offset (ms).
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
@@ -566,6 +590,26 @@ Given the Vocab settings, when the user selects "Verbs" under Part of speech, th
 mastery stats include only cards enriched as verbs (combined with any category selection); the
 tile and its due badge remain whole-deck.
 
+### AC-045: Spotify cover colours
+Given Spotify is playing and "Use Spotify cover color" is enabled, when the cover changes, then the
+board accent/background reflect the cover colours (per the blend sliders) and the drill popup
+matches; when playback stops, the theme is restored. The toggle and slider values persist across
+restarts.
+
+### AC-046: Lyrics follow playback
+Given a Lyrics tile and a playing track with synced lyrics, when playback advances, then the
+highlighted line (accent colour) advances with the position, showing the configured previous/next
+lines.
+
+### AC-047: Lyrics fallback states
+Given a track with only plain lyrics, the tile shows the scrollable full list; an instrumental
+track shows "Instrumental"; a track with no lyrics shows a clear empty state. Full view is
+available via the tile's toggle.
+
+### AC-048: Lyrics settings
+Given a Lyrics tile, the settings tab lets the user set previous and next line counts (0–10,
+default 3/3) and a sync offset in ms; the shared now-playing poll is not duplicated by the tile.
+
 ---
 
 ## 5. Error Handling
@@ -620,7 +664,7 @@ tile and its due badge remain whole-deck.
 ---
 
 ## 7. Out of Scope (MVP) / Future
-- **Synced lyrics** → dropped (2026-10-07, was Phase 2, no longer wanted).
+- **Synced lyrics** → **implemented** as a separate Lyrics tile using LRCLIB (see §2.18).
 - **Service Healthcheck** (FR-HLT/AC-015..017 + UI tab) → dropped (2026-10-07, deemed unnecessary).
 - **Azure PAT live tiles** (FR-BMK-004/AC-007) → dropped (deep-links sufficient).
 - Cloud sync, multi-device, accounts → out of scope (single-user local app).

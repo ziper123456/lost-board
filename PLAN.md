@@ -10,7 +10,8 @@ continue from any machine. Keep this updated as you go.
 - **Phase 2b (Desktop integration):** done — Background mode (tray + autostart + always-on-bottom), Config export/import, editable + persisted zoom.
 - **Phase 2c (New tiles):** done — Vocab flashcards (tile + drill popup + per-tile speech), Memes (rotation + collection + captioning + GIF/PNG export).
 - **Phase 2d (UI + Calendar + Vocab SRS, 2026-10-09..15):** done — 6 extra themes (#35), tile right-click context menu (#38), animated country-themed weather card (#39), per-tile Hide-header mode (#40), Calendar tile (Vietnamese lunar + moon phase + holidays, #41), design-token layer + Design tab (#42), Vocab drill options — category filter / 9-position placement / instant reveal (#36), **SM-2 spaced repetition** (#43), **mastery buckets + per-category table** (#44), **capped drill sessions + struggling-first pile + ungraded practice mode** (#45).
-- **Dropped:** Service Healthcheck (tab removed), synced lyrics, git-status tile, sticky notes, Azure PAT live tiles, vocab-app gateway button. (Local clock covered by weather tiles; media keys covered by keyboard.)
+- **Phase 2e (Lyrics tile, 2026-10-23):** done — separate synced Lyrics tile from **LRCLIB** (focus prev/current/next + full list, shared playback poll, per-tile settings, dynamic cover colours). PR #50. Translation is a planned Phase 2 follow-up.
+- **Dropped:** Service Healthcheck (tab removed), git-status tile, sticky notes, Azure PAT live tiles, vocab-app gateway button. (Local clock covered by weather tiles; media keys covered by keyboard.)
 - **Next up:** Phase 3 backlog below (offline badges, AC play-test, macOS/Linux, forecast detail). No open PRs, no open issues.
 - **Review:** see `REVIEW.md` (base review + deltas; per-PR reviews through #45).
 
@@ -23,7 +24,7 @@ continue from any machine. Keep this updated as you go.
 | Auth | **None** (single user, localhost only) |
 | Weather | **Per-compartment locations** + world-clock time per location |
 | Healthcheck | **Dropped** (probe tile removed, PR #29) |
-| Spotify | play/pause/next/prev/volume in MVP; **synced lyrics → Phase 2** |
+| Spotify | play/pause/next/prev/volume in MVP; **synced lyrics via a separate LRCLIB tile** |
 | Azure | PAT from Settings (read-only live tiles); deep-links without PAT |
 | Solutions | Clicking a solution **opens** the `.sln` — it does **not** build it |
 
@@ -111,7 +112,7 @@ data storage, error states, and secrets consistent across the dashboard.
 ### Phase 3 — Enhancements and verification
 - [ ] Offline / stale-data badges across remote compartments
 - [ ] Play-test AC-001..014 and AC-018..037 (see spec.md)
-- [x] ~~Spotify synced lyrics~~ — **dropped**
+- [x] ~~Spotify synced lyrics~~ — **built** as a separate LRCLIB Lyrics tile (Phase 2e)
 - [ ] macOS / Linux builds
 - [ ] Multi-screen / status-bar support
 - [ ] Weather: forecast detail / multiple units

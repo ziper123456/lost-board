@@ -1370,6 +1370,423 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
     }))
 }
 
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+struct CoverPalette {
+    accent: String,
+    secondary: String,
+}
+
+static COVER_PALETTES: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, CoverPalette>>,
+> = std::sync::OnceLock::new();
+
+fn cover_palette_cache() -> &'static StdMutex<std::collections::HashMap<String, CoverPalette>> {
+    COVER_PALETTES.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if (max - r).abs() < 1e-6 {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - g).abs() < 1e-6 {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, s, l)
+}
+
+fn hex_color(r: u8, g: u8, b: u8) -> String {
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Pick (accent, secondary) from image pixels: quantize to 4 bits/channel, then
+/// favour frequent, saturated, non-extreme colours. Pure (unit-tested).
+fn pick_palette(
+    pixels: impl Iterator<Item = (u8, u8, u8)>,
+) -> ((u8, u8, u8), (u8, u8, u8)) {
+    use std::collections::HashMap;
+    let mut bins: HashMap<u16, (u32, u32, u32, u32)> = HashMap::new();
+    for (r, g, b) in pixels {
+        let key = (((r >> 4) as u16) << 8) | (((g >> 4) as u16) << 4) | ((b >> 4) as u16);
+        let e = bins.entry(key).or_insert((0, 0, 0, 0));
+        e.0 += 1;
+        e.1 += r as u32;
+        e.2 += g as u32;
+        e.3 += b as u32;
+    }
+    let mut scored: Vec<((u8, u8, u8), f32)> = bins
+        .values()
+        .filter(|e| e.0 > 0)
+        .map(|&(n, sr, sg, sb)| {
+            let r = (sr / n) as u8;
+            let g = (sg / n) as u8;
+            let b = (sb / n) as u8;
+            let (_, s, l) = rgb_to_hsl(r, g, b);
+            let extreme = if l < 0.12 || l > 0.94 { 0.12 } else { 1.0 };
+            ((r, g, b), n as f32 * (0.25 + s) * extreme)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let accent = scored.first().map(|x| x.0).unwrap_or((124, 58, 237));
+    let secondary = scored.get(1).map(|x| x.0).unwrap_or(accent);
+    (accent, secondary)
+}
+
+/// Extract a small palette from a Spotify cover image (cached per URL). Done in
+/// Rust because reading pixels from a remote image in a canvas taints it.
+#[tauri::command]
+async fn spotify_cover_palette(url: String) -> Result<CoverPalette, String> {
+    let url = url.trim().to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("invalid cover URL".into());
+    }
+    if let Some(p) = cover_palette_cache().lock().unwrap().get(&url).cloned() {
+        return Ok(p);
+    }
+    let (_ext, bytes) = download_image(&url).await?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("decode cover: {e}"))?;
+    let small = img
+        .resize_exact(64, 64, image::imageops::FilterType::Triangle)
+        .to_rgb8();
+    let (accent, secondary) = pick_palette(small.pixels().map(|p| (p[0], p[1], p[2])));
+    let palette = CoverPalette {
+        accent: hex_color(accent.0, accent.1, accent.2),
+        secondary: hex_color(secondary.0, secondary.1, secondary.2),
+    };
+    cover_palette_cache().lock().unwrap().insert(url, palette.clone());
+    Ok(palette)
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct LyricsLine {
+    t_ms: u64,
+    text: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct LyricsResult {
+    synced: Vec<LyricsLine>,
+    plain: String,
+    instrumental: bool,
+    source: String,
+}
+
+const LYRICS_UA: &str = "lost-board/0.1 (+https://github.com/ziper123456/lost-board)";
+const LYRICS_CACHE_MAX: usize = 500;
+
+static LYRICS_CACHE: std::sync::OnceLock<
+    StdMutex<std::collections::HashMap<String, Option<LyricsResult>>>,
+> = std::sync::OnceLock::new();
+static LYRICS_DISK_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn lyrics_cache() -> &'static StdMutex<std::collections::HashMap<String, Option<LyricsResult>>> {
+    LYRICS_CACHE.get_or_init(|| StdMutex::new(std::collections::HashMap::new()))
+}
+
+fn lyrics_cache_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("lyrics-cache.json"))
+}
+
+/// Load the on-disk cache once per process (so replays/restarts are instant and
+/// work offline). Missing/corrupt files are ignored.
+fn ensure_lyrics_cache_loaded(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if LYRICS_DISK_LOADED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Some(path) = lyrics_cache_file(app) else { return };
+    if let Ok(text) = fs::read_to_string(&path) {
+        if let Ok(map) =
+            serde_json::from_str::<std::collections::HashMap<String, Option<LyricsResult>>>(&text)
+        {
+            *lyrics_cache().lock().unwrap() = map;
+        }
+    }
+}
+
+fn persist_lyrics_cache(app: &tauri::AppHandle) {
+    let Some(path) = lyrics_cache_file(app) else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let map = lyrics_cache().lock().unwrap().clone();
+    if let Ok(text) = serde_json::to_string(&map) {
+        let tmp = path.with_extension("json.tmp");
+        if fs::write(&tmp, text).is_ok() {
+            let _ = fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// Parse an LRC tag like `mm:ss.xx` / `mm:ss.xxx` into milliseconds.
+fn parse_time_tag(tag: &str) -> Option<u64> {
+    let (min_s, rest) = tag.split_once(':')?;
+    let minutes: u64 = min_s.trim().parse().ok()?;
+    let (sec_s, frac) = match rest.split_once('.') {
+        Some((s, f)) => (s, f),
+        None => (rest, ""),
+    };
+    let seconds: u64 = sec_s.trim().parse().ok()?;
+    let frac = frac.trim();
+    let ms = match frac.len() {
+        0 => 0,
+        1 => frac.parse::<u64>().ok()? * 100,
+        2 => frac.parse::<u64>().ok()? * 10,
+        _ => frac.get(..3)?.parse::<u64>().ok()?,
+    };
+    Some(minutes * 60_000 + seconds * 1000 + ms)
+}
+
+/// Parse LRC text into sorted lines. Handles multiple timestamps per line,
+/// `[offset:]` (ms) and metadata tags. Pure, unit-tested.
+fn parse_lrc(raw: &str) -> Vec<LyricsLine> {
+    let mut offset_ms: i64 = 0;
+    for line in raw.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("[offset:").and_then(|x| x.strip_suffix(']')) {
+            if let Ok(n) = v.trim().parse::<i64>() {
+                offset_ms = n;
+            }
+        }
+    }
+    let mut out: Vec<LyricsLine> = Vec::new();
+    for line in raw.lines() {
+        let mut rest = line.trim();
+        let mut stamps: Vec<u64> = Vec::new();
+        let mut had_meta = false;
+        while let Some(after) = rest.strip_prefix('[') {
+            let Some(end) = after.find(']') else { break };
+            let tag = &after[..end];
+            match parse_time_tag(tag) {
+                Some(t) => stamps.push(t),
+                None => {
+                    if tag.contains(':') {
+                        had_meta = true;
+                    }
+                }
+            }
+            rest = after[end + 1..].trim_start();
+        }
+        if stamps.is_empty() {
+            let _ = had_meta;
+            continue;
+        }
+        let text = rest.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        for t in stamps {
+            let t = (t as i64 + offset_ms).max(0) as u64;
+            out.push(LyricsLine { t_ms: t, text: text.clone() });
+        }
+    }
+    out.sort_by_key(|l| l.t_ms);
+    out
+}
+
+fn parse_lrclib_record(v: &serde_json::Value, source: &str) -> Option<(LyricsResult, i64)> {
+    let synced_raw = v.get("syncedLyrics").and_then(|x| x.as_str()).unwrap_or("");
+    let plain = v
+        .get("plainLyrics")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let instrumental = v.get("instrumental").and_then(|x| x.as_bool()).unwrap_or(false);
+    let duration = v.get("duration").and_then(|x| x.as_f64()).unwrap_or(0.0).round() as i64;
+    let synced = parse_lrc(synced_raw);
+    if synced.is_empty() && plain.is_empty() && !instrumental {
+        return None;
+    }
+    Some((
+        LyricsResult {
+            synced,
+            plain,
+            instrumental,
+            source: source.to_string(),
+        },
+        duration,
+    ))
+}
+
+/// Strip parenthetical/bracketed qualifiers ("(feat. …)", "[Remastered]") and
+/// collapse whitespace so the search query matches more often.
+fn clean_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for ch in title.chars() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+async fn lrclib_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    album: Option<&str>,
+    secs: u64,
+    timeout: std::time::Duration,
+) -> Option<LyricsResult> {
+    let mut params: Vec<(&str, String)> = vec![
+        ("artist_name", artist.to_string()),
+        ("track_name", title.to_string()),
+        ("duration", secs.to_string()),
+    ];
+    if let Some(a) = album {
+        if !a.is_empty() {
+            params.push(("album_name", a.to_string()));
+        }
+    }
+    let resp = client
+        .get("https://lrclib.net/api/get")
+        .query(&params)
+        .header("User-Agent", LYRICS_UA)
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    parse_lrclib_record(&v, "lrclib").map(|(r, _)| r)
+}
+
+/// Plain-lyrics fallback from lyrics.ovh (keyless, unsynced). Used only when
+/// LRCLIB has nothing; failures are ignored.
+async fn lyrics_ovh_get(
+    client: &reqwest::Client,
+    artist: &str,
+    title: &str,
+    timeout: std::time::Duration,
+) -> Option<LyricsResult> {
+    if artist.is_empty() || title.is_empty() {
+        return None;
+    }
+    let mut url = url::Url::parse("https://api.lyrics.ovh/v1/").ok()?;
+    url.path_segments_mut().ok()?.push(artist).push(title);
+    let resp = client
+        .get(url)
+        .header("User-Agent", LYRICS_UA)
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let lyrics = v
+        .get("lyrics")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if lyrics.is_empty() {
+        return None;
+    }
+    Some(LyricsResult {
+        synced: Vec::new(),
+        plain: lyrics,
+        instrumental: false,
+        source: "lyrics.ovh".into(),
+    })
+}
+
+/// Fetch lyrics from LRCLIB (exact get, then search + closest duration). Returns
+/// None when nothing is available. Cached (including negative results) by track.
+#[tauri::command]
+async fn lyrics_get(
+    app: tauri::AppHandle,
+    title: String,
+    artist: String,
+    album: String,
+    duration_ms: u64,
+) -> Result<Option<LyricsResult>, String> {
+    let title = title.trim().to_string();
+    let artist = artist.trim().to_string();
+    let album = album.trim().to_string();
+    if title.is_empty() {
+        return Ok(None);
+    }
+    let secs = duration_ms / 1000;
+    let key = format!("{title}\u{1f}{artist}\u{1f}{album}\u{1f}{secs}");
+    ensure_lyrics_cache_loaded(&app);
+    if let Some(hit) = lyrics_cache().lock().unwrap().get(&key) {
+        return Ok(hit.clone());
+    }
+
+    let client = reqwest::Client::new();
+    let timeout = std::time::Duration::from_secs(12);
+    let mut result = lrclib_get(&client, &artist, &title, Some(&album), secs, timeout).await;
+    // Some LRCLIB entries have a different album name; retry without it.
+    if result.is_none() && !album.is_empty() {
+        result = lrclib_get(&client, &artist, &title, None, secs, timeout).await;
+    }
+
+    if result.is_none() {
+        let search_title = clean_title(&title);
+        let q = format!("{artist} {search_title}");
+        if let Ok(resp) = client
+            .get("https://lrclib.net/api/search")
+            .query(&[("q", q.as_str())])
+            .header("User-Agent", LYRICS_UA)
+            .timeout(timeout)
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(arr) = resp.json::<Vec<serde_json::Value>>().await {
+                    let target = secs as i64;
+                    let mut best: Option<(i64, LyricsResult)> = None;
+                    for v in arr.iter() {
+                        if let Some((r, dur)) = parse_lrclib_record(v, "lrclib-search") {
+                            let score = if r.synced.is_empty() { 1_000_000 } else { 0 }
+                                + (dur - target).abs();
+                            if best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
+                                best = Some((score, r));
+                            }
+                        }
+                    }
+                    result = best.map(|(_, r)| r);
+                }
+            }
+        }
+    }
+
+    if result.is_none() {
+        result = lyrics_ovh_get(&client, &artist, &title, timeout).await;
+    }
+
+    {
+        let mut cache = lyrics_cache().lock().unwrap();
+        if cache.len() > LYRICS_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(key, result.clone());
+    }
+    persist_lyrics_cache(&app);
+    Ok(result)
+}
+
 /// Toggle regular shuffle on the active device.
 /// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
 /// and surfaced through `smart_shuffle` in now-playing.)
@@ -1741,6 +2158,8 @@ pub fn run() {
             spotify_begin,
             spotify_capture,
             spotify_now_playing,
+            spotify_cover_palette,
+            lyrics_get,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -3377,5 +3796,49 @@ mod srs_tests {
         // mismatch or unknown POS excluded when a filter is set
         assert!(!pos_passes(&["noun".to_string()], Some("verb")));
         assert!(!pos_passes(&["verb".to_string()], None));
+    }
+
+    #[test]
+    fn cover_palette_prefers_vivid_colour() {
+        let mut px: Vec<(u8, u8, u8)> = Vec::new();
+        for _ in 0..80 {
+            px.push((200, 20, 20)); // dominant, vivid red
+        }
+        for _ in 0..20 {
+            px.push((128, 128, 128)); // minor, greyscale
+        }
+        let (accent, _secondary) = pick_palette(px.into_iter());
+        assert_eq!(accent, (200, 20, 20));
+    }
+
+    #[test]
+    fn lrc_parsing_handles_timestamps_offsets_and_metadata() {
+        let lrc = "[ar:Artist]\n[ti:Title]\n[00:01.50]First line\n[00:05.00][00:09.20]Repeated\n";
+        let lines = parse_lrc(lrc);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].t_ms, 1500);
+        assert_eq!(lines[0].text, "First line");
+        assert_eq!(lines[1].t_ms, 5000);
+        assert_eq!(lines[1].text, "Repeated");
+        assert_eq!(lines[2].t_ms, 9200);
+
+        // [offset:] shifts every timestamp (positive ms).
+        let shifted = parse_lrc("[offset:500]\n[00:02.00]Shift");
+        assert_eq!(shifted.len(), 1);
+        assert_eq!(shifted[0].t_ms, 2500);
+
+        // Metadata-only lines and empty lyric lines are dropped.
+        assert!(parse_lrc("[ar:Only]\n[00:03.00]\n").is_empty());
+        // 1- and 3-digit fractions.
+        assert_eq!(parse_lrc("[00:01.5]a")[0].t_ms, 1500);
+        assert_eq!(parse_lrc("[00:01.123]a")[0].t_ms, 1123);
+    }
+
+    #[test]
+    fn clean_title_strips_qualifiers() {
+        assert_eq!(clean_title("Song (feat. Someone) [Remastered]"), "Song");
+        assert_eq!(clean_title("A (Live) B"), "A B");
+        assert_eq!(clean_title("Plain Title"), "Plain Title");
+        assert_eq!(clean_title("(Intro)"), "");
     }
 }

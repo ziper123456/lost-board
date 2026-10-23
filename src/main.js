@@ -43,6 +43,7 @@ const DEFAULT_STATE = {
   cornerRadius: 10,
   wall: false,
   backgroundMode: false,
+  lyricsOffsets: {},
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -70,19 +71,66 @@ const THEMES = {
 // top, plus the corner radius and background gradient. All tokens are written
 // to :root as CSS variables; styles.css consumes them with fallbacks, so an
 // unset token always resolves to the theme default.
+let dynamicPalette = null; // { url, accent, secondary } — transient, from the current cover
+let lastSpotifyArt = "";   // last seen cover URL (drives the dynamic palette)
+
 function applyAppearance() {
   const t = THEMES[state.theme] || THEMES.dark;
   const d = state.design || {};
   const v = (k, fb) => (d[k] !== undefined && d[k] !== null && d[k] !== "" ? d[k] : fb);
   const px = (k, fb) => `${v(k, fb)}px`;
   const root = document.documentElement.style;
+  // Dynamic colours derived from the current Spotify cover (optional).
+  const dynOn = !!(d.dynamicSpotify && dynamicPalette && typeof Colors !== "undefined");
+  const pct = (x, fb) => (Number.isFinite(Number(x)) ? Math.max(0, Math.min(100, Number(x))) : fb);
+  const baseAccent = v("accent", t.accent);
+  const effectiveAccent = dynOn
+    ? Colors.clampLightness(Colors.mixHex(baseAccent, dynamicPalette.accent, pct(d.dynAccentMix, 60) / 100), 0.42, 0.82)
+    : baseAccent;
+  const baseBg = v("bg", t.bg);
+  let boardBg;
+  if (dynOn && pct(d.dynBgMix, 35) > 0) {
+    const amt = pct(d.dynBgMix, 35) / 100;
+    const from = Colors.mixHex(baseBg, dynamicPalette.accent, amt);
+    const to = Colors.mixHex(baseBg, dynamicPalette.secondary || dynamicPalette.accent, amt * 0.6);
+    boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${from}, ${to})`;
+  } else {
+    boardBg = d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)";
+  }
+  // Dynamic tiles: tint the border with the cover accent and give tiles a soft
+  // cover-coloured glow (both scale with the accent blend).
+  const dynAmt = pct(d.dynAccentMix, 60) / 100;
+  const tileBorderBase = d.tileBorderColor || v("borderColor", t.border);
+  const effectiveTileBorder = dynOn
+    ? Colors.mixHex(tileBorderBase, dynamicPalette.accent, dynAmt * 0.85)
+    : v("tileBorderColor", "var(--border)");
+  let effectiveTileShadow = v("tileShadow", "none");
+  if (dynOn) {
+    const c = Colors.hexToRgb(dynamicPalette.accent);
+    const alpha = (0.12 + dynAmt * 0.22).toFixed(2);
+    effectiveTileShadow = `0 6px 22px rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
+  }
+  // Surfaces: panels, borders, inputs, tiles and scrollbar get a subtle tint
+  // (own slider, kept low so text stays readable).
+  const surfAmt = dynOn ? pct(d.dynSurfaceMix, 30) / 100 : 0;
+  const mixSurf = (key, baseHex, factor, cssDefault) =>
+    dynOn && surfAmt > 0
+      ? Colors.mixHex(d[key] || baseHex, dynamicPalette.accent, surfAmt * factor)
+      : v(key, cssDefault);
+  const effectivePanel = mixSurf("panel", t.panel, 0.35, t.panel);
+  const effectivePanel2 = mixSurf("panel2", t.panel2, 0.35, t.panel2);
+  const effectiveBorder = mixSurf("borderColor", t.border, 0.5, t.border);
+  const effectiveTileBg = mixSurf("tileBg", t.panel, 0.3, "var(--panel)");
+  const effectiveInputBg = mixSurf("inputBg", t.panel2, 0.25, "var(--panel-2)");
+  const effectiveScroll = mixSurf("scrollThumb", t.panel2, 0.4, "var(--panel-2)");
+  const effectiveBtnHover = mixSurf("btnHoverBg", t.border, 0.4, "var(--border)");
   root.setProperty("--bg", v("bg", t.bg));
-  root.setProperty("--panel", v("panel", t.panel));
-  root.setProperty("--panel-2", v("panel2", t.panel2));
-  root.setProperty("--border", v("borderColor", t.border));
+  root.setProperty("--panel", effectivePanel);
+  root.setProperty("--panel-2", effectivePanel2);
+  root.setProperty("--border", effectiveBorder);
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
-  root.setProperty("--accent", v("accent", t.accent));
+  root.setProperty("--accent", effectiveAccent);
   root.setProperty("--green", v("green", "#22c55e"));
   root.setProperty("--red", v("red", "#ef4444"));
   root.setProperty("--amber", v("amber", "#f59e0b"));
@@ -94,45 +142,88 @@ function applyAppearance() {
   root.setProperty("--btn-bg", v("btnBg", "var(--panel-2)"));
   root.setProperty("--btn-text", v("btnText", "var(--text)"));
   root.setProperty("--btn-border", v("btnBorder", "var(--border)"));
-  root.setProperty("--btn-hover-bg", v("btnHoverBg", "var(--border)"));
+  root.setProperty("--btn-hover-bg", effectiveBtnHover);
   root.setProperty("--row-bg", v("rowBg", "transparent"));
-  root.setProperty("--input-bg", v("inputBg", "var(--panel-2)"));
-  root.setProperty("--tile-bg", v("tileBg", "var(--panel)"));
-  root.setProperty("--tile-border", v("tileBorderColor", "var(--border)"));
+  root.setProperty("--input-bg", effectiveInputBg);
+  root.setProperty("--tile-bg", effectiveTileBg);
+  root.setProperty("--tile-border", effectiveTileBorder);
   root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
-  root.setProperty("--tile-shadow", v("tileShadow", "none"));
+  root.setProperty("--tile-shadow", effectiveTileShadow);
   root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
   root.setProperty("--font-size", px("fontBase", 16));
-  root.setProperty("--scroll-thumb", v("scrollThumb", "var(--panel-2)"));
+  root.setProperty("--scroll-thumb", effectiveScroll);
   // Heading weight / transition are only set when overridden, so their per-element
   // CSS fallbacks preserve the current look until the user changes them.
   if (d.headingWeight != null) root.setProperty("--heading-weight", String(d.headingWeight));
   else root.removeProperty("--heading-weight");
   if (d.transitionMs != null) root.setProperty("--transition", `${d.transitionMs}ms`);
   else root.removeProperty("--transition");
-  // Board background: a gradient token consumed by html/body + .dashboard,
-  // falling back to the flat --bg colour.
-  root.setProperty(
-    "--board-bg",
-    d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"
-  );
+  // Board background: theme/design gradient, or the cover-derived one above.
+  root.setProperty("--board-bg", boardBg);
   // Push the computed tokens to the drill popup (separate window, own stylesheet).
   if (window.__TAURI__) {
     const popupCss =
       ":root{" +
       `--bg:${v("bg", t.bg)};` +
-      `--panel:${v("panel", t.panel)};` +
-      `--panel-2:${v("panel2", t.panel2)};` +
-      `--border:${v("borderColor", t.border)};` +
+      `--panel:${effectivePanel};` +
+      `--panel-2:${effectivePanel2};` +
+      `--border:${effectiveBorder};` +
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
-      `--accent:${v("accent", t.accent)};` +
+      `--accent:${effectiveAccent};` +
       `--radius:${radiusGlobal}px;` +
       `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
       `--font-size:${v("fontBase", 16)}px;` +
-      `--board-bg:${d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)"};` +
+      `--board-bg:${boardBg};` +
       "}";
     void native.setPopupTheme(popupCss).catch(() => {});
+  }
+}
+
+// Live swatch in the Design tab (if visible).
+function updateDynSwatch() {
+  const sw = document.getElementById("dyn-swatch");
+  const st = document.getElementById("dyn-status");
+  if (sw) sw.style.background = dynamicPalette ? dynamicPalette.accent : "";
+  if (st) {
+    if (!(state.design && state.design.dynamicSpotify)) st.textContent = "off";
+    else if (dynamicPalette) st.textContent = "";
+    else st.textContent = lastSpotifyArt ? "loading…" : "no track playing";
+  }
+}
+
+// Fetch the current cover's palette when dynamic colours are on. Only re-fetches
+// when the cover URL changes; keeps the last palette on transient failures.
+async function refreshDynamicPalette(discover) {
+  const d = state.design || {};
+  if (!d.dynamicSpotify) return;
+  // When enabling the toggle without a Spotify tile polling, look up the cover.
+  if (!lastSpotifyArt && discover) {
+    try {
+      const t = await native.spotifyNowPlaying();
+      if (t && t.art) lastSpotifyArt = t.art;
+    } catch {
+      /* not connected */
+    }
+  }
+  if (!lastSpotifyArt) {
+    if (dynamicPalette) {
+      dynamicPalette = null;
+      applyAppearance();
+      updateDynSwatch();
+    }
+    return;
+  }
+  if (dynamicPalette && dynamicPalette.url === lastSpotifyArt) return;
+  const url = lastSpotifyArt;
+  try {
+    const p = await native.spotifyCoverPalette(url);
+    if (!p || lastSpotifyArt !== url) return; // stale response
+    dynamicPalette = { url, accent: p.accent, secondary: p.secondary };
+    applyAppearance();
+    updateDynSwatch();
+  } catch {
+    /* keep the theme / previous palette */
   }
 }
 
@@ -252,6 +343,14 @@ async openFolder(path) {
   },
   async spotifyNowPlaying() {
     if (window.__TAURI__) return invoke("spotify_now_playing");
+    return null;
+  },
+  async spotifyCoverPalette(url) {
+    if (window.__TAURI__) return invoke("spotify_cover_palette", { url });
+    return null;
+  },
+  async lyricsGet(title, artist, album, durationMs) {
+    if (window.__TAURI__) return invoke("lyrics_get", { title, artist, album, durationMs });
     return null;
   },
   async spotifyPlay(play) {
@@ -423,13 +522,68 @@ function addTimer(body, t) {
 function clearBodyTimers(body) {
   const arr = compartmentTimers.get(body);
   if (arr) {
-    arr.forEach(clearInterval);
+    // Entries are interval ids or cleanup functions (e.g. shared-poll unsubscribes).
+    arr.forEach((t) => (typeof t === "function" ? t() : clearInterval(t)));
     compartmentTimers.delete(body);
   }
   if (vocabSpeakingBodies.has(body)) {
     vocabSpeakingBodies.delete(body);
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared Spotify playback: ONE 5s now-playing poll feeds every Spotify and
+// Lyrics tile (avoids duplicate API traffic). Consumers register a callback and
+// an unsubscribe is tied to the tile body via addTimer.
+// ---------------------------------------------------------------------------
+const playbackSubs = new Set();
+let playbackTimer = null;
+let playbackIntervalMs = 0;
+
+async function pollPlayback() {
+  if (!playbackSubs.size) return;
+  let track = null;
+  try {
+    track = await native.spotifyNowPlaying();
+  } catch {
+    track = null;
+  }
+  const at = performance.now();
+  for (const entry of [...playbackSubs]) {
+    try {
+      entry.fn(track, at);
+    } catch {
+      /* one consumer must not break the others */
+    }
+  }
+}
+
+// Lyrics want a tighter cadence for seek responsiveness; 5s otherwise.
+function desiredPlaybackInterval() {
+  return playbackSubs.size && [...playbackSubs].some((e) => e.fast) ? 2500 : 5000;
+}
+
+function ensurePlaybackTimer() {
+  const ms = desiredPlaybackInterval();
+  if (playbackTimer && playbackIntervalMs === ms) return;
+  if (playbackTimer) clearInterval(playbackTimer);
+  playbackTimer = null;
+  playbackIntervalMs = 0;
+  if (!playbackSubs.size) return;
+  playbackIntervalMs = ms;
+  playbackTimer = setInterval(pollPlayback, ms);
+  void pollPlayback();
+}
+
+function subscribePlayback(body, fn, opts) {
+  const entry = { fn, fast: !!(opts && opts.fast) };
+  playbackSubs.add(entry);
+  ensurePlaybackTimer();
+  addTimer(body, () => {
+    playbackSubs.delete(entry);
+    ensurePlaybackTimer();
+  });
 }
 
 const ROW_H = 44;
@@ -801,7 +955,7 @@ function openTileMenu(clientX, clientY, compId) {
 function openGridMenu(clientX, clientY) {
   const order = [
     ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
-    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
     ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
     ["system", "System"],
   ];
@@ -1087,6 +1241,8 @@ async function renderCompartmentBody(c, body) {
     renderFrameBody(c, body);
   } else if (c.kind === "spotify") {
     renderSpotifyBody(c, body);
+  } else if (c.kind === "lyrics") {
+    renderLyricsBody(c, body);
   } else if (c.kind === "project") {
     renderProjectsBody(c, body);
   } else if (c.kind === "vocab") {
@@ -1245,6 +1401,261 @@ function vocabConfig() {
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
   if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
   return v;
+}
+
+// ---------------------------------------------------------------------------
+// Lyrics tile — synced lyrics from LRCLIB (fetched in Rust), driven by the
+// shared playback sample. Focus = prev/current/next; Full = whole song, and the
+// fallback when there's no synced/current line. Inherits theme/design tokens.
+// ---------------------------------------------------------------------------
+async function renderLyricsBody(c, body) {
+  const data = c.data || (c.data = {});
+  const clampN = (v, d) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
+  };
+  const prevN = clampN(data.prevLines, 3);
+  const nextN = clampN(data.nextLines, 3);
+  const offsetMs = Number(data.offsetMs) || 0;
+  const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
+  let full = data.full === true;
+
+  let synced = [];
+  let plainLines = [];
+  let instrumental = false;
+  let trackKey = "";
+  let currentIdx = -1;
+  let sample = null; // { track, at }
+  let token = 0;
+  let status = "idle";
+  let currentTrack = null;
+  let trackOffset = 0; // per-track sync offset (ms), persisted in state.lyricsOffsets
+  // Transient fetch failures retry with backoff instead of blocking the track.
+  let retryKey = "";
+  let retryAt = 0;
+  let attempts = 0;
+  // Full view is built once per track; only the active line changes. `follow`
+  // stops auto-scroll once the user scrolls the list themselves.
+  let fullRenderKey = "";
+  let follow = true;
+  let autoScrolling = false;
+
+  body.innerHTML = `
+    <div class="lyr-wrap">
+      <div class="lyr-head">
+        <span class="lyr-track" title=""></span>
+        <span class="lyr-tools">
+          <button class="btn ghost lyr-nudge" data-d="-100" title="Lyrics 0.1s earlier">−</button>
+          <span class="lyr-off" title="Per-track lyric offset">0.0s</span>
+          <button class="btn ghost lyr-nudge" data-d="100" title="Lyrics 0.1s later">+</button>
+          <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
+        </span>
+      </div>
+      <div class="lyr-lines"></div>
+      <div class="lyr-empty" hidden></div>
+    </div>`;
+  const trackEl = body.querySelector(".lyr-track");
+  const modeBtn = body.querySelector(".lyr-mode");
+  const offEl = body.querySelector(".lyr-off");
+  const linesEl = body.querySelector(".lyr-lines");
+  const emptyEl = body.querySelector(".lyr-empty");
+  linesEl.style.textAlign = align;
+  emptyEl.style.textAlign = align;
+
+  const updateOffsetLabel = () => {
+    offEl.textContent = `${(trackOffset / 1000).toFixed(1)}s`;
+    offEl.title = `Per-track offset: ${trackOffset} ms`;
+  };
+  updateOffsetLabel();
+
+  const posMs = () =>
+    LyricsUtil.positionMs(
+      sample && sample.track,
+      sample && sample.at,
+      performance.now(),
+      offsetMs + trackOffset
+    );
+
+  const emptyMsg = (msg) => {
+    fullRenderKey = "";
+    linesEl.innerHTML = "";
+    linesEl.hidden = true;
+    emptyEl.hidden = false;
+    emptyEl.textContent = msg;
+  };
+
+  const scrollCurrent = () => {
+    const cur = linesEl.querySelector(".lyr-line.cur");
+    if (!cur) return;
+    autoScrolling = true;
+    cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setTimeout(() => {
+      autoScrolling = false;
+    }, 0);
+  };
+
+  const renderLines = () => {
+    const plainFallback = synced.length === 0 && plainLines.length > 0;
+    const effectiveFull = full || plainFallback || currentIdx < 0;
+    if (synced.length === 0 && plainLines.length === 0) {
+      modeBtn.disabled = true;
+      if (instrumental) emptyMsg("Instrumental");
+      else if (status === "loading") emptyMsg("Loading lyrics…");
+      else emptyMsg("No lyrics for this track.");
+      return;
+    }
+    emptyEl.hidden = true;
+    linesEl.hidden = false;
+    linesEl.classList.toggle("focus", !effectiveFull);
+
+    if (effectiveFull) {
+      const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}`;
+      if (fullRenderKey !== key) {
+        const lines = synced.length ? synced.map((l) => l.text) : plainLines;
+        linesEl.innerHTML = lines
+          .map((text, i) => `<div class="lyr-line" data-i="${i}">${escapeHtml(text)}</div>`)
+          .join("");
+        fullRenderKey = key;
+      }
+      const kids = linesEl.children;
+      for (let i = 0; i < kids.length; i++) {
+        kids[i].classList.toggle("cur", synced.length > 0 && i === currentIdx);
+      }
+      if (follow && synced.length && currentIdx >= 0) scrollCurrent();
+    } else {
+      fullRenderKey = "";
+      const win = LyricsUtil.focusWindow(synced.length, currentIdx, prevN, nextN);
+      linesEl.innerHTML = synced
+        .slice(win.start, win.end)
+        .map((l, k) => {
+          const i = win.start + k;
+          const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
+          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}</div>`;
+        })
+        .join("");
+    }
+    modeBtn.disabled = plainFallback;
+    modeBtn.textContent = effectiveFull ? "Focus" : "Full";
+    modeBtn.title = plainFallback ? "No synced lyrics — showing full list" : "Toggle full lyrics";
+  };
+
+  const updateCurrent = () => {
+    if (!synced.length) return;
+    const i = LyricsUtil.activeIndex(synced, posMs());
+    if (i === currentIdx) return;
+    currentIdx = i;
+    renderLines();
+  };
+
+  const setTrackLabel = (t) => {
+    trackEl.textContent = t ? `${t.title}${t.artist ? " — " + t.artist : ""}` : "Nothing playing";
+    trackEl.title = trackEl.textContent;
+  };
+
+  const loadLyrics = async (track) => {
+    const key = LyricsUtil.trackKey(track);
+    currentTrack = track;
+    trackOffset = Number((state.lyricsOffsets || {})[key]) || 0;
+    updateOffsetLabel();
+    if (key === trackKey) return;
+    if (key === retryKey && Date.now() < retryAt) return;
+    trackKey = key;
+    const my = ++token;
+    synced = [];
+    plainLines = [];
+    instrumental = false;
+    currentIdx = -1;
+    follow = true;
+    status = "loading";
+    setTrackLabel(track);
+    renderLines();
+    try {
+      const res = await native.lyricsGet(track.title, track.artist, track.album, track.duration_ms || 0);
+      if (my !== token || !body.isConnected) return;
+      retryKey = "";
+      attempts = 0;
+      if (!res) {
+        status = "none";
+        renderLines();
+        return;
+      }
+      synced = Array.isArray(res.synced) ? res.synced : [];
+      plainLines = typeof res.plain === "string" ? LyricsUtil.parsePlain(res.plain) : [];
+      instrumental = res.instrumental === true;
+      status = "ready";
+      renderLines();
+      updateCurrent();
+    } catch {
+      if (my !== token || !body.isConnected) return;
+      // Allow a later retry (5s, 10s, 20s, 40s, capped at 60s).
+      trackKey = "";
+      retryKey = key;
+      attempts += 1;
+      retryAt = Date.now() + Math.min(60000, 5000 * 2 ** Math.min(attempts, 4));
+      status = "error";
+      renderLines();
+    }
+  };
+
+  const onTrack = (track, at) => {
+    sample = { track, at };
+    if (!body.isConnected) return;
+    if (!track || !track.title) {
+      trackKey = "";
+      token++;
+      synced = [];
+      plainLines = [];
+      instrumental = false;
+      currentIdx = -1;
+      status = "idle";
+      currentTrack = null;
+      trackOffset = 0;
+      updateOffsetLabel();
+      setTrackLabel(null);
+      emptyMsg("Nothing playing");
+      return;
+    }
+    void loadLyrics(track);
+    updateCurrent();
+  };
+
+  modeBtn.addEventListener("click", () => {
+    if (modeBtn.disabled) return;
+    full = !full;
+    data.full = full;
+    follow = true;
+    saveState();
+    renderLines();
+  });
+  body.querySelectorAll(".lyr-nudge").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!currentTrack) return;
+      const key = LyricsUtil.trackKey(currentTrack);
+      const delta = Number(btn.dataset.d) || 0;
+      const cur = Number((state.lyricsOffsets || {})[key]) || 0;
+      const next = Math.max(-5000, Math.min(5000, cur + delta));
+      if (!state.lyricsOffsets) state.lyricsOffsets = {};
+      state.lyricsOffsets[key] = next;
+      trackOffset = next;
+      updateOffsetLabel();
+      saveState();
+      const i = LyricsUtil.activeIndex(synced, posMs());
+      if (i !== currentIdx) {
+        currentIdx = i;
+        renderLines();
+      }
+    });
+  });
+
+  // Stop auto-scrolling if the user scrolls the full list.
+  linesEl.addEventListener("wheel", () => { if (!autoScrolling) follow = false; }, { passive: true });
+  linesEl.addEventListener("touchstart", () => { if (!autoScrolling) follow = false; }, { passive: true });
+
+  subscribePlayback(body, onTrack, { fast: true });
+  const t = setInterval(updateCurrent, 400);
+  addTimer(body, t);
+  setTrackLabel(null);
+  emptyMsg("Waiting for Spotify…");
 }
 
 async function renderVocabBody(c, body) {
@@ -1684,12 +2095,14 @@ async function renderSpotifyBody(c, body) {
       refresh(true);
     }
   };
-  const refresh = async (forceQueue) => {
-    let track = null;
-    try {
-      track = await native.spotifyNowPlaying();
-    } catch (e) {
-      track = null;
+  const refresh = async (forceQueue, givenTrack) => {
+    let track = givenTrack;
+    if (track === undefined) {
+      try {
+        track = await native.spotifyNowPlaying();
+      } catch {
+        track = null;
+      }
     }
     if (!body.isConnected) return;
     if (!track || !track.title) {
@@ -1698,9 +2111,13 @@ async function renderSpotifyBody(c, body) {
       body.querySelector(".spot-album").textContent = "";
       durationMs = 0;
       fillEl.style.width = "0%";
+      lastSpotifyArt = "";
+      void refreshDynamicPalette();
       return;
     }
     bgEl.style.backgroundImage = track.art ? `url("${track.art}")` : "";
+    lastSpotifyArt = track.art || "";
+    void refreshDynamicPalette();
     titleEl.textContent = track.title;
     body.querySelector(".spot-artist").textContent = track.artist;
     body.querySelector(".spot-album").textContent = track.album;
@@ -1820,10 +2237,11 @@ async function renderSpotifyBody(c, body) {
   });
 
   await refresh(true);
-  // Metadata (track/queue/shuffle/repeat) poll — slower now that the progress
-  // bar advances locally; end-of-track triggers an extra refresh via renderProgress.
-  const t = setInterval(() => refresh(false), 5000);
-  addTimer(body, t);
+  // Metadata (track/queue/shuffle/repeat) updates come from the shared 5s
+  // playback poller (also used by the Lyrics tile), so there's only one poll.
+  subscribePlayback(body, (track) => {
+    if (body.isConnected) void refresh(false, track);
+  });
   // Local progress interpolation — smooth, no API traffic.
   const pt = setInterval(renderProgress, 250);
   addTimer(body, pt);
@@ -2306,6 +2724,7 @@ function activateTab(tabName) {
   if (tabName === "translate") renderTranslateSettings();
   if (tabName === "frame") renderFrameSettings();
   if (tabName === "spotify") renderSpotifySettings();
+  if (tabName === "lyrics") renderLyricsSettings();
   if (tabName === "projects") renderProjectsSettings();
   if (tabName === "config") renderConfigSettings();
   if (tabName === "vocab") renderVocabSettings();
@@ -2326,6 +2745,7 @@ const KIND_TAB = {
   translate: "translate",
   frame: "frame",
   spotify: "spotify",
+  lyrics: "lyrics",
   project: "projects",
   vocab: "vocab",
   meme: "meme",
@@ -2345,6 +2765,7 @@ function openTileSettings(id) {
   if (comp.kind === "translate") selectedTranslateId = id;
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
+  if (comp.kind === "lyrics") selectedLyricsId = id;
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
@@ -3551,6 +3972,7 @@ function renderFrameSettings() {
 // callback). Per-tile name/icon/colors handled by the shared rows.
 // ---------------------------------------------------------------------------
 let selectedSpotifyId = null;
+let selectedLyricsId = null;
 function ensureSpotifyComp() {
   const comps = state.compartments.filter((c) => c.kind === "spotify");
   if (comps.length === 0) {
@@ -3719,6 +4141,81 @@ function commitProject(comp) {
     console.error("Failed to render grid:", e);
   }
 }
+function renderLyricsSettings() {
+  const panel = document.getElementById("lyrics-list");
+  if (!panel) return;
+  const comps = state.compartments.filter((c) => c.kind === "lyrics");
+  panel.innerHTML = "";
+  if (!comps.length) {
+    panel.innerHTML = `<div class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile.</div>`;
+    return;
+  }
+  const comp = comps.find((c) => c.id === selectedLyricsId) || comps[0];
+  selectedLyricsId = comp.id;
+  comp.data = comp.data || {};
+
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `<label>Tile</label><select id="lyrics-select">${comps
+    .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+    .join("")}</select>`;
+  panel.appendChild(row);
+  appendCollapsibleRow(panel, comp);
+  appendAppearanceRow(panel, comp);
+
+  const clampN = (v) => Math.min(10, Math.max(0, Number(v) || 0));
+  const row2 = document.createElement("div");
+  row2.className = "item-row";
+  row2.innerHTML = `
+    <label>Previous lines <input id="lyr-prev" type="number" min="0" max="10" value="${clampN(comp.data.prevLines ?? 3)}" /></label>
+    <label>Next lines <input id="lyr-next" type="number" min="0" max="10" value="${clampN(comp.data.nextLines ?? 3)}" /></label>
+    <label>Sync offset <input id="lyr-offset" type="number" min="-5000" max="5000" step="100" value="${Number(comp.data.offsetMs) || 0}" /> ms</label>
+    <label>Align <select id="lyr-align">${["left", "center", "right"]
+      .map((v) => `<option value="${v}" ${(comp.data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
+      .join("")}</select></label>`;
+  panel.appendChild(row2);
+  const commit = () => {
+    saveState();
+    render();
+  };
+  row.querySelector("#lyrics-select").addEventListener("change", (e) => {
+    selectedLyricsId = e.target.value;
+    renderLyricsSettings();
+  });
+  row2.querySelector("#lyr-prev").addEventListener("change", (e) => {
+    comp.data.prevLines = clampN(e.target.value);
+    commit();
+  });
+  row2.querySelector("#lyr-next").addEventListener("change", (e) => {
+    comp.data.nextLines = clampN(e.target.value);
+    commit();
+  });
+  row2.querySelector("#lyr-offset").addEventListener("change", (e) => {
+    comp.data.offsetMs = Math.max(-5000, Math.min(5000, Number(e.target.value) || 0));
+    commit();
+  });
+  row2.querySelector("#lyr-align").addEventListener("change", (e) => {
+    comp.data.align = e.target.value;
+    commit();
+  });
+
+  const hint = document.createElement("div");
+  hint.className = "item-row";
+  hint.innerHTML = `<span class="muted">Focus shows the current line with the configured previous/next lines. Full view toggles from the tile and is the fallback when there is no synced line.</span>`;
+  panel.appendChild(hint);
+
+  const resetRow = document.createElement("div");
+  resetRow.className = "item-row";
+  resetRow.innerHTML = `<button class="btn ghost" id="lyr-reset-offsets">Reset per-track offsets</button><span class="muted">Clears the song-specific sync adjustments made on the tile.</span>`;
+  panel.appendChild(resetRow);
+  resetRow.querySelector("#lyr-reset-offsets").addEventListener("click", () => {
+    state.lyricsOffsets = {};
+    saveState();
+    render();
+    renderLyricsSettings();
+  });
+}
+
 function renderProjectsSettings() {
   const panel = document.getElementById("project-list");
   if (!panel) return;
@@ -5151,6 +5648,27 @@ function renderDesignSettings() {
     row.querySelector(".d-reset").addEventListener("click", () => { delete state.design[key]; applyNow(); renderDesignSettings(); });
   };
 
+  // Spotify cover colours — dedicated section at the top of the Design tab.
+  heading("Spotify cover colors");
+  const dynRow = document.createElement("div");
+  dynRow.className = "item-row";
+  dynRow.innerHTML = `
+    <label>Use Spotify cover color <input type="checkbox" id="dyn-spotify" ${state.design.dynamicSpotify ? "checked" : ""} /></label>
+    <span class="dyn-swatch" id="dyn-swatch" title="Current cover accent"></span>
+    <span class="muted" id="dyn-status"></span>`;
+  panel.appendChild(dynRow);
+  dynRow.querySelector("#dyn-spotify").addEventListener("change", (e) => {
+    state.design.dynamicSpotify = e.target.checked;
+    applyAppearance();
+    saveState();
+    void refreshDynamicPalette(true);
+    updateDynSwatch();
+  });
+  numRow("Accent blend", "dynAccentMix", 0, 100, 5, "%", 60);
+  numRow("Background blend", "dynBgMix", 0, 100, 5, "%", 35);
+  numRow("Surfaces blend", "dynSurfaceMix", 0, 100, 5, "%", 30);
+  updateDynSwatch();
+
   // Presets
   const presetRow = document.createElement("div");
   presetRow.className = "item-row";
@@ -5263,6 +5781,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
+  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false } },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },
