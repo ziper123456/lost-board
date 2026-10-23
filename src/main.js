@@ -1488,7 +1488,7 @@ async function renderLyricsBody(c, body) {
     const cur = linesEl.querySelector(".lyr-line.cur");
     if (!cur) return;
     autoScrolling = true;
-    cur.scrollIntoView({ block: "nearest" });
+    cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
     setTimeout(() => {
       autoScrolling = false;
     }, 0);

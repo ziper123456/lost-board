@@ -46,6 +46,8 @@ keyless) via Rust. No translation in Phase 1.
   tile's `−`/`+` (0.1 s steps); "Reset per-track offsets" in the Lyrics tab.
 - **Faster sync:** the shared playback poll tightens to **2.5 s while a Lyrics tile is visible**
   (5 s otherwise), so seeks/scrubs catch up quicker.
+- **Transitions:** the active line fades/slides in (0.3 s), the full view scrolls smoothly, and
+  `prefers-reduced-motion` disables both.
 
 ## Phase 2 (planned) — translation
 - Offline detection (`whatlang`); low confidence → prompt in the tile/Settings, remembered per
