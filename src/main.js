@@ -367,6 +367,14 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("lyrics_translations_clear");
     return null;
   },
+  async lyricsTranslationsExport() {
+    if (window.__TAURI__) return invoke("lyrics_translations_export");
+    return null;
+  },
+  async lyricsTranslationsImport() {
+    if (window.__TAURI__) return invoke("lyrics_translations_import");
+    return null;
+  },
   async spotifyPlay(play) {
     if (window.__TAURI__) return invoke("spotify_play", { play });
   },
@@ -4372,6 +4380,39 @@ function renderLyricsSettings() {
     saveState();
     render();
     renderLyricsSettings();
+  });
+
+  const ioRow = document.createElement("div");
+  ioRow.className = "item-row";
+  ioRow.innerHTML = `<button class="btn ghost" id="lyr-tr-export">Export translation cache</button>
+    <button class="btn ghost" id="lyr-tr-import">Import translation cache</button>
+    <span id="lyr-tr-io" class="muted"></span>`;
+  panel.appendChild(ioRow);
+  const ioStatus = ioRow.querySelector("#lyr-tr-io");
+  ioRow.querySelector("#lyr-tr-export").addEventListener("click", async () => {
+    ioStatus.textContent = "exporting…";
+    try {
+      const n = await native.lyricsTranslationsExport();
+      ioStatus.textContent = n === null || n === undefined ? "cancelled" : `exported ${n} entries`;
+    } catch (e) {
+      ioStatus.textContent = `failed: ${e.message || e}`;
+    }
+  });
+  ioRow.querySelector("#lyr-tr-import").addEventListener("click", async () => {
+    ioStatus.textContent = "importing…";
+    try {
+      const n = await native.lyricsTranslationsImport();
+      if (n === null || n === undefined) {
+        ioStatus.textContent = "cancelled";
+        return;
+      }
+      // Drop the in-memory cache so the imported disk entries are used.
+      lyricsTranslationCache.clear();
+      ioStatus.textContent = `added ${n} new entries (existing kept)`;
+      render();
+    } catch (e) {
+      ioStatus.textContent = `failed: ${e.message || e}`;
+    }
   });
 
   const resetRow = document.createElement("div");

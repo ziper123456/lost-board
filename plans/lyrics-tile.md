@@ -71,6 +71,8 @@ keyless) via Rust. No translation in Phase 1.
   atomic writes, capped at 1000 entries), keyed by a hash of the exact lines + source + targets, so
   translations survive restarts and replays don't re-spend tokens. "Clear translation cache" in
   Settings clears both the disk and in-memory caches.
+- **Export/import:** Settings can export the cache to JSON and import one; **import merges**
+  (`merge_translations`) and never overwrites existing entries (only new keys are added). Tested.
 
 ## Corrections log
 

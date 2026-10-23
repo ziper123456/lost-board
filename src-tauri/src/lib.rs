@@ -2182,6 +2182,63 @@ fn lyrics_translations_clear(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Export the translation cache to a JSON file. Returns the entry count, or None
+/// when the dialog is cancelled.
+#[tauri::command]
+async fn lyrics_translations_export(app: tauri::AppHandle) -> Result<Option<usize>, String> {
+    ensure_translation_cache_loaded(&app);
+    let map = translation_cache().lock().unwrap().clone();
+    let text =
+        serde_json::to_string_pretty(&map).map_err(|e| format!("serialize translations: {e}"))?;
+    let dest = rfd::AsyncFileDialog::new()
+        .set_title("Export lyric translations")
+        .set_file_name("lyrics-translations.json")
+        .add_filter("JSON", &["json"])
+        .save_file()
+        .await;
+    let Some(dest) = dest else { return Ok(None) };
+    fs::write(dest.path(), text).map_err(|e| format!("write translations: {e}"))?;
+    Ok(Some(map.len()))
+}
+
+/// Merge imported entries into the cache without overwriting existing keys.
+/// Returns the number of newly added entries. Pure (unit-tested).
+fn merge_translations(
+    cache: &mut std::collections::HashMap<String, TranslationEntry>,
+    imported: std::collections::HashMap<String, TranslationEntry>,
+) -> usize {
+    let mut added = 0;
+    for (key, entry) in imported {
+        if !cache.contains_key(&key) {
+            cache.insert(key, entry);
+            added += 1;
+        }
+    }
+    added
+}
+
+/// Import a translation cache file, **merging** into the existing cache without
+/// overwriting existing entries. Returns how many new entries were added.
+#[tauri::command]
+async fn lyrics_translations_import(app: tauri::AppHandle) -> Result<Option<usize>, String> {
+    ensure_translation_cache_loaded(&app);
+    let src = rfd::AsyncFileDialog::new()
+        .set_title("Import lyric translations")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+        .await;
+    let Some(src) = src else { return Ok(None) };
+    let text = fs::read_to_string(src.path()).map_err(|e| format!("read translations: {e}"))?;
+    let imported: std::collections::HashMap<String, TranslationEntry> =
+        serde_json::from_str(&text).map_err(|e| format!("invalid translations file: {e}"))?;
+    let added = {
+        let mut cache = translation_cache().lock().unwrap();
+        merge_translations(&mut cache, imported)
+    };
+    persist_translation_cache(&app);
+    Ok(Some(added))
+}
+
 /// Toggle regular shuffle on the active device.
 /// (Smart Shuffle cannot be enabled via the Web API — it is read-only here
 /// and surfaced through `smart_shuffle` in now-playing.)
@@ -2558,6 +2615,8 @@ pub fn run() {
             lyrics_detect,
             lyrics_translate,
             lyrics_translations_clear,
+            lyrics_translations_export,
+            lyrics_translations_import,
             spotify_play,
             spotify_skip,
             spotify_jump,
@@ -4252,5 +4311,27 @@ mod srs_tests {
         assert_eq!(lang_code(whatlang::detect("Hello, how are you today? I like music and the sun.").unwrap().lang()), "en");
         assert_eq!(lang_code(whatlang::detect("Hola, ¿cómo estás? Me gusta la música y el sol.").unwrap().lang()), "es");
         assert_eq!(lang_code(whatlang::detect("Hallo, wie geht es dir? Ich mag Musik und die Sonne.").unwrap().lang()), "de");
+    }
+
+    #[test]
+    fn translation_import_merges_without_overwriting() {
+        let mut cache = std::collections::HashMap::new();
+        cache.insert(
+            "a".to_string(),
+            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new() },
+        );
+        let mut imported = std::collections::HashMap::new();
+        imported.insert(
+            "a".to_string(),
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+        );
+        imported.insert(
+            "b".to_string(),
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+        );
+        let added = merge_translations(&mut cache, imported);
+        assert_eq!(added, 1, "only the new key is added");
+        assert_eq!(cache.get("a").unwrap().provider, "opencode", "existing entry kept");
+        assert!(cache.contains_key("b"));
     }
 }
