@@ -161,6 +161,10 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-BKP-004** Automatic backups shall be off by default and toggleable; an "Export now" button
   shall run a backup on demand whether or not the schedule is enabled.
 - **FR-BKP-005** Backups shall never contain API keys or tokens (they live in the OS secret store).
+- **FR-BKP-006** The backup folder shall retain only the newest 30 backup files; older ones are pruned
+  after each run.
+- **FR-BKP-007** A failed automatic backup shall persist the error, surface it in the Backup tab, and
+  mark the Backup settings tab until a later run succeeds.
 
 ### 2.10 Compartment: Translate (added beyond original scope)
 

@@ -53,6 +53,8 @@ const DEFAULT_STATE = {
     schedule: "daily",
     time: "03:00",
     lastExportAt: 0,
+    lastError: "",
+    lastErrorAt: 0,
   },
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
@@ -3978,7 +3980,15 @@ const BACKUP_SCHEDULES = [
 
 function backupConfig() {
   if (!state.backup || typeof state.backup !== "object") {
-    state.backup = { enabled: false, dir: "", schedule: "daily", time: "03:00", lastExportAt: 0 };
+    state.backup = {
+      enabled: false,
+      dir: "",
+      schedule: "daily",
+      time: "03:00",
+      lastExportAt: 0,
+      lastError: "",
+      lastErrorAt: 0,
+    };
   }
   return state.backup;
 }
@@ -4023,12 +4033,23 @@ async function runBackup() {
     );
     if (path) {
       cfg.lastExportAt = Date.now();
+      cfg.lastError = "";
+      cfg.lastErrorAt = 0;
       saveState();
+      updateBackupTabBadge();
     }
     return path;
   } finally {
     backupBusy = false;
   }
+}
+
+function updateBackupTabBadge() {
+  const tab = document.querySelector('.settings-tabs .tab[data-tab="backup"]');
+  if (!tab) return;
+  const err = state.backup?.lastError;
+  tab.classList.toggle("has-error", Boolean(err));
+  tab.title = err ? `Backup failed: ${err}` : "";
 }
 
 function refreshBackupStatus(message) {
@@ -4047,6 +4068,7 @@ function refreshBackupStatus(message) {
   );
   const parts = [`Last: ${fmtDateTime(cfg.lastExportAt)}`];
   if (cfg.enabled && cfg.dir) parts.push(`Next: ${fmtDateTime(next)}`);
+  if (cfg.lastError) parts.push(`Last error: ${cfg.lastError}`);
   el.textContent = parts.join(" · ");
 }
 
@@ -4062,7 +4084,11 @@ async function checkAutoBackup() {
     refreshBackupStatus();
   } catch (e) {
     console.error("Auto-backup failed", e);
-    refreshBackupStatus(`auto-export failed: ${e.message || e}`);
+    cfg.lastError = String(e.message || e);
+    cfg.lastErrorAt = Date.now();
+    saveState();
+    updateBackupTabBadge();
+    refreshBackupStatus();
   }
 }
 
@@ -4087,7 +4113,7 @@ function renderBackupSettings() {
   dirRow.className = "item-row";
   dirRow.innerHTML = `
     <label>Folder</label>
-    <span id="backup-dir" class="muted">${cfg.dir ? escapeHtml(cfg.dir) : "not set"}</span>
+    <span id="backup-dir" class="muted" title="${escapeHtml(cfg.dir || "")}">${cfg.dir ? escapeHtml(cfg.dir) : "not set"}</span>
     <button class="btn ghost" id="backup-pick">Choose…</button>
     <button class="btn ghost" id="backup-clear">Clear</button>`;
   panel.appendChild(dirRow);
@@ -4114,10 +4140,11 @@ function renderBackupSettings() {
 
   const note = document.createElement("div");
   note.className = "item-row";
-  note.innerHTML = `<span class="muted">One timestamped JSON per run: dashboard config, browser localStorage, and the lyrics translation + fetched-lyrics caches. API keys and tokens are never included — they live in the OS secret store.</span>`;
+  note.innerHTML = `<span class="muted">One timestamped JSON per run: dashboard config, browser localStorage, and the lyrics translation + fetched-lyrics caches. API keys and tokens are never included — they live in the OS secret store. The newest 30 backups are kept; older ones are pruned.</span>`;
   panel.appendChild(note);
 
   refreshBackupStatus();
+  updateBackupTabBadge();
 
   enableRow.querySelector("#backup-enabled").addEventListener("change", (e) => {
     cfg.enabled = e.target.checked;
@@ -4140,7 +4167,9 @@ function renderBackupSettings() {
   dirRow.querySelector("#backup-clear").addEventListener("click", () => {
     cfg.dir = "";
     saveState();
-    dirRow.querySelector("#backup-dir").textContent = "not set";
+    const label = dirRow.querySelector("#backup-dir");
+    label.textContent = "not set";
+    label.title = "";
     refreshBackupStatus();
   });
 
@@ -4165,11 +4194,19 @@ function renderBackupSettings() {
       status.textContent = "choose a folder first";
       return;
     }
+    if (backupBusy) {
+      status.textContent = "already running…";
+      return;
+    }
     status.textContent = "exporting…";
     try {
       const path = await runBackup();
-      status.textContent = path ? `exported: ${path}` : "nothing written";
+      status.textContent = path ? `exported: ${path}` : "already running…";
     } catch (e) {
+      cfg.lastError = String(e.message || e);
+      cfg.lastErrorAt = Date.now();
+      saveState();
+      updateBackupTabBadge();
       status.textContent = `export failed: ${e.message || e}`;
     }
   });
@@ -6571,6 +6608,7 @@ async function initialize() {
   // the wrong width until the next interaction.
   requestAnimationFrame(() => render());
   startBackupScheduler();
+  updateBackupTabBadge();
 }
 
 // Re-fit the grid whenever the viewport changes (window resize, maximize, etc.).

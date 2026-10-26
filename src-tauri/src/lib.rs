@@ -4072,6 +4072,81 @@ async fn import_config(app: tauri::AppHandle) -> Result<Option<String>, String> 
     Ok(Some(text))
 }
 
+/// Bundle shape for a backup run. Pure so the section layout is testable.
+fn build_backup_bundle(
+    state: serde_json::Value,
+    local_storage: serde_json::Value,
+    translations: serde_json::Value,
+    lyrics: serde_json::Value,
+    exported_at: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "app": "lost-board",
+        "kind": "backup",
+        "version": 1,
+        "exported_at": exported_at,
+        "state": state,
+        "local_storage": local_storage,
+        "lyrics": { "translations": translations, "cache": lyrics },
+    })
+}
+
+/// Never clobber an existing backup: if the timestamped name is taken (two
+/// runs in the same second, or a manual export), add a numeric suffix.
+fn unique_backup_path(dir: &Path, filename: &str) -> PathBuf {
+    let path = dir.join(filename);
+    if !path.exists() {
+        return path;
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("lost-board-backup")
+        .to_string();
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("json")
+        .to_string();
+    for n in 1..=1000 {
+        let candidate = dir.join(format!("{stem}-{n}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    dir.join(format!("{stem}-{nanos}.{ext}"))
+}
+
+const BACKUP_RETENTION: usize = 30;
+
+/// Keep the destination folder bounded: retain the newest `BACKUP_RETENTION`
+/// files created by this feature (timestamped names sort chronologically).
+fn prune_backups(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut backups: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with("lost-board-backup-") && name.ends_with(".json") {
+                Some((name, e.path()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if backups.len() <= BACKUP_RETENTION {
+        return;
+    }
+    backups.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in backups.into_iter().skip(BACKUP_RETENTION) {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// Write a complete backup bundle into `dest_dir`: the dashboard state, a
 /// snapshot of the webview's localStorage, and the lyrics translation/lyrics
 /// caches. Everything lands in a single timestamped JSON file. The frontend
@@ -4099,13 +4174,24 @@ async fn backup_export(
         .unwrap_or_else(|_| serde_json::json!({}));
 
     let read_cached_json = |name: &str| -> serde_json::Value {
-        app.path()
-            .app_data_dir()
-            .ok()
-            .map(|d| d.join(name))
-            .and_then(|p| fs::read_to_string(p).ok())
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_else(|| serde_json::json!({}))
+        let Some(dir) = app.path().app_data_dir().ok() else {
+            return serde_json::json!({});
+        };
+        let path = dir.join(name);
+        match fs::read_to_string(&path) {
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(e) => {
+                    eprintln!("backup: {name} is not valid JSON: {e}");
+                    serde_json::json!({})
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+            Err(e) => {
+                eprintln!("backup: cannot read {name}: {e}");
+                serde_json::json!({})
+            }
+        }
     };
     let translations = read_cached_json("lyrics-translations.json");
     let lyrics = read_cached_json("lyrics-cache.json");
@@ -4114,31 +4200,77 @@ async fn backup_export(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let bundle = serde_json::json!({
-        "app": "lost-board",
-        "kind": "backup",
-        "version": 1,
-        "exported_at": exported_at,
-        "state": state,
-        "local_storage": local_storage,
-        "lyrics": { "translations": translations, "cache": lyrics },
-    });
+    let bundle = build_backup_bundle(state, local_storage, translations, lyrics, exported_at);
     let text =
         serde_json::to_string_pretty(&bundle).map_err(|e| format!("serialize backup: {e}"))?;
 
-    let path = dir.join(&filename);
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("replace existing backup: {e}"))?;
-    }
+    let path = unique_backup_path(&dir, &filename);
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, text).map_err(|e| format!("write backup: {e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("finalize backup: {e}"))?;
+    prune_backups(&dir);
     Ok(path.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
 mod srs_tests {
     use super::*;
+
+    #[test]
+    fn backup_bundle_keeps_all_sections() {
+        let bundle = build_backup_bundle(
+            serde_json::json!({ "columns": 12 }),
+            serde_json::json!({ "lost-board.state.v1": "{}" }),
+            serde_json::json!({ "abc|en|de": { "lines": [] } }),
+            serde_json::json!({ "track|1": null }),
+            123,
+        );
+        assert_eq!(bundle["app"], "lost-board");
+        assert_eq!(bundle["kind"], "backup");
+        assert_eq!(bundle["version"], 1);
+        assert_eq!(bundle["exported_at"], 123);
+        assert_eq!(bundle["state"]["columns"], 12);
+        assert_eq!(bundle["local_storage"]["lost-board.state.v1"], "{}");
+        assert!(bundle["lyrics"]["translations"].is_object());
+        assert!(bundle["lyrics"]["cache"].is_object());
+    }
+
+    #[test]
+    fn backup_filename_never_overwrites() {
+        let dir = std::env::temp_dir().join(format!("lb-backup-unique-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lost-board-backup-x.json"), "{}").unwrap();
+        let path = unique_backup_path(&dir, "lost-board-backup-x.json");
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            "lost-board-backup-x-1.json"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backup_prune_keeps_newest_thirty() {
+        let dir = std::env::temp_dir().join(format!("lb-backup-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for i in 0..35 {
+            let name = format!("lost-board-backup-2026-01-01_00-00-{i:02}.json");
+            fs::write(dir.join(name), "{}").unwrap();
+        }
+        fs::write(dir.join("unrelated.txt"), "keep").unwrap();
+        prune_backups(&dir);
+        let remaining = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("lost-board-backup-"))
+            .count();
+        assert_eq!(remaining, 30);
+        assert!(dir.join("lost-board-backup-2026-01-01_00-00-34.json").exists());
+        assert!(!dir.join("lost-board-backup-2026-01-01_00-00-00.json").exists());
+        assert!(dir.join("unrelated.txt").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn sm2_new_card_expands_intervals() {
