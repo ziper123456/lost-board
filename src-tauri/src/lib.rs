@@ -2558,6 +2558,7 @@ pub fn run() {
             save_state,
             export_config,
             import_config,
+            backup_export,
             set_autostart,
             autostart_enabled,
             read_vocab_cards,
@@ -4069,6 +4070,70 @@ async fn import_config(app: tauri::AppHandle) -> Result<Option<String>, String> 
     fs::write(&path, &text)
         .map_err(|e| format!("Failed to save imported configuration: {e}"))?;
     Ok(Some(text))
+}
+
+/// Write a complete backup bundle into `dest_dir`: the dashboard state, a
+/// snapshot of the webview's localStorage, and the lyrics translation/lyrics
+/// caches. Everything lands in a single timestamped JSON file. The frontend
+/// supplies the in-memory state (authoritative) and localStorage snapshot;
+/// the lyrics caches are read from app-data.
+#[tauri::command]
+async fn backup_export(
+    app: tauri::AppHandle,
+    dest_dir: String,
+    filename: String,
+    state_json: String,
+    local_storage_json: String,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&dest_dir);
+    if !dir.is_dir() {
+        return Err(format!("Backup folder not found: {dest_dir}"));
+    }
+    if filename.is_empty() || filename.contains(['/', '\\']) || filename.contains("..") {
+        return Err("Invalid backup filename".into());
+    }
+
+    let state: serde_json::Value =
+        serde_json::from_str(&state_json).unwrap_or(serde_json::Value::Null);
+    let local_storage: serde_json::Value = serde_json::from_str(&local_storage_json)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    let read_cached_json = |name: &str| -> serde_json::Value {
+        app.path()
+            .app_data_dir()
+            .ok()
+            .map(|d| d.join(name))
+            .and_then(|p| fs::read_to_string(p).ok())
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    };
+    let translations = read_cached_json("lyrics-translations.json");
+    let lyrics = read_cached_json("lyrics-cache.json");
+
+    let exported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bundle = serde_json::json!({
+        "app": "lost-board",
+        "kind": "backup",
+        "version": 1,
+        "exported_at": exported_at,
+        "state": state,
+        "local_storage": local_storage,
+        "lyrics": { "translations": translations, "cache": lyrics },
+    });
+    let text =
+        serde_json::to_string_pretty(&bundle).map_err(|e| format!("serialize backup: {e}"))?;
+
+    let path = dir.join(&filename);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("replace existing backup: {e}"))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, text).map_err(|e| format!("write backup: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("finalize backup: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

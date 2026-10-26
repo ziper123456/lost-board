@@ -25,6 +25,7 @@ desktop background with tray + autostart.
   - `fetch_rss` / `cache_favicon` — CORS-free feed fetch, on-disk favicon cache
   - `load_state` / `save_state` — app-data JSON config with schema validation + `.bak` on corrupt
   - `export_config` / `import_config` — move the config to another machine (secrets never exported)
+  - `backup_export` — timestamped bundle (config + localStorage + lyrics caches) to a chosen folder
   - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
   - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue/jump
   - `set_autostart` / `autostart_enabled` — launch on login (tray icon + background behind-mode)

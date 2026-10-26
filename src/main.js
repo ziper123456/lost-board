@@ -47,6 +47,13 @@ const DEFAULT_STATE = {
   lyricsTranslate: false,
   lyricsLang: {},
   lyricsTargets: {},
+  backup: {
+    enabled: false,
+    dir: "",
+    schedule: "daily",
+    time: "03:00",
+    lastExportAt: 0,
+  },
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -439,6 +446,11 @@ async openFolder(path) {
   },
   async importConfig() {
     if (window.__TAURI__) return invoke("import_config");
+    return null;
+  },
+  async backupExport(destDir, filename, stateJson, localStorageJson) {
+    if (window.__TAURI__)
+      return invoke("backup_export", { destDir, filename, stateJson, localStorageJson });
     return null;
   },
   async setAutostart(enabled) {
@@ -2916,6 +2928,7 @@ function activateTab(tabName) {
   if (tabName === "lyrics") renderLyricsSettings();
   if (tabName === "projects") renderProjectsSettings();
   if (tabName === "config") renderConfigSettings();
+  if (tabName === "backup") renderBackupSettings();
   if (tabName === "vocab") renderVocabSettings();
   if (tabName === "meme") renderMemeSettings();
   if (tabName === "calendar") renderCalendarSettings();
@@ -3947,6 +3960,217 @@ function renderConfigSettings() {
       panel.querySelector("#config-status").textContent = "imported — previous setup kept as .bak";
     } catch (e) {
       statusEl.textContent = `import failed: ${e}`;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled backups ("Backup" settings tab). Each run writes one timestamped
+// JSON bundle with the dashboard state, the webview localStorage snapshot, and
+// the lyrics translation/fetched-lyrics caches into the chosen folder.
+// ---------------------------------------------------------------------------
+const BACKUP_SCHEDULES = [
+  { value: "4h", label: "Every 4 hours" },
+  { value: "daily", label: "Every day" },
+  { value: "weekly", label: "Every Monday" },
+  { value: "monthly", label: "Every month (1st)" },
+];
+
+function backupConfig() {
+  if (!state.backup || typeof state.backup !== "object") {
+    state.backup = { enabled: false, dir: "", schedule: "daily", time: "03:00", lastExportAt: 0 };
+  }
+  return state.backup;
+}
+
+function localStorageSnapshot() {
+  const out = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key != null) out[key] = localStorage.getItem(key);
+    }
+  } catch {
+    // localStorage may be unavailable in a locked-down webview; an empty
+    // snapshot is still a valid backup.
+  }
+  return out;
+}
+
+function fmtDateTime(ms) {
+  if (!ms) return "never";
+  try {
+    return new Date(ms).toLocaleString();
+  } catch {
+    return "never";
+  }
+}
+
+let backupBusy = false;
+let backupTimer = null;
+
+async function runBackup() {
+  const cfg = backupConfig();
+  if (!cfg.dir) throw new Error("choose a backup folder first");
+  if (backupBusy) return null;
+  backupBusy = true;
+  try {
+    const path = await native.backupExport(
+      cfg.dir,
+      BackupUtil.backupFilename(),
+      JSON.stringify(state),
+      JSON.stringify(localStorageSnapshot())
+    );
+    if (path) {
+      cfg.lastExportAt = Date.now();
+      saveState();
+    }
+    return path;
+  } finally {
+    backupBusy = false;
+  }
+}
+
+function refreshBackupStatus(message) {
+  const el = document.getElementById("backup-status");
+  if (!el) return;
+  if (message) {
+    el.textContent = message;
+    return;
+  }
+  const cfg = backupConfig();
+  const next = BackupUtil.nextBackupAt(
+    cfg.lastExportAt || 0,
+    cfg.schedule || "daily",
+    cfg.time || "03:00",
+    Date.now()
+  );
+  const parts = [`Last: ${fmtDateTime(cfg.lastExportAt)}`];
+  if (cfg.enabled && cfg.dir) parts.push(`Next: ${fmtDateTime(next)}`);
+  el.textContent = parts.join(" · ");
+}
+
+async function checkAutoBackup() {
+  const cfg = backupConfig();
+  if (!cfg.enabled || !cfg.dir || backupBusy) return;
+  const schedule = cfg.schedule || "daily";
+  const time = cfg.time || "03:00";
+  if (!BackupUtil.backupDue(cfg.lastExportAt || 0, schedule, time, Date.now())) return;
+  try {
+    const path = await runBackup();
+    if (path) console.info("Auto-backup written", path);
+    refreshBackupStatus();
+  } catch (e) {
+    console.error("Auto-backup failed", e);
+    refreshBackupStatus(`auto-export failed: ${e.message || e}`);
+  }
+}
+
+function startBackupScheduler() {
+  if (backupTimer) clearInterval(backupTimer);
+  backupTimer = setInterval(checkAutoBackup, 60_000);
+  setTimeout(checkAutoBackup, 3000);
+}
+
+function renderBackupSettings() {
+  const panel = document.getElementById("backup-list");
+  if (!panel) return;
+  panel.innerHTML = "";
+  const cfg = backupConfig();
+
+  const enableRow = document.createElement("div");
+  enableRow.className = "item-row";
+  enableRow.innerHTML = `<label><input type="checkbox" id="backup-enabled" ${cfg.enabled ? "checked" : ""} /> Automatic backups</label>`;
+  panel.appendChild(enableRow);
+
+  const dirRow = document.createElement("div");
+  dirRow.className = "item-row";
+  dirRow.innerHTML = `
+    <label>Folder</label>
+    <span id="backup-dir" class="muted">${cfg.dir ? escapeHtml(cfg.dir) : "not set"}</span>
+    <button class="btn ghost" id="backup-pick">Choose…</button>
+    <button class="btn ghost" id="backup-clear">Clear</button>`;
+  panel.appendChild(dirRow);
+
+  const schedule = cfg.schedule || "daily";
+  const showTime = schedule !== "4h";
+  const schedRow = document.createElement("div");
+  schedRow.className = "item-row";
+  schedRow.innerHTML = `
+    <label>Schedule</label>
+    <select id="backup-schedule">${BACKUP_SCHEDULES.map(
+      (s) => `<option value="${s.value}" ${s.value === schedule ? "selected" : ""}>${s.label}</option>`
+    ).join("")}</select>
+    <label for="backup-time" ${showTime ? "" : "hidden"}>at</label>
+    <input type="time" id="backup-time" value="${escapeHtml(cfg.time || "03:00")}" ${showTime ? "" : "hidden"} />`;
+  panel.appendChild(schedRow);
+
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "item-row";
+  actionsRow.innerHTML = `
+    <button class="btn primary" id="backup-now">Export now</button>
+    <span id="backup-status" class="muted"></span>`;
+  panel.appendChild(actionsRow);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">One timestamped JSON per run: dashboard config, browser localStorage, and the lyrics translation + fetched-lyrics caches. API keys and tokens are never included — they live in the OS secret store.</span>`;
+  panel.appendChild(note);
+
+  refreshBackupStatus();
+
+  enableRow.querySelector("#backup-enabled").addEventListener("change", (e) => {
+    cfg.enabled = e.target.checked;
+    saveState();
+    refreshBackupStatus();
+    if (cfg.enabled) setTimeout(checkAutoBackup, 200);
+  });
+
+  dirRow.querySelector("#backup-pick").addEventListener("click", async () => {
+    const dir = await native.pickFolder();
+    if (!dir) return;
+    cfg.dir = dir;
+    saveState();
+    const label = dirRow.querySelector("#backup-dir");
+    label.textContent = dir;
+    label.title = dir;
+    refreshBackupStatus();
+  });
+
+  dirRow.querySelector("#backup-clear").addEventListener("click", () => {
+    cfg.dir = "";
+    saveState();
+    dirRow.querySelector("#backup-dir").textContent = "not set";
+    refreshBackupStatus();
+  });
+
+  schedRow.querySelector("#backup-schedule").addEventListener("change", (e) => {
+    cfg.schedule = e.target.value;
+    const timeish = cfg.schedule !== "4h";
+    schedRow.querySelector("#backup-time").hidden = !timeish;
+    schedRow.querySelector("label[for=backup-time]").hidden = !timeish;
+    saveState();
+    refreshBackupStatus();
+  });
+
+  schedRow.querySelector("#backup-time").addEventListener("change", (e) => {
+    cfg.time = e.target.value || "03:00";
+    saveState();
+    refreshBackupStatus();
+  });
+
+  actionsRow.querySelector("#backup-now").addEventListener("click", async () => {
+    const status = actionsRow.querySelector("#backup-status");
+    if (!cfg.dir) {
+      status.textContent = "choose a folder first";
+      return;
+    }
+    status.textContent = "exporting…";
+    try {
+      const path = await runBackup();
+      status.textContent = path ? `exported: ${path}` : "nothing written";
+    } catch (e) {
+      status.textContent = `export failed: ${e.message || e}`;
     }
   });
 }
@@ -6346,6 +6570,7 @@ async function initialize() {
   // dashboard before the window reaches its final size, leaving tiles sized for
   // the wrong width until the next interaction.
   requestAnimationFrame(() => render());
+  startBackupScheduler();
 }
 
 // Re-fit the grid whenever the viewport changes (window resize, maximize, etc.).
