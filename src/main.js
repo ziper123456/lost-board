@@ -1342,7 +1342,7 @@ function renderTranslateBody(c, body) {
     </div>`;
   body.querySelectorAll(".tr-text").forEach((ta) =>
     ta.addEventListener("input", (e) => {
-      vals[Number(e.target.dataset.i)] = e.target.value;
+      vals[Number(e.currentTarget.dataset.i)] = e.target.value;
     })
   );
   body.querySelectorAll(".tr-go").forEach((btn) =>
@@ -1553,11 +1553,18 @@ async function renderLyricsBody(c, body) {
   // current line shows translations (space); full mode shows them all.
   const trHtml = (i, all) => {
     if (!translations) return "";
-    return Object.entries(translations)
+    // Fixed display order so EN/DE/ES don't shuffle between renders.
+    const order = ["en", "de", "es", "vi"];
+    const entries = Object.entries(translations).sort((a, b) => {
+      const ia = order.indexOf(a[0].toLowerCase());
+      const ib = order.indexOf(b[0].toLowerCase());
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a[0].localeCompare(b[0]);
+    });
+    return entries
       .map(([lang, arr]) => {
         const text = arr && arr[i];
         if (!text) return "";
-        return `<div class="lyr-tr"><span class="lyr-tr-lang">${escapeHtml(lang.toUpperCase())}</span>${escapeHtml(text)}</div>`;
+        return `<div class="lyr-tr"><span class="lyr-flag" title="${escapeHtml(lang.toUpperCase())}">${LyricsUtil.flagSvg(lang)}</span>${escapeHtml(text)}</div>`;
       })
       .join("");
   };
@@ -3344,19 +3351,19 @@ function renderFoldersSettings() {
   });
   panel.querySelectorAll(".it-kind").forEach((sel) =>
     sel.addEventListener("change", (e) => {
-      items[Number(e.target.dataset.i)].kind = e.target.value;
+      items[Number(e.currentTarget.dataset.i)].kind = e.target.value;
       commitLauncher(launcher);
     })
   );
   panel.querySelectorAll(".it-label").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      items[Number(e.target.dataset.i)].label = e.target.value;
+      items[Number(e.currentTarget.dataset.i)].label = e.target.value;
       commitLauncher(launcher);
     })
   );
   panel.querySelectorAll(".it-browse").forEach((btn) =>
     btn.addEventListener("click", async (e) => {
-      const i = Number(e.target.dataset.i);
+      const i = Number(e.currentTarget.dataset.i);
       const it = items[i];
       const isFolder = it.kind === "folder";
       const p = isFolder ? await native.pickFolder() : await native.pickSolution();
@@ -3368,8 +3375,16 @@ function renderFoldersSettings() {
   );
   panel.querySelectorAll(".it-remove").forEach((btn) =>
     btn.addEventListener("click", (e) => {
-      items.splice(Number(e.target.dataset.i), 1);
-      commitLauncher(launcher);
+      const i = Number(e.currentTarget.dataset.i);
+      const it = items[i];
+      showConfirmPopup(`Remove "${it?.label || it?.path || "this item"}"?`, {
+        x: e.clientX,
+        y: e.clientY,
+        onConfirm: () => {
+          items.splice(i, 1);
+          commitLauncher(launcher);
+        },
+      });
     })
   );
   panel.querySelector("#add-folder").addEventListener("click", () => {
@@ -3463,20 +3478,28 @@ function renderBookmarksSettings() {
   });
   panel.querySelectorAll(".bmk-title").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      urls[Number(e.target.dataset.i)].title = e.target.value;
+      urls[Number(e.currentTarget.dataset.i)].title = e.target.value;
       commitBookmarks(comp);
     })
   );
   panel.querySelectorAll(".bmk-url").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      urls[Number(e.target.dataset.i)].url = e.target.value;
+      urls[Number(e.currentTarget.dataset.i)].url = e.target.value;
       commitBookmarks(comp);
     })
   );
   panel.querySelectorAll(".bmk-remove").forEach((btn) =>
     btn.addEventListener("click", (e) => {
-      urls.splice(Number(e.target.dataset.i), 1);
-      commitBookmarks(comp);
+      const i = Number(e.currentTarget.dataset.i);
+      const u = urls[i];
+      showConfirmPopup(`Remove bookmark "${u?.title || u?.url || "this bookmark"}"?`, {
+        x: e.clientX,
+        y: e.clientY,
+        onConfirm: () => {
+          urls.splice(i, 1);
+          commitBookmarks(comp);
+        },
+      });
     })
   );
   panel.querySelector("#add-bookmark").addEventListener("click", () => {
@@ -3580,20 +3603,28 @@ function renderAzureSettings() {
   });
   panel.querySelectorAll(".az-label").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      d.repos[Number(e.target.dataset.i)].label = e.target.value;
+      d.repos[Number(e.currentTarget.dataset.i)].label = e.target.value;
       commitAzure(comp);
     })
   );
   panel.querySelectorAll(".az-repo").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      d.repos[Number(e.target.dataset.i)].repo = e.target.value;
+      d.repos[Number(e.currentTarget.dataset.i)].repo = e.target.value;
       commitAzure(comp);
     })
   );
   panel.querySelectorAll(".az-remove").forEach((btn) =>
     btn.addEventListener("click", (e) => {
-      d.repos.splice(Number(e.target.dataset.i), 1);
-      commitAzure(comp);
+      const i = Number(e.currentTarget.dataset.i);
+      const repo = d.repos[i];
+      showConfirmPopup(`Remove repo "${repo?.label || repo?.repo || "this repo"}"?`, {
+        x: e.clientX,
+        y: e.clientY,
+        onConfirm: () => {
+          d.repos.splice(i, 1);
+          commitAzure(comp);
+        },
+      });
     })
   );
   panel.querySelector("#add-repo").addEventListener("click", () => {
@@ -3798,20 +3829,28 @@ function renderNewsSettings() {
   });
   panel.querySelectorAll(".news-label").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      feeds[Number(e.target.dataset.i)].label = e.target.value;
+      feeds[Number(e.currentTarget.dataset.i)].label = e.target.value;
       commitNews(comp);
     })
   );
   panel.querySelectorAll(".news-url").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      feeds[Number(e.target.dataset.i)].url = e.target.value;
+      feeds[Number(e.currentTarget.dataset.i)].url = e.target.value;
       commitNews(comp);
     })
   );
   panel.querySelectorAll(".news-remove").forEach((btn) =>
     btn.addEventListener("click", (e) => {
-      feeds.splice(Number(e.target.dataset.i), 1);
-      commitNews(comp);
+      const i = Number(e.currentTarget.dataset.i);
+      const feed = feeds[i];
+      showConfirmPopup(`Remove feed "${feed?.label || feed?.url || "this feed"}"?`, {
+        x: e.clientX,
+        y: e.clientY,
+        onConfirm: () => {
+          feeds.splice(i, 1);
+          commitNews(comp);
+        },
+      });
     })
   );
   panel.querySelector("#add-feed").addEventListener("click", () => {
@@ -4052,7 +4091,7 @@ async function renderTranslateSettings() {
   });
   panel.querySelectorAll(".tr-langsel").forEach((sel) =>
     sel.addEventListener("change", (e) => {
-      comp.data.langs[Number(e.target.dataset.i)] = e.target.value;
+      comp.data.langs[Number(e.currentTarget.dataset.i)] = e.target.value;
       translateValues.delete(comp.id);
       commitTranslate(comp);
     })
@@ -4588,13 +4627,13 @@ function renderProjectsSettings() {
   });
   panel.querySelectorAll(".pj-folder").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].folder = e.target.value;
+      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.currentTarget.dataset.i)].folder = e.target.value;
       commitProject(comp);
     })
   );
   panel.querySelectorAll(".pj-solution").forEach((inp) =>
     inp.addEventListener("change", (e) => {
-      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.target.dataset.i)].solution = e.target.value;
+      comp.data.roots[Number(e.target.dataset.ri)].projects[Number(e.currentTarget.dataset.i)].solution = e.target.value;
       commitProject(comp);
     })
   );
