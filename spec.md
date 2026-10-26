@@ -154,6 +154,23 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
   present, and hide the battery row on machines without one.
 - **FR-SYS-004** The system shall display the machine's uptime.
 
+### 2.9 Backup (added beyond original scope)
+
+- **FR-BKP-001** Each backup run shall write one timestamped JSON bundle containing the dashboard
+  configuration, a snapshot of the webview localStorage, the lyric-translation cache, and the
+  fetched-lyrics cache.
+- **FR-BKP-002** The backup destination shall be a folder chosen by the user and remembered in state.
+- **FR-BKP-003** Automatic backups shall support these schedules: every 4 hours, every day at a
+  configured time, every Monday at a configured time, and the 1st of every month at a configured
+  time (local time).
+- **FR-BKP-004** Automatic backups shall be off by default and toggleable; an "Export now" button
+  shall run a backup on demand whether or not the schedule is enabled.
+- **FR-BKP-005** Backups shall never contain API keys or tokens (they live in the OS secret store).
+- **FR-BKP-006** The backup folder shall retain only the newest 30 backup files; older ones are pruned
+  after each run.
+- **FR-BKP-007** A failed automatic backup shall persist the error, surface it in the Backup tab, and
+  mark the Backup settings tab until a later run succeeds.
+
 ### 2.10 Compartment: Translate (added beyond original scope)
 
 - **FR-TRN-001** Each translate tile shall hold up to 3 language fields; when the user types in one
@@ -636,6 +653,12 @@ prompts, and the choice is remembered for that track.
 ### AC-050: Translation provider
 Given translation is requested, the LLM (opencode) is tried first and DeepL is used if it fails;
 results are cached so replaying a track does not re-translate.
+
+### AC-051: Scheduled backup
+Given automatic backups are enabled with a folder and a schedule,
+When the scheduled local time is reached (or 4 hours have passed since the last run),
+Then one timestamped JSON bundle with the config, localStorage, and lyrics caches is written to the
+folder, and "Export now" performs the same export immediately.
 
 ---
 

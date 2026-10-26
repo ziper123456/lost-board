@@ -57,6 +57,7 @@
           <button class="tab" data-tab="meme">Memes</button>
           <button class="tab" data-tab="calendar">Calendar</button>
           <button class="tab" data-tab="system">System</button>
+          <button class="tab" data-tab="backup">Backup</button>
           <button class="tab" data-tab="config">Config</button>
         </nav>
 
@@ -200,6 +201,10 @@
             <p>Calendar tile with the Vietnamese lunar calendar (âm lịch), moon phases, and public-holiday highlights.</p>
             <div id="calendar-list"></div>
           </div>
+          <div class="tab-panel" data-panel="backup">
+            <p>Automatic backups write one timestamped JSON bundle into a folder you choose: dashboard config, browser localStorage, and the lyrics caches. API keys and tokens are never included.</p>
+            <div id="backup-list"></div>
+          </div>
           <div class="tab-panel" data-panel="config">
             <p>Move this dashboard to another machine: export a file here, import it there. API keys and tokens stay in each machine's own secret store and are never exported.</p>
             <div id="config-list"></div>
@@ -212,6 +217,7 @@
     <script src="holidays.js"></script>
     <script src="colors.js"></script>
     <script src="lyrics.js"></script>
+    <script src="backup.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

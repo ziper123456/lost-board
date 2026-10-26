@@ -748,6 +748,8 @@ html { font-size: var(--font-size, 16px); }
   cursor: pointer;
 }
 .settings-tabs .tab.active { background: var(--panel-2); color: var(--text); border-color: var(--border); }
+.settings-tabs .tab.has-error { color: var(--red); }
+.settings-tabs .tab.has-error::after { content: " !"; font-weight: 700; }
 .settings-body { padding: 16px; overflow: auto; flex: 1; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
