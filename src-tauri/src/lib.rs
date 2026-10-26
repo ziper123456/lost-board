@@ -13,12 +13,31 @@ use tauri::Manager;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
+#[derive(Serialize, Clone)]
+struct DiskStat {
+    mount: String,
+    name: String,
+    total_bytes: u64,
+    used_bytes: u64,
+    percent: f32,
+}
+
+#[derive(Serialize)]
+struct BatteryStat {
+    percent: u8,
+    charging: bool,
+    ac: bool,
+}
+
 #[derive(Serialize)]
 struct SystemStats {
     cpu_percent: f32,
     ram_used_bytes: u64,
     ram_total_bytes: u64,
     ram_percent: f32,
+    uptime_secs: u64,
+    disks: Vec<DiskStat>,
+    battery: Option<BatteryStat>,
 }
 
 /// Open a folder in the OS file explorer. Accepts an absolute path.
@@ -2451,21 +2470,93 @@ fn system_handle() -> &'static std::sync::Mutex<System> {
 }
 
 /// Read current CPU and RAM usage.
+#[cfg(target_os = "windows")]
+fn battery_status() -> Option<BatteryStat> {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
+        return None;
+    }
+    // BatteryFlag 128 = no system battery; BatteryLifePercent 255 = unknown.
+    if status.BatteryFlag == 128 || status.BatteryLifePercent == 255 {
+        return None;
+    }
+    Some(BatteryStat {
+        percent: status.BatteryLifePercent,
+        charging: status.BatteryFlag & 8 != 0,
+        ac: status.ACLineStatus == 1,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn battery_status() -> Option<BatteryStat> {
+    None
+}
+
+/// Disks change slowly and enumerating volumes (especially disconnected network
+/// drives) can block, so snapshot them at most once every 30s instead of on
+/// every 2s stats poll. The cached list is cloned out; the enumeration itself
+/// runs without holding the system-stats mutex.
+fn disk_snapshot() -> Vec<DiskStat> {
+    use std::time::{Duration, Instant};
+    const TTL: Duration = Duration::from_secs(30);
+
+    let cache = DISK_SNAPSHOT.get_or_init(|| {
+        std::sync::Mutex::new((Instant::now() - TTL, Vec::new()))
+    });
+    {
+        let guard = cache.lock().expect("disk cache poisoned");
+        if guard.0.elapsed() < TTL {
+            return guard.1.clone();
+        }
+    }
+
+    let disks: Vec<DiskStat> = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| {
+            let total = d.total_space();
+            let used = total.saturating_sub(d.available_space());
+            DiskStat {
+                mount: d.mount_point().to_string_lossy().to_string(),
+                name: d.name().to_string_lossy().to_string(),
+                total_bytes: total,
+                used_bytes: used,
+                percent: if total > 0 {
+                    (used as f64 / total as f64 * 100.0) as f32
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
+
+    let mut guard = cache.lock().expect("disk cache poisoned");
+    *guard = (Instant::now(), disks.clone());
+    disks
+}
+
+static DISK_SNAPSHOT: std::sync::OnceLock<
+    std::sync::Mutex<(std::time::Instant, Vec<DiskStat>)>,
+> = std::sync::OnceLock::new();
+
 #[tauri::command]
 fn get_system_stats() -> SystemStats {
-    let mut sys = system_handle().lock().expect("system mutex poisoned");
-    // Let a little time pass so the CPU delta since the previous sample is meaningful.
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    sys.refresh_cpu_usage();
-    sys.refresh_memory();
+    let (cpu_percent, ram_used_bytes, ram_total_bytes, ram_percent) = {
+        let mut sys = system_handle().lock().expect("system mutex poisoned");
+        // Let a little time pass so the CPU delta since the previous sample is meaningful.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
 
-    let cpu_percent = sys.global_cpu_usage();
-    let ram_used_bytes = sys.used_memory();
-    let ram_total_bytes = sys.total_memory();
-    let ram_percent = if ram_total_bytes > 0 {
-        (ram_used_bytes as f64 / ram_total_bytes as f64 * 100.0) as f32
-    } else {
-        0.0
+        let cpu_percent = sys.global_cpu_usage();
+        let ram_used_bytes = sys.used_memory();
+        let ram_total_bytes = sys.total_memory();
+        let ram_percent = if ram_total_bytes > 0 {
+            (ram_used_bytes as f64 / ram_total_bytes as f64 * 100.0) as f32
+        } else {
+            0.0
+        };
+        (cpu_percent, ram_used_bytes, ram_total_bytes, ram_percent)
     };
 
     SystemStats {
@@ -2473,6 +2564,9 @@ fn get_system_stats() -> SystemStats {
         ram_used_bytes,
         ram_total_bytes,
         ram_percent,
+        uptime_secs: System::uptime(),
+        disks: disk_snapshot(),
+        battery: battery_status(),
     }
 }
 

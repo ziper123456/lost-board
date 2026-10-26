@@ -1180,12 +1180,30 @@ async function renderCompartmentBody(c, body) {
   if (!body) return;
 
   if (c.kind === "system") {
+    const only = Array.isArray(c.data?.disks) ? c.data.disks : [];
+    const wanted = new Set(only.map((m) => String(m).toLowerCase()));
     const renderStats = async () => {
       const s = await native.systemStats();
+      const disks = (s.disks || []).filter(
+        (d) => wanted.size === 0 || wanted.has(String(d.mount).toLowerCase())
+      );
+      const diskHtml = disks
+        .map(
+          (d) => `
+          <div class="meter" title="${escapeHtml(d.name || d.mount)}"><span>${escapeHtml(d.mount)}</span><div class="bar"><div class="fill" style="width:${Math.min(100, d.percent)}%"></div></div><span>${d.percent.toFixed(0)}%</span></div>
+          <div class="muted">${fmtBytes(d.used_bytes)} / ${fmtBytes(d.total_bytes)}</div>`
+        )
+        .join("");
+      const batt = s.battery
+        ? `<div class="meter"><span>Battery</span><div class="bar"><div class="fill" style="width:${s.battery.percent}%"></div></div><span>${s.battery.percent}%${s.battery.charging ? " (charging)" : ""}</span></div>`
+        : "";
       body.innerHTML = `
         <div class="meter"><span>CPU</span><div class="bar"><div class="fill" style="width:${s.cpu_percent}%"></div></div><span>${s.cpu_percent.toFixed(0)}%</span></div>
         <div class="meter"><span>RAM</span><div class="bar"><div class="fill" style="width:${s.ram_percent}%"></div></div><span>${s.ram_percent.toFixed(0)}%</span></div>
-        <div class="muted">${fmtBytes(s.ram_used_bytes)} / ${fmtBytes(s.ram_total_bytes)}</div>`;
+        <div class="muted">${fmtBytes(s.ram_used_bytes)} / ${fmtBytes(s.ram_total_bytes)}</div>
+        ${diskHtml}
+        ${batt}
+        <div class="muted">Uptime: ${fmtUptime(s.uptime_secs)}</div>`;
     };
     await renderStats();
     const t = setInterval(renderStats, 2000);
@@ -3910,6 +3928,49 @@ function renderSystemSettings() {
   appendCollapsibleRow(panel, comp);
   appendAppearanceRow(panel, comp);
 
+  const drivesRow = document.createElement("div");
+  drivesRow.className = "item-row";
+  drivesRow.innerHTML = `<label>Drives</label><span class="muted">loading…</span>`;
+  panel.appendChild(drivesRow);
+  native
+    .systemStats()
+    .then((s) => {
+      if (!drivesRow.isConnected) return;
+      const disks = (s && s.disks) || [];
+      if (!disks.length) {
+        drivesRow.innerHTML = `<label>Drives</label><span class="muted">no drives found</span>`;
+        return;
+      }
+      const all = disks.map((d) => d.mount);
+      const only = Array.isArray(comp.data?.disks) ? comp.data.disks : [];
+      const sel = new Set(only.length ? only : all);
+      drivesRow.innerHTML = `<label>Drives</label>
+        <div class="vocab-cats">${disks
+          .map(
+            (d) =>
+              `<label class="vocab-cat"><input type="checkbox" data-mount="${escapeHtml(d.mount)}" ${sel.has(d.mount) ? "checked" : ""} />${escapeHtml(d.mount)} <span class="muted">${fmtBytes(d.total_bytes)}</span></label>`
+          )
+          .join("")}</div>
+        <span class="muted">empty = all</span>`;
+      drivesRow.querySelectorAll("input[type=checkbox]").forEach((box) =>
+        box.addEventListener("change", () => {
+          const checked = [...drivesRow.querySelectorAll("input:checked")].map((b) => b.dataset.mount);
+          // Keep at least one drive visible; "none" is not a useful tile state.
+          if (!checked.length) {
+            box.checked = true;
+            return;
+          }
+          comp.data = comp.data || {};
+          comp.data.disks = checked.length === all.length ? [] : checked;
+          saveState();
+          render();
+        })
+      );
+    })
+    .catch(() => {
+      if (drivesRow.isConnected) drivesRow.innerHTML = `<label>Drives</label><span class="muted">couldn't load drives</span>`;
+    });
+
   panel.querySelector("#system-select").addEventListener("change", (e) => {
     selectedSystemId = e.target.value;
     renderSystemSettings();
@@ -6109,7 +6170,7 @@ const KIND_DEFAULTS = {
   launcher: { title: "Folders & Files", data: { items: [] } },
   bookmarks: { title: "Bookmarks", data: { urls: [] } },
   azure: { title: "Azure DevOps", data: { org: "", project: "", repos: [] } },
-  system: { title: "System", data: {} },
+  system: { title: "System", data: { disks: [] } },
   weather: { title: "Weather", data: { location: { name: "", lat: undefined, lon: undefined } } },
   news: { title: "News", data: { feeds: [] } },
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
@@ -6332,6 +6393,17 @@ function faviconHtml(src, label) {
     src ? `<img class="favicon-img" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.remove()" />` : ""
   }</span>`;
 }
+
+function fmtUptime(secs) {
+  const s = Math.max(0, Number(secs) || 0);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 function fmtBytes(n) {
   if (!n) return "0 B";
   const u = ["B", "KB", "MB", "GB", "TB"];
