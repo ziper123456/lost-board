@@ -40,4 +40,8 @@ assert.deepEqual(L.targetsFor({ en: ["en", "de", "es"] }, "en"), ["de", "es"]);
 assert.deepEqual(L.targetsFor({ fr: [] }, "fr"), []);
 assert.deepEqual(L.targetsFor(null, "ja"), ["en"]);
 
+assert.ok(L.flagSvg("de").includes("<svg"));
+assert.ok(L.flagSvg("ES").includes("<svg"));
+assert.equal(L.flagSvg("fr"), "");
+
 console.log("lyrics: all assertions passed");

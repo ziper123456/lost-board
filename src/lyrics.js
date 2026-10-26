@@ -66,7 +66,20 @@
     return list.filter((t) => t !== key).slice(0, 2);
   }
 
-  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey, targetsFor };
+  // Small inline SVG flags (Windows doesn't render flag emoji). Only the four
+  // supported target languages; unknown → no icon.
+  const FLAG_SVGS = {
+    en: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="20" fill="#012169"/><path d="M0,0 L30,20 M30,0 L0,20" stroke="#fff" stroke-width="4"/><path d="M0,0 L30,20 M30,0 L0,20" stroke="#C8102E" stroke-width="2"/><rect x="12" width="6" height="20" fill="#fff"/><rect y="7" width="30" height="6" fill="#fff"/><rect x="13.5" width="3" height="20" fill="#C8102E"/><rect y="8.5" width="30" height="3" fill="#C8102E"/></svg>`,
+    de: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="6.67" fill="#000"/><rect y="6.67" width="30" height="6.67" fill="#DD0000"/><rect y="13.33" width="30" height="6.67" fill="#FFCE00"/></svg>`,
+    es: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="20" fill="#AA151B"/><rect y="5" width="30" height="10" fill="#F1BF00"/></svg>`,
+    vi: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="20" fill="#DA251D"/><polygon fill="#FF0" points="15,4 16.41,8.06 20.71,8.15 17.28,10.74 18.53,14.85 15,12.4 11.47,14.85 12.72,10.74 9.29,8.15 13.59,8.06"/></svg>`,
+  };
+
+  function flagSvg(lang) {
+    return FLAG_SVGS[String(lang || "").toLowerCase()] || "";
+  }
+
+  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey, targetsFor, flagSvg };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   global.LyricsUtil = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
