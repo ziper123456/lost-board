@@ -13,7 +13,7 @@ use tauri::Manager;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct DiskStat {
     mount: String,
     name: String,
@@ -2493,25 +2493,25 @@ fn battery_status() -> Option<BatteryStat> {
     None
 }
 
-#[tauri::command]
-fn get_system_stats() -> SystemStats {
-    let mut sys = system_handle().lock().expect("system mutex poisoned");
-    // Let a little time pass so the CPU delta since the previous sample is meaningful.
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    sys.refresh_cpu_usage();
-    sys.refresh_memory();
+/// Disks change slowly and enumerating volumes (especially disconnected network
+/// drives) can block, so snapshot them at most once every 30s instead of on
+/// every 2s stats poll. The cached list is cloned out; the enumeration itself
+/// runs without holding the system-stats mutex.
+fn disk_snapshot() -> Vec<DiskStat> {
+    use std::time::{Duration, Instant};
+    const TTL: Duration = Duration::from_secs(30);
 
-    let cpu_percent = sys.global_cpu_usage();
-    let ram_used_bytes = sys.used_memory();
-    let ram_total_bytes = sys.total_memory();
-    let ram_percent = if ram_total_bytes > 0 {
-        (ram_used_bytes as f64 / ram_total_bytes as f64 * 100.0) as f32
-    } else {
-        0.0
-    };
-    let uptime_secs = System::uptime();
+    let cache = DISK_SNAPSHOT.get_or_init(|| {
+        std::sync::Mutex::new((Instant::now() - TTL, Vec::new()))
+    });
+    {
+        let guard = cache.lock().expect("disk cache poisoned");
+        if guard.0.elapsed() < TTL {
+            return guard.1.clone();
+        }
+    }
 
-    let disks = sysinfo::Disks::new_with_refreshed_list()
+    let disks: Vec<DiskStat> = sysinfo::Disks::new_with_refreshed_list()
         .iter()
         .map(|d| {
             let total = d.total_space();
@@ -2530,13 +2530,42 @@ fn get_system_stats() -> SystemStats {
         })
         .collect();
 
+    let mut guard = cache.lock().expect("disk cache poisoned");
+    *guard = (Instant::now(), disks.clone());
+    disks
+}
+
+static DISK_SNAPSHOT: std::sync::OnceLock<
+    std::sync::Mutex<(std::time::Instant, Vec<DiskStat>)>,
+> = std::sync::OnceLock::new();
+
+#[tauri::command]
+fn get_system_stats() -> SystemStats {
+    let (cpu_percent, ram_used_bytes, ram_total_bytes, ram_percent) = {
+        let mut sys = system_handle().lock().expect("system mutex poisoned");
+        // Let a little time pass so the CPU delta since the previous sample is meaningful.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
+
+        let cpu_percent = sys.global_cpu_usage();
+        let ram_used_bytes = sys.used_memory();
+        let ram_total_bytes = sys.total_memory();
+        let ram_percent = if ram_total_bytes > 0 {
+            (ram_used_bytes as f64 / ram_total_bytes as f64 * 100.0) as f32
+        } else {
+            0.0
+        };
+        (cpu_percent, ram_used_bytes, ram_total_bytes, ram_percent)
+    };
+
     SystemStats {
         cpu_percent,
         ram_used_bytes,
         ram_total_bytes,
         ram_percent,
-        uptime_secs,
-        disks,
+        uptime_secs: System::uptime(),
+        disks: disk_snapshot(),
         battery: battery_status(),
     }
 }

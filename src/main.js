@@ -1181,9 +1181,12 @@ async function renderCompartmentBody(c, body) {
 
   if (c.kind === "system") {
     const only = Array.isArray(c.data?.disks) ? c.data.disks : [];
+    const wanted = new Set(only.map((m) => String(m).toLowerCase()));
     const renderStats = async () => {
       const s = await native.systemStats();
-      const disks = (s.disks || []).filter((d) => only.length === 0 || only.includes(d.mount));
+      const disks = (s.disks || []).filter(
+        (d) => wanted.size === 0 || wanted.has(String(d.mount).toLowerCase())
+      );
       const diskHtml = disks
         .map(
           (d) => `
@@ -3913,8 +3916,12 @@ function renderSystemSettings() {
       drivesRow.querySelectorAll("input[type=checkbox]").forEach((box) =>
         box.addEventListener("change", () => {
           const checked = [...drivesRow.querySelectorAll("input:checked")].map((b) => b.dataset.mount);
+          // Keep at least one drive visible; "none" is not a useful tile state.
+          if (!checked.length) {
+            box.checked = true;
+            return;
+          }
           comp.data = comp.data || {};
-          // All (or none) checked = show all.
           comp.data.disks = checked.length === all.length ? [] : checked;
           saveState();
           render();
@@ -6347,6 +6354,7 @@ function faviconHtml(src, label) {
     src ? `<img class="favicon-img" src="${escapeHtml(src)}" alt="" loading="lazy" onerror="this.remove()" />` : ""
   }</span>`;
 }
+
 function fmtUptime(secs) {
   const s = Math.max(0, Number(secs) || 0);
   const d = Math.floor(s / 86400);
