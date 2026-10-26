@@ -901,7 +901,7 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .ctx-divider { height: 1px; background: var(--border); margin: 4px 6px; }
 
 /* In-app confirmation popup (reuses .ctx-menu shell) */
-.confirm-popup { padding: 12px; }
+.confirm-popup { padding: 12px; z-index: 200; }
 .confirm-msg { font-size: 0.85rem; color: var(--text); margin-bottom: 12px; max-width: 260px; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
