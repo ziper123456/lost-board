@@ -148,6 +148,11 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 
 - **FR-SYS-001** The system shall display current CPU usage and RAM usage, refreshed on an interval
   (e.g., every 1–2s).
+- **FR-SYS-002** The system shall display disk usage (used / total + percent) for the drives chosen in
+  that tile's settings; when no drive is selected, all mounted drives are shown.
+- **FR-SYS-003** The system shall display battery percentage and charging state when a battery is
+  present, and hide the battery row on machines without one.
+- **FR-SYS-004** The system shall display the machine's uptime.
 
 ### 2.10 Compartment: Translate (added beyond original scope)
 
@@ -451,7 +456,8 @@ Then it shows a "connect / open Spotify" prompt instead of an error.
 ### AC-011: System stats
 Given the app is open,
 When 5 seconds elapse,
-Then CPU and RAM usage are displayed and updating on the configured interval.
+Then CPU and RAM usage are displayed and updating on the configured interval, together with
+uptime, battery (if present), and the selected drives' disk usage.
 
 ### AC-012: Settings add a bookmark
 Given the Settings page,

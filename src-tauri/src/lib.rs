@@ -14,11 +14,30 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
 #[derive(Serialize)]
+struct DiskStat {
+    mount: String,
+    name: String,
+    total_bytes: u64,
+    used_bytes: u64,
+    percent: f32,
+}
+
+#[derive(Serialize)]
+struct BatteryStat {
+    percent: u8,
+    charging: bool,
+    ac: bool,
+}
+
+#[derive(Serialize)]
 struct SystemStats {
     cpu_percent: f32,
     ram_used_bytes: u64,
     ram_total_bytes: u64,
     ram_percent: f32,
+    uptime_secs: u64,
+    disks: Vec<DiskStat>,
+    battery: Option<BatteryStat>,
 }
 
 /// Open a folder in the OS file explorer. Accepts an absolute path.
@@ -2451,6 +2470,29 @@ fn system_handle() -> &'static std::sync::Mutex<System> {
 }
 
 /// Read current CPU and RAM usage.
+#[cfg(target_os = "windows")]
+fn battery_status() -> Option<BatteryStat> {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
+        return None;
+    }
+    // BatteryFlag 128 = no system battery; BatteryLifePercent 255 = unknown.
+    if status.BatteryFlag == 128 || status.BatteryLifePercent == 255 {
+        return None;
+    }
+    Some(BatteryStat {
+        percent: status.BatteryLifePercent,
+        charging: status.BatteryFlag & 8 != 0,
+        ac: status.ACLineStatus == 1,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn battery_status() -> Option<BatteryStat> {
+    None
+}
+
 #[tauri::command]
 fn get_system_stats() -> SystemStats {
     let mut sys = system_handle().lock().expect("system mutex poisoned");
@@ -2467,12 +2509,35 @@ fn get_system_stats() -> SystemStats {
     } else {
         0.0
     };
+    let uptime_secs = System::uptime();
+
+    let disks = sysinfo::Disks::new_with_refreshed_list()
+        .iter()
+        .map(|d| {
+            let total = d.total_space();
+            let used = total.saturating_sub(d.available_space());
+            DiskStat {
+                mount: d.mount_point().to_string_lossy().to_string(),
+                name: d.name().to_string_lossy().to_string(),
+                total_bytes: total,
+                used_bytes: used,
+                percent: if total > 0 {
+                    (used as f64 / total as f64 * 100.0) as f32
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect();
 
     SystemStats {
         cpu_percent,
         ram_used_bytes,
         ram_total_bytes,
         ram_percent,
+        uptime_secs,
+        disks,
+        battery: battery_status(),
     }
 }
 

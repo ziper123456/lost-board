@@ -21,7 +21,7 @@ desktop background with tray + autostart.
   - `pick_folder` / `pick_solution` / `pick_icon` / `pick_image` — native file pickers
   - `classify_path` — classify a dropped path (dir / solution / file / missing)
   - `scan_project_root` — scan a repo root into projects with solutions
-  - `get_system_stats` — live CPU / RAM usage
+  - `get_system_stats` — live CPU / RAM usage, disk usage, battery, uptime
   - `fetch_rss` / `cache_favicon` — CORS-free feed fetch, on-disk favicon cache
   - `load_state` / `save_state` — app-data JSON config with schema validation + `.bak` on corrupt
   - `export_config` / `import_config` — move the config to another machine (secrets never exported)
