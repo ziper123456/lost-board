@@ -580,12 +580,26 @@ html { font-size: var(--font-size, 16px); }
 }
 .spot-track { display: flex; gap: 10px; align-items: flex-start; flex: 0 0 auto; }
 .spot-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.spot-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.spot-heading .spot-title { flex: 1; min-width: 0; }
+.spot-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 0.85em; flex: 0 0 auto; }
+.spot-eq i { display: block; width: 2px; border-radius: 1px; background: var(--accent); opacity: 0.7; }
+.spot-eq i:nth-child(1) { height: 30%; }
+.spot-eq i:nth-child(2) { height: 55%; }
+.spot-eq i:nth-child(3) { height: 40%; }
+.spot-eq.playing i { animation: eq-bounce 0.9s ease-in-out infinite; opacity: 1; }
+.spot-eq.playing i:nth-child(2) { animation-delay: 0.18s; }
+.spot-eq.playing i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes eq-bounce {
+  0%, 100% { height: 25%; }
+  50% { height: 100%; }
+}
 .spot-title { font-weight: 600; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .spot-artist { font-size: 0.8rem; color: var(--text); opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spot-album { font-size: 0.72rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spot-progress-hit { padding: 5px 0; cursor: pointer; touch-action: none; }
 .spot-progress { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; }
-.spot-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.spot-fill { height: 100%; background: var(--accent); box-shadow: inset 0 0 4px rgba(255,255,255,0.35); border-radius: 2px; }
 /* Controls: transport buttons left, volume slider right */
 .spot-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; flex-wrap: wrap; }
 .spot-controls-left { display: flex; gap: 6px; }
@@ -766,6 +780,47 @@ html { font-size: var(--font-size, 16px); }
 .item-row input { flex: 1; }
 .item-row .btn { flex: 0 0 auto; }
 
+/* Boolean setting switch: styles a native checkbox, behavior unchanged. */
+input[type="checkbox"].switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 2.2em;
+  height: 1.2em;
+  margin: 0;
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: 1em;
+  background: var(--panel-2);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+input[type="checkbox"].switch::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.16em;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition: left 0.15s ease, background-color 0.15s ease;
+}
+input[type="checkbox"].switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"].switch:checked::before {
+  left: calc(100% - 0.96em);
+  background: #fff;
+}
+input[type="checkbox"].switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Add-tile form in the Grid settings tab */
 .add-tile {
   margin-top: 16px;
@@ -803,7 +858,7 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .vocab-pos.active { border-color: var(--accent); background: rgba(124, 58, 237, 0.18); }
 .vocab-mastery { flex-direction: column; align-items: stretch; gap: 6px; }
 .vocab-mastery-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
-.vocab-mastery-seg { height: 100%; }
+.vocab-mastery-seg { height: 100%; transition: width 0.4s ease; }
 .vocab-mastery-seg.mature { background: #3fb950; }
 .vocab-mastery-seg.young { background: #58a6ff; }
 .vocab-mastery-seg.learning { background: #d29922; }
@@ -855,10 +910,47 @@ input[type="text"], input[type="number"], input[type="password"], select {
 .meme-edit-row .meme-entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warn { color: #f0c674; }
 
+/* Tiny loading dots for tile placeholders */
+.dots { display: inline-flex; align-items: center; gap: 0.22em; margin-left: 0.35em; vertical-align: middle; }
+.dots i {
+  width: 0.28em;
+  height: 0.28em;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-0.12em); }
+}
+
 /* Simple system stats widget */
 .meter { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .meter .bar { flex: 1; height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
-.meter .fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.meter .fill {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--accent);
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.18), transparent 60%);
+  transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.meter .fill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  animation: meter-sheen 2.6s linear infinite;
+}
+@keyframes meter-sheen {
+  to { left: 110%; }
+}
 /* Right-click context menu (tiles + empty grid) */
 .ctx-menu {
   position: fixed;
@@ -1021,6 +1113,12 @@ input[type="color"]:hover { border-color: var(--accent); }
   .lyr-lines { scroll-behavior: auto; }
   .lyr-line { transition: none; }
   .lyr-line.cur { animation: none; }
+  .spot-eq.playing i { animation: none; }
+  .meter .fill { transition: none; }
+  .meter .fill::after { animation: none; opacity: 0; }
+  .dots i { animation: none; opacity: 0.6; }
+  input[type="checkbox"].switch,
+  input[type="checkbox"].switch::before { transition: none; }
 }
 .lyr-empty { color: var(--muted); font-size: 0.8em; padding: 6px 0; }
 .lyr-trans { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 0.7em; color: var(--muted); margin-bottom: 4px; }

@@ -1313,7 +1313,7 @@ async function renderCompartmentBody(c, body) {
       body.innerHTML = `<div class="muted">No news feeds — add some in Settings.</div>`;
       return;
     }
-    body.innerHTML = `<div class="muted">Loading news…</div>`;
+    body.innerHTML = `<div class="muted">${loadingHtml("Loading news")}</div>`;
     renderNewsFeeds(c, body, feeds);
   } else if (c.kind === "translate") {
     renderTranslateBody(c, body);
@@ -1570,6 +1570,13 @@ async function renderLyricsBody(c, body) {
     emptyEl.hidden = false;
     emptyEl.textContent = msg;
   };
+  const emptyLoading = (msg) => {
+    fullRenderKey = "";
+    linesEl.innerHTML = "";
+    linesEl.hidden = true;
+    emptyEl.hidden = false;
+    emptyEl.innerHTML = loadingHtml(msg);
+  };
 
   const scrollCurrent = () => {
     const cur = linesEl.querySelector(".lyr-line.cur");
@@ -1614,7 +1621,7 @@ async function renderLyricsBody(c, body) {
     if (synced.length === 0 && plainLines.length === 0) {
       modeBtn.disabled = true;
       if (instrumental) emptyMsg("Instrumental");
-      else if (status === "loading") emptyMsg("Loading lyrics…");
+      else if (status === "loading") emptyLoading("Loading lyrics");
       else emptyMsg("No lyrics for this track.");
       return;
     }
@@ -2269,7 +2276,10 @@ async function renderSpotifyBody(c, body) {
     <div class="spot-overlay">
       <div class="spot-track">
         <div class="spot-meta">
-          <div class="spot-title"></div>
+          <div class="spot-heading">
+            <div class="spot-title"></div>
+            <span class="spot-eq" aria-hidden="true"><i></i><i></i><i></i></span>
+          </div>
           <div class="spot-artist"></div>
           <div class="spot-album"></div>
           <div class="spot-progress-hit"><div class="spot-progress"><div class="spot-fill" style="width:0%"></div></div></div>
@@ -2294,6 +2304,7 @@ async function renderSpotifyBody(c, body) {
   const bgEl = body.querySelector(".spot-bg");
   const titleEl = body.querySelector(".spot-title");
   const fillEl = body.querySelector(".spot-fill");
+  const eqEl = body.querySelector(".spot-eq");
   let playing = false;
   let shuffleOn = false;
   let repeatMode = "off";
@@ -2339,6 +2350,7 @@ async function renderSpotifyBody(c, body) {
       body.querySelector(".spot-album").textContent = "";
       durationMs = 0;
       fillEl.style.width = "0%";
+      eqEl.classList.remove("playing");
       lastSpotifyArt = "";
       void refreshDynamicPalette();
       return;
@@ -2353,6 +2365,7 @@ async function renderSpotifyBody(c, body) {
     anchorProgressMs = track.progress_ms || 0;
     durationMs = track.duration_ms || 0;
     trackPlaying = !!track.playing;
+    eqEl.classList.toggle("playing", trackPlaying);
     anchorAt = performance.now();
     endRefreshFired = false;
     renderProgress();
@@ -2721,7 +2734,7 @@ function renderWeatherBody(c, body) {
     return;
   }
 
-  body.innerHTML = `<div class="muted">Loading weather…</div>`;
+  body.innerHTML = `<div class="muted">${loadingHtml("Loading weather")}</div>`;
   const show = (html) => {
     if (body.isConnected) body.innerHTML = html;
   };
@@ -3021,10 +3034,10 @@ function appendCollapsibleRow(panel, comp) {
   row.className = "item-row";
   row.innerHTML = `
     <label>Collapsible
-      <input type="checkbox" class="collapsible" ${comp.collapsible !== false ? "checked" : ""} />
+      <input type="checkbox" class="collapsible switch" ${comp.collapsible !== false ? "checked" : ""} />
     </label>
     <label>Hide header
-      <input type="checkbox" class="hide-header" ${comp.hideHeader ? "checked" : ""} />
+      <input type="checkbox" class="hide-header switch" ${comp.hideHeader ? "checked" : ""} />
     </label>`;
   row.querySelector(".collapsible").addEventListener("change", (e) => {
     comp.collapsible = e.target.checked;
@@ -3222,7 +3235,7 @@ function appendDecorationRow(panel, comp) {
   const gRow = document.createElement("div");
   gRow.className = "item-row";
   gRow.innerHTML = `
-    <label>Tile gradient <input type="checkbox" class="td-grad-on" ${gradOn ? "checked" : ""} /></label>
+    <label>Tile gradient <input type="checkbox" class="td-grad-on switch" ${gradOn ? "checked" : ""} /></label>
     <span class="td-grad-fields" ${gradOn ? "" : "hidden"}>
       <input type="color" class="td-grad-from" value="${comp.bgFrom || "#1a1a20"}" />
       <input type="color" class="td-grad-to" value="${comp.bgTo || "#2a1a4a"}" />
@@ -4206,7 +4219,7 @@ function renderBackupSettings() {
 
   const enableRow = document.createElement("div");
   enableRow.className = "item-row";
-  enableRow.innerHTML = `<label><input type="checkbox" id="backup-enabled" ${cfg.enabled ? "checked" : ""} /> Automatic backups</label>`;
+  enableRow.innerHTML = `<label><input type="checkbox" class="switch" id="backup-enabled" ${cfg.enabled ? "checked" : ""} /> Automatic backups</label>`;
   panel.appendChild(enableRow);
 
   const dirRow = document.createElement("div");
@@ -4756,7 +4769,7 @@ function renderLyricsSettings() {
 
   const trRow = document.createElement("div");
   trRow.className = "item-row";
-  trRow.innerHTML = `<label>Show translations (up to 2) <input type="checkbox" id="lyr-translate" ${state.lyricsTranslate ? "checked" : ""} /></label>
+  trRow.innerHTML = `<label>Show translations (up to 2) <input type="checkbox" class="switch" id="lyr-translate" ${state.lyricsTranslate ? "checked" : ""} /></label>
     <span class="muted">Detects the lyrics language, then translates into the other two of EN/DE/ES (VI → DE+ES). LLM via opencode first, DeepL fallback — lyrics are sent to that provider.</span>`;
   panel.appendChild(trRow);
   trRow.querySelector("#lyr-translate").addEventListener("change", (e) => {
@@ -5049,7 +5062,7 @@ function renderVocabSettings() {
     const voiceRow = document.createElement("div");
     voiceRow.className = "item-row";
     voiceRow.innerHTML = `
-      <label>Voice enable <input id="vocab-speak" type="checkbox" ${comp.data.speak ? "checked" : ""} title="Speak each card EN, then ES, then DE" /></label>
+      <label>Voice enable <input id="vocab-speak" type="checkbox" class="switch" ${comp.data.speak ? "checked" : ""} title="Speak each card EN, then ES, then DE" /></label>
       <label>English <select id="vocab-voice-en" data-lang="en"><option value="">Default</option></select></label>
       <label>Spanish <select id="vocab-voice-es" data-lang="es"><option value="">Default</option></select></label>
       <label>German <select id="vocab-voice-de" data-lang="de"><option value="">Default</option></select></label>`;
@@ -5114,7 +5127,7 @@ function renderVocabSettings() {
   const pop = document.createElement("div");
   pop.className = "item-row";
   pop.innerHTML = `
-    <label>Enabled <input id="vocab-enabled" type="checkbox" ${v.enabled ? "checked" : ""} /></label>
+    <label>Enabled <input id="vocab-enabled" type="checkbox" class="switch" ${v.enabled ? "checked" : ""} /></label>
     <label>Every <input id="vocab-every" type="number" min="1" max="240" value="${Number(v.everyMin) || 30}" />min</label>
     <label>Language
       <select id="vocab-lang">
@@ -5301,7 +5314,7 @@ function renderVocabSettings() {
           .join("")}
       </select>
     </label>
-    <label title="Show high-lapse cards first in the session"><input type="checkbox" id="vocab-struggling-first" ${v.strugglingFirst ? "checked" : ""} /> Prioritize hard words</label>
+    <label title="Show high-lapse cards first in the session"><input type="checkbox" class="switch" id="vocab-struggling-first" ${v.strugglingFirst ? "checked" : ""} /> Prioritize hard words</label>
     <button class="btn ghost" id="vocab-practice" title="Extra ungraded reps on words you keep forgetting — doesn't affect mastery">Practice hard words</button>
     <span id="vocab-session-status" class="muted"></span>`;
   panel.appendChild(sessRow);
@@ -5335,7 +5348,7 @@ function renderVocabSettings() {
   const srsRow = document.createElement("div");
   srsRow.className = "item-row";
   srsRow.innerHTML = `
-    <label>Smart scheduling <input type="checkbox" id="vocab-srs" title="Review cards on an expanding schedule (SM-2)" /></label>
+    <label>Smart scheduling <input type="checkbox" class="switch" id="vocab-srs" title="Review cards on an expanding schedule (SM-2)" /></label>
     <button class="btn ghost" id="vocab-srs-reset">Reset progress</button>
     <span id="vocab-srs-status" class="muted"></span>`;
   panel.appendChild(srsRow);
@@ -6194,7 +6207,7 @@ function renderCalendarSettings() {
         <option value="sun" ${opts.weekStart === "sun" ? "selected" : ""}>Sunday</option>
       </select>
     </label>
-    <label>Moon phase <input type="checkbox" id="cal-moon" ${opts.moonPhase ? "checked" : ""} /></label>`;
+    <label>Moon phase <input type="checkbox" class="switch" id="cal-moon" ${opts.moonPhase ? "checked" : ""} /></label>`;
   panel.appendChild(optRow);
 
   const holHead = document.createElement("div");
@@ -6309,7 +6322,7 @@ function renderDesignSettings() {
   const dynRow = document.createElement("div");
   dynRow.className = "item-row";
   dynRow.innerHTML = `
-    <label>Use Spotify cover color <input type="checkbox" id="dyn-spotify" ${state.design.dynamicSpotify ? "checked" : ""} /></label>
+    <label>Use Spotify cover color <input type="checkbox" class="switch" id="dyn-spotify" ${state.design.dynamicSpotify ? "checked" : ""} /></label>
     <span class="dyn-swatch" id="dyn-swatch" title="Current cover accent"></span>
     <span class="muted" id="dyn-status"></span>`;
   panel.appendChild(dynRow);
@@ -6345,7 +6358,7 @@ function renderDesignSettings() {
   const gradOn = !!(state.design.bgFrom && state.design.bgTo);
   const gradRow = document.createElement("div");
   gradRow.className = "item-row";
-  gradRow.innerHTML = `<label>Gradient <input type="checkbox" class="d-input" ${gradOn ? "checked" : ""} /></label>`;
+  gradRow.innerHTML = `<label>Gradient <input type="checkbox" class="d-input switch" ${gradOn ? "checked" : ""} /></label>`;
   panel.appendChild(gradRow);
   gradRow.querySelector(".d-input").addEventListener("change", (e) => {
     if (e.target.checked) {
@@ -6616,6 +6629,11 @@ dashboard.addEventListener("mouseup", () => {
 // ---------------------------------------------------------------------------
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+const LOADING_DOTS = '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+// "Loading news" + three pulsing dots, for tile placeholders.
+function loadingHtml(label) {
+  return `${escapeHtml(label)}${LOADING_DOTS}`;
 }
 function hostOf(url) {
   try {
