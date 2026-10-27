@@ -133,7 +133,7 @@ function applyAppearance() {
   const dynAmt = pct(d.dynAccentMix, 60) / 100;
   const tileBorderBase = d.tileBorderColor || v("borderColor", t.border);
   const effectiveTileBorder = dynOn
-    ? Colors.mixHex(tileBorderBase, dynamicPalette.accent, dynAmt * 0.85)
+    ? Colors.mixHex(tileBorderBase, effectiveAccent, dynAmt)
     : v("tileBorderColor", "var(--border)");
   let effectiveTileShadow = v("tileShadow", "none");
   if (dynOn) {
@@ -1100,7 +1100,18 @@ function render() {
       if (val) rec.el.style.setProperty(name, val);
       else rec.el.style.removeProperty(name);
     };
-    setTileVar("--tile-border", c.borderColor || "");
+    const dynBorderPct =
+      state.design?.dynamicSpotify && dynamicPalette
+        ? Math.max(0, Math.min(100, Number(state.design?.dynAccentMix ?? 60)))
+        : 0;
+    setTileVar(
+      "--tile-border",
+      c.borderColor
+        ? dynBorderPct > 0
+          ? `color-mix(in srgb, ${c.borderColor} ${100 - dynBorderPct}%, var(--accent))`
+          : c.borderColor
+        : ""
+    );
     setTileVar("--tile-border-w", c.borderWidth != null ? `${c.borderWidth}px` : "");
     setTileVar("--tile-radius", c.radius != null ? `${c.radius}px` : "");
     setTileVar("--tile-shadow", c.shadow || "");
