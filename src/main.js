@@ -193,8 +193,17 @@ function applyAppearance() {
   root.setProperty("--board-bg", boardBg);
   // Push the computed tokens to the drill popup (separate window, own stylesheet).
   if (window.__TAURI__) {
+    // The popup paints --board-bg as a background *image layer* (under a scrim),
+    // so a plain colour must be normalised to a gradient or the layer is invalid.
+    const popupBoardBg =
+      boardBg === "var(--bg)"
+        ? `linear-gradient(${v("bg", t.bg)}, ${v("bg", t.bg)})`
+        : boardBg;
+    const popupScheme =
+      typeof Colors !== "undefined" && Colors.luminance(v("bg", t.bg)) > 0.5 ? "light" : "dark";
     const popupCss =
       ":root{" +
+      `color-scheme:${popupScheme};` +
       `--bg:${v("bg", t.bg)};` +
       `--panel:${effectivePanel};` +
       `--panel-2:${effectivePanel2};` +
@@ -202,10 +211,13 @@ function applyAppearance() {
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
       `--accent:${effectiveAccent};` +
+      `--green:${v("green", "#22c55e")};` +
+      `--red:${v("red", "#ef4444")};` +
+      `--amber:${v("amber", "#f59e0b")};` +
       `--radius:${radiusGlobal}px;` +
       `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
       `--font-size:${v("fontBase", 16)}px;` +
-      `--board-bg:${boardBg};` +
+      `--board-bg:${popupBoardBg};` +
       "}";
     void native.setPopupTheme(popupCss).catch(() => {});
   }
