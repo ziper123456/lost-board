@@ -95,8 +95,8 @@ html { font-size: var(--font-size, 16px); }
   right: 0;
   bottom: 0;
   width: 320px;
-  background: var(--panel);
-  border-left: 1px solid var(--border);
+  background: var(--tile-bg, var(--panel));
+  border-left: 1px solid var(--box-border, var(--border));
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   display: flex;
   flex-direction: column;
@@ -108,7 +108,7 @@ html { font-size: var(--font-size, 16px); }
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--box-border, var(--border));
   background: var(--panel-2);
 }
 .preview-title { font-weight: 600; font-size: 0.9rem; }
@@ -259,8 +259,8 @@ html { font-size: var(--font-size, 16px); }
 /* Floating overlay for an open collapsed tile — can overlap other tiles */
 .compartment-overlay {
   position: absolute;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  background: var(--tile-bg, var(--panel));
+  border: 1px solid var(--box-border, var(--border));
   border-radius: 0 0 var(--radius, 10px) var(--radius, 10px);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
   overflow: hidden;
@@ -299,7 +299,7 @@ html { font-size: var(--font-size, 16px); }
   gap: 8px;
   padding: 6px 8px;
   margin: 4px 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--box-border, var(--border));
   border-radius: 6px;
   background: var(--panel-2);
 }
@@ -346,7 +346,7 @@ html { font-size: var(--font-size, 16px); }
   width: 100%;
   padding: 6px 10px;
   margin: 3px 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--box-border, var(--border));
   border-radius: 6px;
   background: var(--panel-2);
   cursor: pointer;
@@ -415,7 +415,7 @@ html { font-size: var(--font-size, 16px); }
   gap: 8px;
   padding: 5px 8px;
   margin: 3px 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--box-border, var(--border));
   border-radius: 6px;
   background: var(--panel-2);
 }
@@ -578,7 +578,7 @@ html { font-size: var(--font-size, 16px); }
   resize: none;
   min-height: 0;
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--box-border, var(--border));
   color: var(--text);
   border-radius: 6px;
   padding: 6px 8px;
@@ -675,7 +675,7 @@ html { font-size: var(--font-size, 16px); }
 
 /* Projects tile */
 .prj-note { color: var(--muted); font-size: 0.8rem; margin: 4px 0; }
-.prj-group { border: 1px solid var(--border); border-radius: var(--radius, 10px); margin-bottom: 8px; overflow: hidden; }
+.prj-group { border: 1px solid var(--box-border, var(--border)); border-radius: var(--radius, 10px); margin-bottom: 8px; overflow: hidden; }
 .prj-root {
   display: flex;
   align-items: center;
@@ -923,7 +923,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
 .vocab-cat { display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; cursor: pointer; }
 .vocab-pos-grid { display: grid; grid-template-columns: repeat(3, 30px); gap: 4px; }
 .vocab-pos { width: 30px; height: 22px; padding: 0; }
-.vocab-pos.active { border-color: var(--accent); background: rgba(124, 58, 237, 0.18); }
+.vocab-pos.active { border-color: var(--accent); background: var(--panel-2); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .vocab-mastery { flex-direction: column; align-items: stretch; gap: 6px; }
 .vocab-mastery-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
 .vocab-mastery-seg { height: 100%; transition: width 0.4s ease; }
@@ -976,7 +976,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
 .meme-thumb-del { position: absolute; top: 2px; right: 2px; padding: 1px 7px; background: rgba(20, 20, 26, 0.75); }
 .meme-settings-list { display: flex; flex-direction: column; gap: 2px; }
 .meme-edit-row .meme-entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.warn { color: #f0c674; }
+.warn { color: var(--amber); }
 
 /* Tiny loading dots for tile placeholders */
 .dots { display: inline-flex; align-items: center; gap: 0.22em; margin-left: 0.35em; vertical-align: middle; }
@@ -1063,8 +1063,8 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
   transition: background-color var(--transition, 0.12s) ease;
 }
 .ctx-item:hover { background: var(--panel-2); background: color-mix(in srgb, var(--accent) 10%, var(--panel-2)); }
-.ctx-item.danger { color: #e5484d; }
-.ctx-item.danger:hover { background: rgba(229, 72, 77, 0.14); }
+.ctx-item.danger { color: var(--red); }
+.ctx-item.danger:hover { background: rgba(229, 72, 77, 0.14); background: color-mix(in srgb, var(--red) 14%, transparent); }
 .ctx-icon { display: inline-flex; width: 16px; justify-content: center; opacity: 0.85; }
 .ctx-icon svg { width: 14px; height: 14px; }
 .ctx-label { flex: 1; }
@@ -1093,6 +1093,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
   border: 1px solid transparent;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1100,9 +1101,16 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
   overflow: hidden;
 }
 .cal-cell.dim { opacity: 0.32; }
-.cal-cell.today { border-color: var(--accent); background: rgba(124, 58, 237, 0.18); }
-.cal-cell.holiday { background: rgba(239, 68, 68, 0.16); }
-.cal-cell.holiday.today { background: rgba(124, 58, 237, 0.22); }
+.cal-cell.today {
+  border-color: var(--accent);
+  background: var(--panel-2);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.cal-cell.holiday {
+  background: var(--panel-2);
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+}
+.cal-cell.holiday.today { background: var(--panel-2); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .cal-solar { font-size: 0.82rem; font-weight: 600; line-height: 1; }
 .cal-lunar { font-size: 0.58rem; color: var(--muted); line-height: 1.1; white-space: nowrap; }
 .cal-cell.holiday .cal-lunar, .cal-cell.holiday .cal-solar { color: var(--text); }

@@ -4,9 +4,12 @@ const C = require("../src/colors.js");
 
 assert.deepEqual(C.hexToRgb("#ff8000"), { r: 255, g: 128, b: 0 });
 assert.deepEqual(C.hexToRgb("#fff"), { r: 255, g: 255, b: 255 });
+assert.deepEqual(C.hexToRgb("rgb(34, 34, 46)"), { r: 34, g: 34, b: 46 });
+assert.deepEqual(C.hexToRgb("rgba(255, 128, 0, 0.55)"), { r: 255, g: 128, b: 0 });
 assert.equal(C.rgbToHex(255, 128, 0), "#ff8000");
 
 assert.equal(C.mixHex("#000000", "#ffffff", 0.5), "#808080");
+assert.equal(C.mixHex("rgba(0, 0, 0, 0.5)", "#ffffff", 0.5), "#808080");
 assert.equal(C.mixHex("#ff0000", "#0000ff", 0), "#ff0000");
 assert.equal(C.mixHex("#ff0000", "#0000ff", 1), "#0000ff");
 

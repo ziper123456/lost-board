@@ -151,6 +151,11 @@ function applyAppearance() {
   const effectivePanel = mixSurf("panel", t.panel, 0.35, t.panel);
   const effectivePanel2 = mixSurf("panel2", t.panel2, 0.35, t.panel2);
   const effectiveBorder = mixSurf("borderColor", t.border, 0.5, t.border);
+  // Borders of boxes inside tiles (folder rows, bookmarks, Azure repos, preview,
+  // drill controls) lean harder into the dynamic accent than the global border.
+  const effectiveBoxBorder = dynOn
+    ? Colors.mixHex(effectiveBorder, effectiveAccent, dynAmt * 0.5)
+    : effectiveBorder;
   const effectiveTileBg = mixSurf("tileBg", t.panel, 0.3, "var(--panel)");
   const effectiveInputBg = mixSurf("inputBg", t.panel2, 0.25, "var(--panel-2)");
   const effectiveScroll = mixSurf("scrollThumb", t.panel2, 0.4, "var(--panel-2)");
@@ -159,6 +164,7 @@ function applyAppearance() {
   root.setProperty("--panel", effectivePanel);
   root.setProperty("--panel-2", effectivePanel2);
   root.setProperty("--border", effectiveBorder);
+  root.setProperty("--box-border", effectiveBoxBorder);
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
   root.setProperty("--accent", effectiveAccent);
@@ -208,6 +214,8 @@ function applyAppearance() {
       `--panel:${effectivePanel};` +
       `--panel-2:${effectivePanel2};` +
       `--border:${effectiveBorder};` +
+      `--box-border:${effectiveBoxBorder};` +
+      `--tile-bg:${effectiveTileBg};` +
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
       `--accent:${effectiveAccent};` +
