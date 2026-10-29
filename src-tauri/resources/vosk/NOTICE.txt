@@ -1,0 +1,10 @@
+Vosk API (vosk-api) 0.3.45
+https://github.com/alphacep/vosk-api
+Copyright (c) Alpha Cephei
+Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+The bundled Windows x64 runtime contains libvosk.dll, libvosk.lib and the
+MinGW runtime DLLs from the official vosk-win64-0.3.45.zip release.
+Speech models are downloaded separately from https://alphacephei.com/vosk/models
+and are not part of this repository.

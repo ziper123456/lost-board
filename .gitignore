@@ -25,3 +25,4 @@ Thumbs.db
 
 # Obsidian (if the repo is ever opened inside a vault)
 .obsidian/
+src-tauri/resources/vosk/extracted/
