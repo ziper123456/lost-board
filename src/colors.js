@@ -6,11 +6,30 @@
   "use strict";
 
   function hexToRgb(hex) {
-    let h = String(hex || "").trim().replace(/^#/, "");
-    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
-    if (!/^[0-9a-fA-F]{6}$/.test(h)) return { r: 0, g: 0, b: 0 };
-    const n = parseInt(h, 16);
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    const s = String(hex || "").trim();
+    const h = s.replace(/^#/, "");
+    if (h.length === 3 && /^[0-9a-fA-F]{3}$/.test(h)) {
+      return {
+        r: parseInt(h[0] + h[0], 16),
+        g: parseInt(h[1] + h[1], 16),
+        b: parseInt(h[2] + h[2], 16),
+      };
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(h)) {
+      const n = parseInt(h, 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    }
+    // Design presets (e.g. Glass) use rgb()/rgba(); accept them too. Alpha is
+    // ignored here because the mix helpers return opaque hex colours.
+    const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i.exec(s);
+    if (m) {
+      return {
+        r: Math.max(0, Math.min(255, Math.round(Number(m[1])))),
+        g: Math.max(0, Math.min(255, Math.round(Number(m[2])))),
+        b: Math.max(0, Math.min(255, Math.round(Number(m[3])))),
+      };
+    }
+    return { r: 0, g: 0, b: 0 };
   }
 
   function rgbToHex(r, g, b) {
