@@ -6,7 +6,7 @@ It replaces a browser start page and scattered bookmarks with a customizable gri
 "compartments": open folders / solutions / files, browse scanned repo projects, jump to Azure
 DevOps repos, control Spotify, drill vocabulary with spaced repetition, rotate memes, and see
 weather (with world clocks), news, a Vietnamese lunar calendar, translate text, framed photos,
-and system stats. Tiles are themed (built-in themes + a design-token layer) with per-tile
+live system-audio captions, and system stats. Tiles are themed (built-in themes + a design-token layer) with per-tile
 context menus and an optional "hide header" immersive mode, and the board can be pinned as a
 desktop background with tray + autostart.
 
@@ -34,6 +34,9 @@ desktop background with tray + autostart.
   - `vocab_srs_stats` / `vocab_category_stats` / `vocab_pos_counts` / `vocab_srs_enabled` / `vocab_set_srs` / `vocab_reset_srs` — mastery buckets, per-category breakdown, part-of-speech counts, SRS toggle/reset
   - `vocab_card_detail` / `vocab_set_popup_expanded` — per-card usage/conjugation enrichment + in-place drill resize
   - `vocab_lyrics_batch` / `lyrics_phrase_count` — random translated lyric phrases from the lyric caches (ungraded drill category)
+  - `caption_start` / `caption_stop` / `caption_set_device` / `caption_poll` / `caption_devices` — WASAPI loopback + Vosk streaming captions
+  - `caption_models` / `caption_download_model` / `caption_remove_model` — on-demand Vosk language packs
+  - `caption_save` / `caption_open_folder` / `caption_clear` — Markdown transcript export/clear
   - `set_popup_theme` / `get_popup_theme` — push the board's design tokens into the drill popup window
   - `fetch_image_cached` / `import_image_file` / `load_cached_image` — disk-cached image pool (meme tile)
   - `save_meme_png` / `save_meme_source` / `save_meme_captioned_gif` — captioned/static/animated exports

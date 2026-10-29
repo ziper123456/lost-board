@@ -56,6 +56,7 @@
           <button class="tab" data-tab="vocab">Vocab</button>
           <button class="tab" data-tab="meme">Memes</button>
           <button class="tab" data-tab="calendar">Calendar</button>
+          <button class="tab" data-tab="captions">Captions</button>
           <button class="tab" data-tab="system">System</button>
           <button class="tab" data-tab="backup">Backup</button>
           <button class="tab" data-tab="config">Config</button>
@@ -133,6 +134,7 @@
                   <option value="vocab">Vocab</option>
                   <option value="meme">Memes</option>
                   <option value="calendar">Calendar</option>
+                  <option value="caption">Captions</option>
                   <option value="spotify">Spotify</option>
                   <option value="lyrics">Lyrics</option>
                   <option value="system">System</option>
@@ -200,6 +202,10 @@
           <div class="tab-panel" data-panel="calendar">
             <p>Calendar tile with the Vietnamese lunar calendar (âm lịch), moon phases, and public-holiday highlights.</p>
             <div id="calendar-list"></div>
+          </div>
+          <div class="tab-panel" data-panel="captions">
+            <p>Live captions from the whole PC's audio. One language per session; speech in other languages is decoded as the selected one. Language packs download on demand.</p>
+            <div id="caption-list"></div>
           </div>
           <div class="tab-panel" data-panel="backup">
             <p>Automatic backups write one timestamped JSON bundle into a folder you choose: dashboard config, browser localStorage, and the lyrics caches. API keys and tokens are never included.</p>
