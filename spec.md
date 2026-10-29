@@ -409,7 +409,8 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-CAP-004** The output device shall be selectable **both in the tile and in Settings** and kept
   in sync; changing it while listening restarts capture on the new device and keeps the transcript.
 - **FR-CAP-005** The tile shall show live partial text and finalized lines (timestamped), finalized
-  at short pauses; the UI keeps the latest 500 lines.
+  at Vosk silence endpoints with a configurable line-break pause (default 0.7 s); the UI keeps the
+  latest 500 lines.
 - **FR-CAP-006** Transcripts shall auto-save as Markdown (`[HH:MM:SS] text`) to the configured folder
   or app-data `captions/`; the tile offers **Save as…**, **Open folder**, and **Clear**. API keys and
   audio never leave the machine; only model downloads use the network.

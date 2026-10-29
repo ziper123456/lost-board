@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 use tauri::Manager;
-use vosk::{Model, Recognizer};
+use vosk::{DecodingState, Model, Recognizer};
 use wasapi::{
     initialize_mta, Device, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat,
 };
@@ -24,7 +24,7 @@ use wasapi::{
 const MAX_LINES: usize = 500;
 const SAMPLE_RATE: u32 = 16_000;
 const CHUNK: usize = 1600; // 100 ms
-const FINALIZE_AFTER: Duration = Duration::from_millis(1200);
+const DEFAULT_FINALIZE_MS: u64 = 700;
 
 #[derive(Clone, Serialize)]
 pub struct CaptionLine {
@@ -192,6 +192,7 @@ struct EngineState {
     auto_save: bool,
     save_dir: PathBuf,
     file_path: Option<PathBuf>,
+    finalize_ms: u64,
 }
 
 impl Default for EngineState {
@@ -211,6 +212,7 @@ impl Default for EngineState {
             auto_save: true,
             save_dir: PathBuf::new(),
             file_path: None,
+            finalize_ms: DEFAULT_FINALIZE_MS,
         }
     }
 }
@@ -314,8 +316,10 @@ fn start_capture(
     device_id: String,
     auto_save: bool,
     save_dir: String,
+    finalize_ms: u64,
     preserve: bool,
 ) -> Result<(), String> {
+    let finalize_ms = finalize_ms.clamp(300, 5000);
     let spec = spec_for(&model_id).ok_or_else(|| format!("Unsupported model: {model_id}"))?;
     let path = model_path(&app, spec);
     if !model_installed(&path) {
@@ -349,6 +353,7 @@ fn start_capture(
         e.error.clear();
         e.auto_save = auto_save;
         e.save_dir = dir;
+        e.finalize_ms = finalize_ms;
     }
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -356,7 +361,7 @@ fn start_capture(
     let thread_app = app.clone();
     let thread_device = device_id.clone();
     let handle = thread::spawn(move || {
-        if let Err(err) = capture_loop(&thread_app, &thread_device, &path, &stop_thread) {
+        if let Err(err) = capture_loop(&thread_app, &thread_device, &path, &stop_thread, finalize_ms) {
             if !stop_thread.load(Ordering::SeqCst) {
                 set_error(&err);
             }
@@ -386,8 +391,9 @@ pub fn caption_start(
     device_id: String,
     auto_save: bool,
     save_dir: String,
+    finalize_ms: u64,
 ) -> Result<(), String> {
-    start_capture(app, model_id, device_id, auto_save, save_dir, false)
+    start_capture(app, model_id, device_id, auto_save, save_dir, finalize_ms, false)
 }
 
 #[tauri::command]
@@ -399,16 +405,21 @@ pub fn caption_stop() {
 #[tauri::command]
 pub fn caption_set_device(app: tauri::AppHandle, device_id: String) -> Result<(), String> {
     let running = is_running();
-    let (model_id, auto_save, save_dir) = {
+    let (model_id, auto_save, save_dir, finalize_ms) = {
         let e = engine().lock().unwrap();
-        (e.model_id.clone(), e.auto_save, e.save_dir.to_string_lossy().to_string())
+        (
+            e.model_id.clone(),
+            e.auto_save,
+            e.save_dir.to_string_lossy().to_string(),
+            e.finalize_ms,
+        )
     };
     if !running {
         let mut e = engine().lock().unwrap();
         e.device_id = device_id;
         return Ok(());
     }
-    start_capture(app, model_id, device_id, auto_save, save_dir, true)
+    start_capture(app, model_id, device_id, auto_save, save_dir, finalize_ms, true)
 }
 
 #[tauri::command]
@@ -590,7 +601,9 @@ fn capture_loop(
     device_id: &str,
     model_path: &Path,
     stop: &AtomicBool,
+    finalize_ms: u64,
 ) -> Result<(), String> {
+    let finalize_after = Duration::from_millis(finalize_ms);
     let _ = initialize_mta(); // RPC_E_CHANGED_MODE is fine: COM is already initialized (STA).
 
     let model = Model::new(model_path.to_string_lossy().into_owned())
@@ -652,16 +665,29 @@ fn capture_loop(
 
         while samples.len() >= CHUNK {
             let chunk: Vec<i16> = samples.drain(..CHUNK).collect();
-            if let Err(e) = recognizer.accept_waveform(&chunk) {
-                failure = Some(format!("Speech recognition failed: {e}"));
-                break;
+            let state = match recognizer.accept_waveform(&chunk) {
+                Ok(state) => state,
+                Err(e) => {
+                    failure = Some(format!("Speech recognition failed: {e}"));
+                    break;
+                }
+            };
+            // Vosk's own silence endpoint is the authoritative sentence
+            // boundary. Without this, rapid turn-taking can accumulate into a
+            // single long utterance.
+            if matches!(state, DecodingState::Finalized) {
+                finalize(app, &mut recognizer);
+                last_partial.clear();
+                last_change = Instant::now();
+                set_partial("");
+                continue;
             }
             let partial = recognizer.partial_result().partial.to_string();
             if !partial.trim().is_empty() {
                 if partial != last_partial {
                     last_partial = partial;
                     last_change = Instant::now();
-                } else if last_change.elapsed() >= FINALIZE_AFTER {
+                } else if last_change.elapsed() >= finalize_after {
                     finalize(app, &mut recognizer);
                     last_partial.clear();
                     last_change = Instant::now();

@@ -61,6 +61,7 @@ const DEFAULT_STATE = {
     deviceId: "",
     autoSave: true,
     saveDir: "",
+    finalizeMs: 700,
   },
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
@@ -497,9 +498,9 @@ async openFolder(path) {
   async captionRemoveModel(modelId) {
     if (window.__TAURI__) return invoke("caption_remove_model", { modelId });
   },
-  async captionStart(modelId, deviceId, autoSave, saveDir) {
+  async captionStart(modelId, deviceId, autoSave, saveDir, finalizeMs) {
     if (window.__TAURI__)
-      return invoke("caption_start", { modelId, deviceId, autoSave, saveDir });
+      return invoke("caption_start", { modelId, deviceId, autoSave, saveDir, finalizeMs });
   },
   async captionStop() {
     if (window.__TAURI__) return invoke("caption_stop");
@@ -4202,8 +4203,10 @@ function backupConfig() {
 
 function captionConfig() {
   if (!state.captions || typeof state.captions !== "object") {
-    state.captions = { lang: "de", deviceId: "", autoSave: true, saveDir: "" };
+    state.captions = { lang: "de", deviceId: "", autoSave: true, saveDir: "", finalizeMs: 700 };
   }
+  if (!Number.isFinite(Number(state.captions.finalizeMs))) state.captions.finalizeMs = 700;
+  state.captions.finalizeMs = Math.min(5000, Math.max(300, Number(state.captions.finalizeMs) || 700));
   return state.captions;
 }
 
@@ -4591,7 +4594,7 @@ async function renderCaptionBody(c, body) {
       cfg.deviceId = deviceSel.value;
       saveState();
       try {
-        await native.captionStart(lang, cfg.deviceId, cfg.autoSave === true, cfg.saveDir || "");
+        await native.captionStart(lang, cfg.deviceId, cfg.autoSave === true, cfg.saveDir || "", cfg.finalizeMs || 700);
       } catch (e) {
         listen.checked = false;
         setStatus(String(e?.message || e), true);
@@ -4818,6 +4821,18 @@ function renderCaptionSettings() {
   devRow.innerHTML = `<label>Output device</label><select id="caption-device"></select><button class="btn ghost" id="caption-refresh-devices">Refresh</button>`;
   panel.appendChild(devRow);
 
+  const pauseRow = document.createElement("div");
+  pauseRow.className = "item-row";
+  pauseRow.innerHTML = `<label>Line break pause</label><select id="caption-finalize">
+    <option value="500">0.5 s</option>
+    <option value="700">0.7 s</option>
+    <option value="1000">1.0 s</option>
+    <option value="1200">1.2 s</option>
+    <option value="1500">1.5 s</option>
+    <option value="2000">2.0 s</option>
+  </select><span class="muted">silence before a new line; next session</span>`;
+  panel.appendChild(pauseRow);
+
   const saveRow = document.createElement("div");
   saveRow.className = "item-row";
   saveRow.innerHTML = `<label>Auto-save transcript <input type="checkbox" class="switch" id="caption-autosave" ${cfg.autoSave ? "checked" : ""} /></label><span class="muted">next session</span>`;
@@ -4830,7 +4845,9 @@ function renderCaptionSettings() {
 
   const langSel = langRow.querySelector("#caption-lang");
   const devSel = devRow.querySelector("#caption-device");
+  const pauseSel = pauseRow.querySelector("#caption-finalize");
   const langNote = langRow.querySelector("#caption-lang-note");
+  pauseSel.value = String(Number(cfg.finalizeMs) || 700);
 
   const loadSelectors = async () => {
     const [models, devices, poll] = await Promise.all([
@@ -4886,6 +4903,10 @@ function renderCaptionSettings() {
   });
   saveRow.querySelector("#caption-autosave").addEventListener("change", (e) => {
     cfg.autoSave = e.target.checked;
+    saveState();
+  });
+  pauseSel.addEventListener("change", () => {
+    cfg.finalizeMs = Math.min(5000, Math.max(300, Number(pauseSel.value) || 700));
     saveState();
   });
   folderRow.querySelector("#caption-pick-folder").addEventListener("click", async () => {
