@@ -2081,10 +2081,15 @@ struct LyricsTranslation {
     translations: std::collections::HashMap<String, Vec<String>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 struct TranslationEntry {
     provider: String,
     translations: std::collections::HashMap<String, Vec<String>>,
+    /// Exact source lines used for this translation. Missing in older cache
+    /// files (serde default); the lyrics category backfills them from the
+    /// lyrics cache so phrases survive a later lyrics-cache clear.
+    #[serde(default)]
+    source_lines: Vec<String>,
 }
 
 const TRANSLATION_CACHE_MAX: usize = 1000;
@@ -2187,7 +2192,11 @@ async fn lyrics_translate(
         }
         cache.insert(
             key,
-            TranslationEntry { provider: provider.clone(), translations: translations.clone() },
+            TranslationEntry {
+                provider: provider.clone(),
+                translations: translations.clone(),
+                source_lines: lines.to_vec(),
+            },
         );
     }
     persist_translation_cache(&app);
@@ -3549,7 +3558,14 @@ fn collect_lyric_cards(
         let (Some(hash), Some(source), Some(_targets)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
-        let Some(lines) = source_sets.get(hash) else { continue };
+        let lines = if !entry.source_lines.is_empty() {
+            &entry.source_lines
+        } else {
+            match source_sets.get(hash) {
+                Some(lines) => lines,
+                None => continue,
+            }
+        };
         for (index, line) in lines.iter().enumerate() {
             let Some((prompt, es, de)) =
                 make_lyric_card(source, line, &entry.translations, lines.len(), index, lang)
@@ -3573,11 +3589,36 @@ fn collect_lyric_cards(
     cards
 }
 
+/// Backfill `source_lines` on legacy cache entries while the lyrics cache still
+/// has the matching lines. Without this, clearing/pruning the lyrics cache would
+/// silently drop old phrase cards even though their translations remain.
+fn backfill_translation_sources(app: &tauri::AppHandle) {
+    let source_sets = lyric_source_sets();
+    let mut changed = false;
+    {
+        let mut cache = translation_cache().lock().unwrap();
+        for (key, entry) in cache.iter_mut() {
+            if !entry.source_lines.is_empty() {
+                continue;
+            }
+            let Some(hash) = key.split('|').next() else { continue };
+            if let Some(lines) = source_sets.get(hash) {
+                entry.source_lines = lines.clone();
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        persist_translation_cache(app);
+    }
+}
+
 /// Number of lyric phrase cards available for a drill language.
 #[tauri::command]
 fn lyrics_phrase_count(app: tauri::AppHandle, lang: String) -> Result<usize, String> {
     ensure_lyrics_cache_loaded(&app);
     ensure_translation_cache_loaded(&app);
+    backfill_translation_sources(&app);
     let source_sets = lyric_source_sets();
     let entries = translation_cache().lock().unwrap().clone();
     Ok(collect_lyric_cards(&source_sets, &entries, &lang).len())
@@ -3592,6 +3633,7 @@ fn vocab_lyrics_batch(
 ) -> Result<Vec<VocabCard>, String> {
     ensure_lyrics_cache_loaded(&app);
     ensure_translation_cache_loaded(&app);
+    backfill_translation_sources(&app);
     let source_sets = lyric_source_sets();
     let entries = translation_cache().lock().unwrap().clone();
     let mut cards = collect_lyric_cards(&source_sets, &entries, &lang);
@@ -4810,16 +4852,16 @@ mod srs_tests {
         let mut cache = std::collections::HashMap::new();
         cache.insert(
             "a".to_string(),
-            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         let mut imported = std::collections::HashMap::new();
         imported.insert(
             "a".to_string(),
-            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         imported.insert(
             "b".to_string(),
-            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         let added = merge_translations(&mut cache, imported);
         assert_eq!(added, 1, "only the new key is added");
@@ -4882,12 +4924,33 @@ mod srs_tests {
         let mut entries = std::collections::HashMap::new();
         entries.insert(
             format!("{hash}|en|es"),
-            TranslationEntry { provider: "test".into(), translations },
+            TranslationEntry { provider: "test".into(), translations, ..Default::default() },
         );
         let cards = collect_lyric_cards(&sets, &entries, "es");
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].en, "Hello there");
         assert_eq!(cards[0].es, "Hola");
         assert_eq!(cards[0].cats, vec![LYRICS_CATEGORY.to_string()]);
+    }
+
+    #[test]
+    fn lyric_cards_use_stored_source_lines() {
+        let mut translations = std::collections::HashMap::new();
+        translations.insert("es".to_string(), vec!["Hola".to_string()]);
+        let mut entries = std::collections::HashMap::new();
+        entries.insert(
+            "deadbeef|en|es".to_string(),
+            TranslationEntry {
+                provider: "test".into(),
+                translations,
+                source_lines: vec!["Hello there".to_string()],
+            },
+        );
+        // No lyrics-cache source set: the entry is self-contained.
+        let sets = std::collections::HashMap::new();
+        let cards = collect_lyric_cards(&sets, &entries, "es");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].en, "Hello there");
+        assert_eq!(cards[0].es, "Hola");
     }
 }

@@ -166,6 +166,7 @@
   let gradeable = false;      // only grade cards that were actually due
   let awaitingNext = false;   // correct answer seen — waiting for Next/Enter
   let expanded = false;       // popup enlarged to the detail view
+  let renderSeq = 0;          // guards async renderCard against rapid Next/skip
   let cardId = "";
   let sessionDue = 0;         // snapshot fetched once per session (not per card)
   let sessionStats = null;
@@ -427,6 +428,7 @@
   }
 
   async function renderCard() {
+    const seq = ++renderSeq;
     const { card, due } = queue[idx];
     cardId = card.id;
     gradeable = mode === "review" && due === true; // practice/early cards are never graded
@@ -440,14 +442,17 @@
     detailEl.hidden = true;
     detailEl.innerHTML = "";
     if (expanded) await setExpanded(false); // return to compact for a new card
+    if (seq !== renderSeq) return;
     promptEl.textContent = card.en;
     promptEl.title = card.en;
     promptEl.classList.toggle("lyrics", mode === "lyrics");
     const dest = lang === "both" ? "Spanish + German" : lang === "de" ? "German" : "Spanish";
     labelEl.textContent = mode === "lyrics" ? `Translate this line to ${dest}` : `Translate to ${dest}`;
 
-    currentDetail =
+    const detail =
       mode === "lyrics" ? null : await invoke("vocab_card_detail", { id: card.id }).catch(() => null);
+    if (seq !== renderSeq) return;
+    currentDetail = detail;
 
     answerWrap.innerHTML = "";
     if (lang === "both") {
