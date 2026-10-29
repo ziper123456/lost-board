@@ -404,7 +404,8 @@ auth, custom images are user-supplied, captioning is fully local.
   language (not filtered or translated).
 - **FR-CAP-003** Language packs (Vosk models) shall be downloaded from **Settings → Captions**, with
   size/license and progress; nothing is downloaded automatically. Removing a model is blocked while
-  it is selected or active. German is the default selection.
+  it is selected or active. German is the default selection. German and Spanish each offer a
+  small and a large pack; the large packs use more CPU and RAM.
 - **FR-CAP-004** The output device shall be selectable **both in the tile and in Settings** and kept
   in sync; changing it while listening restarts capture on the new device and keeps the transcript.
 - **FR-CAP-005** The tile shall show live partial text and finalized lines (timestamped), finalized

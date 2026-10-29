@@ -491,15 +491,15 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("caption_models");
     return [];
   },
-  async captionDownloadModel(lang) {
-    if (window.__TAURI__) return invoke("caption_download_model", { lang });
+  async captionDownloadModel(modelId) {
+    if (window.__TAURI__) return invoke("caption_download_model", { modelId });
   },
-  async captionRemoveModel(lang) {
-    if (window.__TAURI__) return invoke("caption_remove_model", { lang });
+  async captionRemoveModel(modelId) {
+    if (window.__TAURI__) return invoke("caption_remove_model", { modelId });
   },
-  async captionStart(lang, deviceId, autoSave, saveDir) {
+  async captionStart(modelId, deviceId, autoSave, saveDir) {
     if (window.__TAURI__)
-      return invoke("caption_start", { lang, deviceId, autoSave, saveDir });
+      return invoke("caption_start", { modelId, deviceId, autoSave, saveDir });
   },
   async captionStop() {
     if (window.__TAURI__) return invoke("caption_stop");
@@ -4451,7 +4451,7 @@ async function renderCaptionBody(c, body) {
     <div class="caption-root">
       <div class="caption-controls">
         <label class="caption-listen"><input type="checkbox" class="switch" id="cap-listen" /> Listen</label>
-        <select id="cap-lang" title="Caption language"></select>
+        <select id="cap-lang" title="Caption model"></select>
         <select id="cap-device" title="Output device"></select>
       </div>
       <div class="caption-status" id="cap-status"></div>
@@ -4492,9 +4492,9 @@ async function renderCaptionBody(c, body) {
   const fillLanguages = () => {
     const keep = cfg.lang;
     langSel.innerHTML = installed.length
-      ? installed.map((m) => `<option value="${escapeHtml(m.lang)}">${escapeHtml(m.name)}</option>`).join("")
+      ? installed.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join("")
       : `<option value="">No packs installed</option>`;
-    const pick = installed.some((m) => m.lang === keep) ? keep : installed[0]?.lang || "";
+    const pick = installed.some((m) => m.id === keep) ? keep : installed[0]?.id || "";
     langSel.value = pick;
     if (pick && pick !== cfg.lang) {
       cfg.lang = pick;
@@ -4551,16 +4551,16 @@ async function renderCaptionBody(c, body) {
     renderLines(s);
 
     if (s.status === "error") setStatus(s.error || "Caption engine error", true);
-    else if (s.status === "loading") setStatus("Loading model…");
+    else if (s.status === "loading") setStatus(`Loading ${s.model_name || "model"}.`);
     else if (s.status === "listening")
-      setStatus(`Listening · ${s.device_name || "output"} · ${String(s.lang || "").toUpperCase()}`);
-    else setStatus(installed.length ? "Idle" : "No language packs installed — download one in Settings → Captions.");
+      setStatus(`Listening - ${s.device_name || "output"} - ${s.model_name || String(s.lang || "").toUpperCase()}`);
+    else setStatus(installed.length ? "Idle" : "No language packs installed - download one in Settings > Captions.");
 
     if (!cfg.deviceId && deviceSel.value) deviceSel.value = "";
 
     if (++tick % 12 === 0) {
       const next = await installedModels();
-      const sig = next.map((m) => m.lang).join(",");
+      const sig = next.map((m) => m.id).join(",");
       if (sig !== modelSig) {
         modelSig = sig;
         installed = next;
@@ -4570,11 +4570,11 @@ async function renderCaptionBody(c, body) {
   };
 
   installed = await installedModels();
-  modelSig = installed.map((m) => m.lang).join(",");
+  modelSig = installed.map((m) => m.id).join(",");
   fillLanguages();
   await fillDevices();
-  // Reflect a language chosen in Settings.
-  if (installed.some((m) => m.lang === cfg.lang)) langSel.value = cfg.lang;
+  // Reflect a model chosen in Settings.
+  if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
   await refresh();
   const timer = setInterval(refresh, 400);
   addTimer(body, timer);
@@ -4716,9 +4716,9 @@ function renderCaptionSettings() {
       running = s.status === "listening" || s.status === "loading";
       statusLine.textContent =
         s.status === "listening"
-          ? `Listening (${String(s.lang).toUpperCase()} · ${s.device_name || "output"})`
+          ? `Listening (${s.model_name || String(s.lang).toUpperCase()} - ${s.device_name || "output"})`
           : s.status === "loading"
-            ? "Loading model…"
+            ? `Loading ${s.model_name || "model"}.`
             : s.status === "error"
               ? s.error || "error"
               : "idle";
@@ -4739,16 +4739,18 @@ function renderCaptionSettings() {
             : m.error
               ? m.error
               : "Not installed";
+        const size = Number(m.size_mb) || 0;
+        const sizeText = size >= 1024 ? `${(size / 1024).toFixed(1)} GB` : `${size} MB`;
         const actions = m.installed
-          ? `<button class="btn ghost" data-remove="${escapeHtml(m.lang)}" ${
-              running || m.lang === cfg.lang ? "disabled title=\"Stop listening and select another language first\"" : ""
+          ? `<button class="btn ghost" data-remove="${escapeHtml(m.id)}" ${
+              running || m.id === cfg.lang ? "disabled title=\"Stop listening and select another model first\"" : ""
             }>Remove</button>`
-          : `<button class="btn ghost" data-download="${escapeHtml(m.lang)}" ${
+          : `<button class="btn ghost" data-download="${escapeHtml(m.id)}" ${
               m.downloading ? "disabled" : ""
             }>Download</button>`;
         return `<div class="caption-model-row">
           <span class="caption-model-name">${escapeHtml(m.name)}</span>
-          <span class="muted">${Number(m.size_mb) || 0} MB · ${escapeHtml(m.license || "")}</span>
+          <span class="muted">${sizeText} · ${escapeHtml(m.license || "")}</span>
           <span class="caption-model-state ${m.error ? "err" : ""}">${escapeHtml(state)}</span>
           ${m.downloading ? `<span class="caption-model-bar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></span>` : ""}
           ${actions}
@@ -4758,10 +4760,10 @@ function renderCaptionSettings() {
 
     list.querySelectorAll("[data-download]").forEach((btn) =>
       btn.addEventListener("click", async () => {
-        const lang = btn.dataset.download;
+        const modelId = btn.dataset.download;
         btn.disabled = true;
         try {
-          await native.captionDownloadModel(lang);
+          await native.captionDownloadModel(modelId);
         } catch (e) {
           statusLine.textContent = String(e?.message || e);
         }
@@ -4770,14 +4772,14 @@ function renderCaptionSettings() {
     );
     list.querySelectorAll("[data-remove]").forEach((btn) =>
       btn.addEventListener("click", (e) => {
-        const lang = btn.dataset.remove;
-        const model = models.find((m) => m.lang === lang);
-        showConfirmPopup(`Remove the ${model?.name || lang} model?`, {
+        const modelId = btn.dataset.remove;
+        const model = models.find((m) => m.id === modelId);
+        showConfirmPopup(`Remove the ${model?.name || modelId} model?`, {
           x: e.clientX,
           y: e.clientY,
           onConfirm: async () => {
             try {
-              await native.captionRemoveModel(lang);
+              await native.captionRemoveModel(modelId);
             } catch (err) {
               statusLine.textContent = String(err?.message || err);
             }
@@ -4808,7 +4810,7 @@ function renderCaptionSettings() {
 
   const langRow = document.createElement("div");
   langRow.className = "item-row";
-  langRow.innerHTML = `<label>Language</label><select id="caption-lang"></select><span class="muted" id="caption-lang-note">installed packs only</span>`;
+  langRow.innerHTML = `<label>Model</label><select id="caption-lang"></select><span class="muted" id="caption-lang-note">installed packs only</span>`;
   panel.appendChild(langRow);
 
   const devRow = document.createElement("div");
@@ -4839,11 +4841,11 @@ function renderCaptionSettings() {
     const installed = (models || []).filter((m) => m.installed);
     const running = poll && (poll.status === "listening" || poll.status === "loading");
     langSel.innerHTML = installed.length
-      ? installed.map((m) => `<option value="${escapeHtml(m.lang)}">${escapeHtml(m.name)}</option>`).join("")
+      ? installed.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join("")
       : `<option value="">No packs installed</option>`;
-    if (installed.some((m) => m.lang === cfg.lang)) langSel.value = cfg.lang;
+    if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
     else if (installed.length) {
-      cfg.lang = installed[0].lang;
+      cfg.lang = installed[0].id;
       saveState();
       langSel.value = cfg.lang;
     }
@@ -4866,6 +4868,7 @@ function renderCaptionSettings() {
     cfg.lang = langSel.value;
     saveState();
     render();
+    renderCaptionSettings();
   });
   devSel.addEventListener("change", async () => {
     cfg.deviceId = devSel.value;

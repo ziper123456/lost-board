@@ -36,6 +36,8 @@ pub struct CaptionLine {
 pub struct CaptionStatus {
     status: String, // idle | loading | listening | error
     lang: String,
+    model_id: String,
+    model_name: String,
     device_id: String,
     device_name: String,
     partial: String,
@@ -53,6 +55,7 @@ pub struct CaptionDevice {
 
 #[derive(Clone, Serialize)]
 pub struct CaptionModelInfo {
+    id: String,
     lang: String,
     name: String,
     size_mb: u64,
@@ -65,6 +68,7 @@ pub struct CaptionModelInfo {
 
 #[derive(Clone, Copy)]
 struct ModelSpec {
+    id: &'static str,
     lang: &'static str,
     name: &'static str,
     dir: &'static str,
@@ -75,6 +79,7 @@ struct ModelSpec {
 
 const MODELS: &[ModelSpec] = &[
     ModelSpec {
+        id: "de",
         lang: "de",
         name: "German (small)",
         dir: "vosk-model-small-de-0.15",
@@ -83,6 +88,16 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "de-large",
+        lang: "de",
+        name: "German (large)",
+        dir: "vosk-model-de-0.21",
+        url: "https://alphacephei.com/vosk/models/vosk-model-de-0.21.zip",
+        size_mb: 1938,
+        license: "Apache-2.0",
+    },
+    ModelSpec {
+        id: "en",
         lang: "en",
         name: "English (small)",
         dir: "vosk-model-small-en-us-0.15",
@@ -91,6 +106,7 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "es",
         lang: "es",
         name: "Spanish (small)",
         dir: "vosk-model-small-es-0.42",
@@ -99,6 +115,16 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "es-large",
+        lang: "es",
+        name: "Spanish (large)",
+        dir: "vosk-model-es-0.42",
+        url: "https://alphacephei.com/vosk/models/vosk-model-es-0.42.zip",
+        size_mb: 1416,
+        license: "Apache-2.0",
+    },
+    ModelSpec {
+        id: "fr",
         lang: "fr",
         name: "French (small)",
         dir: "vosk-model-small-fr-0.22",
@@ -107,6 +133,7 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "it",
         lang: "it",
         name: "Italian (small)",
         dir: "vosk-model-small-it-0.22",
@@ -115,6 +142,7 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "pt",
         lang: "pt",
         name: "Portuguese (small)",
         dir: "vosk-model-small-pt-0.3",
@@ -123,6 +151,7 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "nl",
         lang: "nl",
         name: "Dutch (small)",
         dir: "vosk-model-small-nl-0.22",
@@ -131,6 +160,7 @@ const MODELS: &[ModelSpec] = &[
         license: "Apache-2.0",
     },
     ModelSpec {
+        id: "ru",
         lang: "ru",
         name: "Russian (small)",
         dir: "vosk-model-small-ru-0.22",
@@ -150,6 +180,7 @@ struct DownloadState {
 struct EngineState {
     status: String,
     lang: String,
+    model_id: String,
     device_id: String,
     device_name: String,
     partial: String,
@@ -168,6 +199,7 @@ impl Default for EngineState {
         Self {
             status: "idle".into(),
             lang: "de".into(),
+            model_id: "de".into(),
             device_id: String::new(),
             device_name: String::new(),
             partial: String::new(),
@@ -215,8 +247,8 @@ fn models_root(app: &tauri::AppHandle) -> PathBuf {
         .join("models/vosk")
 }
 
-fn spec_for(lang: &str) -> Option<&'static ModelSpec> {
-    MODELS.iter().find(|m| m.lang.eq_ignore_ascii_case(lang))
+fn spec_for(model_id: &str) -> Option<&'static ModelSpec> {
+    MODELS.iter().find(|m| m.id.eq_ignore_ascii_case(model_id))
 }
 
 fn model_path(app: &tauri::AppHandle, spec: &ModelSpec) -> PathBuf {
@@ -232,6 +264,10 @@ fn snapshot() -> CaptionStatus {
     CaptionStatus {
         status: e.status.clone(),
         lang: e.lang.clone(),
+        model_id: e.model_id.clone(),
+        model_name: spec_for(&e.model_id)
+            .map(|s| s.name.to_string())
+            .unwrap_or_default(),
         device_id: e.device_id.clone(),
         device_name: e.device_name.clone(),
         partial: e.partial.clone(),
@@ -274,17 +310,17 @@ fn set_error(message: &str) {
 
 fn start_capture(
     app: tauri::AppHandle,
-    lang: String,
+    model_id: String,
     device_id: String,
     auto_save: bool,
     save_dir: String,
     preserve: bool,
 ) -> Result<(), String> {
-    let spec = spec_for(&lang).ok_or_else(|| format!("Unsupported language: {lang}"))?;
+    let spec = spec_for(&model_id).ok_or_else(|| format!("Unsupported model: {model_id}"))?;
     let path = model_path(&app, spec);
     if !model_installed(&path) {
         return Err(format!(
-            "{} is not installed. Download it in Settings → Captions.",
+            "{} is not installed. Download it in Settings > Captions.",
             spec.name
         ));
     }
@@ -305,7 +341,8 @@ fn start_capture(
             e.file_path = None;
         }
         e.status = "loading".into();
-        e.lang = lang.clone();
+        e.lang = spec.lang.to_string();
+        e.model_id = spec.id.to_string();
         e.device_id = device_id.clone();
         e.device_name.clear();
         e.partial.clear();
@@ -317,11 +354,9 @@ fn start_capture(
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
     let thread_app = app.clone();
-    let thread_lang = lang.clone();
     let thread_device = device_id.clone();
     let handle = thread::spawn(move || {
-        if let Err(err) = capture_loop(&thread_app, &thread_lang, &thread_device, &path, &stop_thread)
-        {
+        if let Err(err) = capture_loop(&thread_app, &thread_device, &path, &stop_thread) {
             if !stop_thread.load(Ordering::SeqCst) {
                 set_error(&err);
             }
@@ -347,12 +382,12 @@ pub fn caption_poll() -> CaptionStatus {
 #[tauri::command]
 pub fn caption_start(
     app: tauri::AppHandle,
-    lang: String,
+    model_id: String,
     device_id: String,
     auto_save: bool,
     save_dir: String,
 ) -> Result<(), String> {
-    start_capture(app, lang, device_id, auto_save, save_dir, false)
+    start_capture(app, model_id, device_id, auto_save, save_dir, false)
 }
 
 #[tauri::command]
@@ -364,16 +399,16 @@ pub fn caption_stop() {
 #[tauri::command]
 pub fn caption_set_device(app: tauri::AppHandle, device_id: String) -> Result<(), String> {
     let running = is_running();
-    let (lang, auto_save, save_dir) = {
+    let (model_id, auto_save, save_dir) = {
         let e = engine().lock().unwrap();
-        (e.lang.clone(), e.auto_save, e.save_dir.to_string_lossy().to_string())
+        (e.model_id.clone(), e.auto_save, e.save_dir.to_string_lossy().to_string())
     };
     if !running {
         let mut e = engine().lock().unwrap();
         e.device_id = device_id;
         return Ok(());
     }
-    start_capture(app, lang, device_id, auto_save, save_dir, true)
+    start_capture(app, model_id, device_id, auto_save, save_dir, true)
 }
 
 #[tauri::command]
@@ -428,8 +463,9 @@ pub fn caption_models(app: tauri::AppHandle) -> Result<Vec<CaptionModelInfo>, St
     Ok(MODELS
         .iter()
         .map(|spec| {
-            let job = jobs.get(spec.lang).cloned().unwrap_or_default();
+            let job = jobs.get(spec.id).cloned().unwrap_or_default();
             CaptionModelInfo {
+                id: spec.id.to_string(),
                 lang: spec.lang.to_string(),
                 name: spec.name.to_string(),
                 size_mb: spec.size_mb,
@@ -444,19 +480,19 @@ pub fn caption_models(app: tauri::AppHandle) -> Result<Vec<CaptionModelInfo>, St
 }
 
 #[tauri::command]
-pub fn caption_download_model(app: tauri::AppHandle, lang: String) -> Result<(), String> {
-    let spec = spec_for(&lang).ok_or_else(|| format!("Unsupported language: {lang}"))?;
+pub fn caption_download_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+    let spec = spec_for(&model_id).ok_or_else(|| format!("Unsupported model: {model_id}"))?;
     if model_installed(&model_path(&app, spec)) {
         return Ok(());
     }
     {
         let jobs = downloads().lock().unwrap();
-        if jobs.get(spec.lang).map(|j| j.downloading).unwrap_or(false) {
+        if jobs.get(spec.id).map(|j| j.downloading).unwrap_or(false) {
             return Ok(());
         }
     }
     downloads().lock().unwrap().insert(
-        spec.lang.to_string(),
+        spec.id.to_string(),
         DownloadState { downloading: true, progress: 0.0, error: String::new() },
     );
 
@@ -465,7 +501,7 @@ pub fn caption_download_model(app: tauri::AppHandle, lang: String) -> Result<(),
     thread::spawn(move || {
         if let Err(err) = download_and_install(&root, &spec) {
             let mut jobs = downloads().lock().unwrap();
-            if let Some(job) = jobs.get_mut(spec.lang) {
+            if let Some(job) = jobs.get_mut(spec.id) {
                 job.downloading = false;
                 job.error = err;
             }
@@ -473,7 +509,7 @@ pub fn caption_download_model(app: tauri::AppHandle, lang: String) -> Result<(),
         }
         let mut jobs = downloads().lock().unwrap();
         jobs.insert(
-            spec.lang.to_string(),
+            spec.id.to_string(),
             DownloadState { downloading: false, progress: 1.0, error: String::new() },
         );
     });
@@ -481,11 +517,11 @@ pub fn caption_download_model(app: tauri::AppHandle, lang: String) -> Result<(),
 }
 
 #[tauri::command]
-pub fn caption_remove_model(app: tauri::AppHandle, lang: String) -> Result<(), String> {
-    let spec = spec_for(&lang).ok_or_else(|| format!("Unsupported language: {lang}"))?;
+pub fn caption_remove_model(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+    let spec = spec_for(&model_id).ok_or_else(|| format!("Unsupported model: {model_id}"))?;
     {
         let e = engine().lock().unwrap();
-        if e.handle.is_some() && e.lang.eq_ignore_ascii_case(spec.lang) {
+        if e.handle.is_some() && e.model_id.eq_ignore_ascii_case(spec.id) {
             return Err("Stop listening before removing this model.".into());
         }
     }
@@ -498,9 +534,9 @@ pub fn caption_remove_model(app: tauri::AppHandle, lang: String) -> Result<(), S
 
 #[tauri::command]
 pub async fn caption_save() -> Result<Option<String>, String> {
-    let (lang, lines) = {
+    let (model_id, lines) = {
         let e = engine().lock().unwrap();
-        (e.lang.clone(), e.lines.clone())
+        (e.model_id.clone(), e.lines.clone())
     };
     if lines.is_empty() {
         return Err("Nothing to save yet.".into());
@@ -514,7 +550,7 @@ pub async fn caption_save() -> Result<Option<String>, String> {
         .save_file()
         .await;
     let Some(dest) = dest else { return Ok(None) };
-    let text = format_markdown(&lang, &lines);
+    let text = format_markdown(&model_id, &lines);
     fs::write(dest.path(), text).map_err(|e| format!("Failed to write captions: {e}"))?;
     Ok(Some(dest.path().to_string_lossy().into_owned()))
 }
@@ -533,10 +569,10 @@ pub fn caption_open_folder(app: tauri::AppHandle) -> Result<(), String> {
     crate::open_folder(dir.to_string_lossy().into_owned())
 }
 
-fn format_markdown(lang: &str, lines: &[CaptionLine]) -> String {
+fn format_markdown(model_id: &str, lines: &[CaptionLine]) -> String {
     let mut out = format!(
-        "# Captions\n\nLanguage: {}\n\n",
-        spec_for(lang).map(|s| s.name).unwrap_or(lang)
+        "# Captions\n\nModel: {}\n\n",
+        spec_for(model_id).map(|s| s.name).unwrap_or(model_id)
     );
     for line in lines {
         let time = Local
@@ -551,7 +587,6 @@ fn format_markdown(lang: &str, lines: &[CaptionLine]) -> String {
 
 fn capture_loop(
     app: &tauri::AppHandle,
-    lang: &str,
     device_id: &str,
     model_path: &Path,
     stop: &AtomicBool,
@@ -658,7 +693,6 @@ fn capture_loop(
     if let Some(err) = failure {
         return Err(err);
     }
-    let _ = lang;
     Ok(())
 }
 
@@ -702,7 +736,7 @@ fn finalize(app: &tauri::AppHandle, recognizer: &mut Recognizer) {
 
 fn add_line(_app: &tauri::AppHandle, text: String) {
     let line = CaptionLine { at: now_secs(), text };
-    let (auto_save, save_dir, lang, file_path) = {
+    let (auto_save, save_dir, model_id, file_path) = {
         let mut e = engine().lock().unwrap();
         e.lines.push(line.clone());
         if e.lines.len() > MAX_LINES {
@@ -710,7 +744,7 @@ fn add_line(_app: &tauri::AppHandle, text: String) {
             e.lines.drain(0..drop);
         }
         e.partial.clear();
-        (e.auto_save, e.save_dir.clone(), e.lang.clone(), e.file_path.clone())
+        (e.auto_save, e.save_dir.clone(), e.model_id.clone(), e.file_path.clone())
     };
     if !auto_save {
         return;
@@ -722,8 +756,8 @@ fn add_line(_app: &tauri::AppHandle, text: String) {
             let name = format!("captions-{}.md", Local::now().format("%Y-%m-%d_%H-%M-%S"));
             let path = save_dir.join(name);
             let header = format!(
-                "# Captions\n\nLanguage: {}\n\n",
-                spec_for(&lang).map(|s| s.name).unwrap_or(&lang)
+                "# Captions\n\nModel: {}\n\n",
+                spec_for(&model_id).map(|s| s.name).unwrap_or(&model_id)
             );
             if fs::write(&path, header).is_err() {
                 return;
@@ -745,12 +779,12 @@ fn add_line(_app: &tauri::AppHandle, text: String) {
 
 fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|e| format!("Failed to create model folder: {e}"))?;
-    let zip_path = root.join(format!(".{}.zip", spec.lang));
-    let extract_dir = root.join(format!(".extract-{}", spec.lang));
+    let zip_path = root.join(format!(".{}.zip", spec.id));
+    let extract_dir = root.join(format!(".extract-{}", spec.id));
     let final_dir = root.join(spec.dir);
 
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(3600))
+        .timeout(Duration::from_secs(6 * 3600))
         .build()
         .map_err(|e| e.to_string())?;
     let mut response = client
@@ -771,7 +805,7 @@ fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
         downloaded += n as u64;
         if total > 0 {
             let progress = downloaded as f32 / total as f32;
-            if let Some(job) = downloads().lock().unwrap().get_mut(spec.lang) {
+            if let Some(job) = downloads().lock().unwrap().get_mut(spec.id) {
                 job.progress = progress.min(0.99);
             }
         }
@@ -797,4 +831,23 @@ fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
     let _ = fs::remove_dir_all(&extract_dir);
     let _ = fs::remove_file(&zip_path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_ids_are_unique_and_include_large_packs() {
+        let mut seen = std::collections::HashSet::new();
+        for spec in MODELS {
+            assert!(seen.insert(spec.id), "duplicate model id: {}", spec.id);
+        }
+        let de = spec_for("de-large").expect("German large pack");
+        assert_eq!(de.lang, "de");
+        assert!(de.size_mb > 1000);
+        let es = spec_for("es-large").expect("Spanish large pack");
+        assert_eq!(es.lang, "es");
+        assert!(es.size_mb > 1000);
+    }
 }
