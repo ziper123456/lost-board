@@ -30,11 +30,14 @@
   }
   .prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .prompt-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted, #8b8b98); }
-  #btn-reveal {
+  .prompt-actions { display: flex; gap: 2px; }
+  .prompt-icon {
     background: none; border: none; color: var(--muted, #8b8b98); cursor: pointer;
     font-size: 1rem; line-height: 1; padding: 2px 4px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
   }
-  #btn-reveal:hover { color: var(--text, #e8e8ee); background: var(--panel-2, #23232c); }
+  .prompt-icon:hover { color: var(--text, #e8e8ee); background: var(--panel-2, #23232c); }
+  .prompt-icon svg { display: block; }
   .mode-badge {
     display: none; align-self: flex-start; margin-top: 6px;
     font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.6px;
@@ -42,6 +45,7 @@
     border-radius: 999px; padding: 1px 8px;
   }
   .prompt { font-size: 1.5rem; font-weight: 700; margin: 2px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prompt.lyrics { white-space: normal; overflow: visible; text-overflow: clip; font-size: 1.25rem; line-height: 1.3; }
   .answer { display: flex; gap: 8px; align-items: center; }
   .answer input {
     flex: 1; min-width: 0;
@@ -52,6 +56,12 @@
   .answer input.ok { border-color: var(--green, #2fae5f); background: rgba(47, 174, 95, 0.16); background: color-mix(in srgb, var(--green, #2fae5f) 16%, transparent); }
   .answer input.bad { border-color: var(--red, #d64949); background: rgba(214, 73, 73, 0.16); background: color-mix(in srgb, var(--red, #d64949) 16%, transparent); }
   .reveal { font-size: 0.85rem; color: var(--amber, #f0c674); min-height: 1.2em; margin-top: 6px; }
+  .reveal-answers { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+  .ans-line { display: flex; align-items: flex-start; gap: 6px; color: var(--text, #e8e8ee); line-height: 1.3; }
+  .ans-flag { display: inline-flex; width: 18px; height: 12px; margin-top: 2px; flex: 0 0 auto; border-radius: 2px; overflow: hidden; }
+  .ans-flag svg { width: 100%; height: 100%; display: block; }
+  .ans-text { min-width: 0; overflow-wrap: anywhere; }
+  .ans-code { color: var(--muted, #8b8b98); font-size: 0.65rem; font-weight: 700; letter-spacing: 0.4px; margin-top: 1px; }
   .row { display: flex; gap: 8px; margin-top: auto; padding-top: 10px; }
   .row button {
     flex: 1; background: var(--panel-2, #23232c); color: var(--text, #cfcfda); border: 1px solid var(--box-border, #3a3a48);
@@ -100,7 +110,14 @@
 <body>
   <div class="prompt-head">
     <div class="prompt-label" id="lang-label">Translate to Spanish</div>
-    <button id="btn-reveal" title="Show answer immediately">👁</button>
+    <div class="prompt-actions">
+      <button id="btn-dismiss" class="prompt-icon" title="Dismiss" aria-label="Dismiss">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+      <button id="btn-snooze" class="prompt-icon" title="No popups for 30 minutes" aria-label="Snooze 30 minutes">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.6V8l2.2 1.4"/></svg>
+      </button>
+    </div>
   </div>
   <div class="mode-badge" id="mode-badge"></div>
   <div class="prompt" id="prompt">…</div>
@@ -110,10 +127,11 @@
   <div class="detail" id="detail" hidden></div>
   <div class="drill-progress" id="progress"></div>
   <div class="row">
-    <button id="btn-dismiss">Dismiss</button>
-    <button id="btn-snooze" title="No popups for 30 minutes">Snooze 30 min</button>
+    <button id="btn-reveal" title="Show answer immediately">Show answer</button>
+    <button id="btn-next" title="Next card (skips this one if not answered yet)">Next ›</button>
   </div>
   <div class="error" id="error"></div>
+<script src="lyrics.js"></script>
 <script src="conjugate.js"></script>
 <script src="vocab-match.js"></script>
 <script>
@@ -148,6 +166,7 @@
   let gradeable = false;      // only grade cards that were actually due
   let awaitingNext = false;   // correct answer seen — waiting for Next/Enter
   let expanded = false;       // popup enlarged to the detail view
+  let renderSeq = 0;          // guards async renderCard against rapid Next/skip
   let cardId = "";
   let sessionDue = 0;         // snapshot fetched once per session (not per card)
   let sessionStats = null;
@@ -155,7 +174,7 @@
   // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
   // Practice mode is never graded, so extra reps leave the schedule untouched.
   function record(grade) {
-    if (mode === "practice") return;
+    if (mode !== "review") return;
     if (answered || !gradeable || !cardId) return;
     answered = true;
     invoke("vocab_record_review", { cardId, grade }).catch(() => {});
@@ -184,7 +203,24 @@
     inputs().forEach((i) => { i.classList.remove("bad"); i.classList.add("ok"); });
     record(attempts === 0 ? "good" : "hard");
     awaitingNext = true;
-    showLearn(slips);
+    if (mode === "lyrics") revealEl.textContent = "Correct";
+    else showLearn(slips);
+  }
+
+  // One line per target language: flag + answer (long lines wrap).
+  function answerLinesHtml() {
+    const langs = lang === "both" ? ["es", "de"] : [lang === "de" ? "de" : "es"];
+    return targets
+      .map((text, i) => {
+        if (!text) return "";
+        const code = langs[i] || "";
+        const flag = window.LyricsUtil ? LyricsUtil.flagSvg(code) : "";
+        const icon = flag
+          ? `<span class="ans-flag" title="${code.toUpperCase()}">${flag}</span>`
+          : `<span class="ans-code">${code.toUpperCase()}</span>`;
+        return `<div class="ans-line">${icon}<span class="ans-text">${escapeHtml(text)}</span></div>`;
+      })
+      .join("");
   }
 
   function revealNow() {
@@ -192,10 +228,11 @@
     // and retyping it after reveal is part of learning, so we never auto-skip.
     // The Learn strip is shown too (reading the usage while retyping helps), but
     // there is no Next until the user types the answer correctly.
-    revealEl.textContent = "Answer: " + targets.join(" / ");
+    const answers = answerLinesHtml();
+    revealEl.innerHTML = answers ? `<div class="reveal-answers">${answers}</div>` : "";
     inputs().forEach((i) => i.classList.add("bad"));
     record("again");
-    showLearn(null, { allowNext: false });
+    if (mode !== "lyrics") showLearn(null, { allowNext: false });
   }
 
   function nextCard() {
@@ -224,6 +261,10 @@
 
   function updateProgress() {
     const pos = `Card ${idx + 1}/${queue.length}`;
+    if (mode === "lyrics") {
+      progressEl.textContent = `${pos} - lyrics (not graded)`;
+      return;
+    }
     if (mode === "practice") {
       progressEl.textContent = `${pos} · practice (not graded)`;
       return;
@@ -387,6 +428,7 @@
   }
 
   async function renderCard() {
+    const seq = ++renderSeq;
     const { card, due } = queue[idx];
     cardId = card.id;
     gradeable = mode === "review" && due === true; // practice/early cards are never graded
@@ -400,12 +442,17 @@
     detailEl.hidden = true;
     detailEl.innerHTML = "";
     if (expanded) await setExpanded(false); // return to compact for a new card
+    if (seq !== renderSeq) return;
     promptEl.textContent = card.en;
     promptEl.title = card.en;
-    labelEl.textContent =
-      lang === "both" ? "Translate to Spanish + German" : lang === "de" ? "Translate to German" : "Translate to Spanish";
+    promptEl.classList.toggle("lyrics", mode === "lyrics");
+    const dest = lang === "both" ? "Spanish + German" : lang === "de" ? "German" : "Spanish";
+    labelEl.textContent = mode === "lyrics" ? `Translate this line to ${dest}` : `Translate to ${dest}`;
 
-    currentDetail = await invoke("vocab_card_detail", { id: card.id }).catch(() => null);
+    const detail =
+      mode === "lyrics" ? null : await invoke("vocab_card_detail", { id: card.id }).catch(() => null);
+    if (seq !== renderSeq) return;
+    currentDetail = detail;
 
     answerWrap.innerHTML = "";
     if (lang === "both") {
@@ -440,11 +487,19 @@
       lang = cfg.lang || "es";
       cats = Array.isArray(cfg.cats) ? cfg.cats : [];
       posFilter = Array.isArray(cfg.pos) ? cfg.pos : [];
-      mode = cfg.practice === true ? "practice" : "review";
-      if (mode === "practice") {
+      const lyricsOn = cats.includes("__lyrics__");
+      mode = lyricsOn ? "lyrics" : cfg.practice === true ? "practice" : "review";
+      if (mode === "lyrics") {
         badgeEl.style.display = "inline-block";
-        badgeEl.textContent = "Practice — not graded";
-        // Practice has its own cap (defaults to 10) — not the review session cap.
+        badgeEl.textContent = "Lyrics - not graded";
+        // Lyrics use the Practice session cap (default 10), never the SRS cap.
+        const lyricsLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
+        const cards = await invoke("vocab_lyrics_batch", { lang, limit: lyricsLimit });
+        queue = (cards || []).map((c) => ({ card: c, due: false }));
+      } else if (mode === "practice") {
+        badgeEl.style.display = "inline-block";
+        badgeEl.textContent = "Practice - not graded";
+        // Practice has its own cap (defaults to 10) - not the review session cap.
         const practiceLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
         const cards = await invoke("vocab_practice_batch", { categories: cats, pos: posFilter, limit: practiceLimit });
         queue = (cards || []).map((c) => ({ card: c, due: false }));
@@ -464,9 +519,12 @@
         } catch { /* progress is optional */ }
       }
       if (!queue.length) {
-        errorEl.textContent = mode === "practice"
-          ? "No struggling cards match the current filters."
-          : "No cards available — clear the category / part-of-speech filter in Settings > Vocab.";
+        errorEl.textContent =
+          mode === "lyrics"
+            ? "No translated lyric phrases yet - enable lyric translations and play a track."
+            : mode === "practice"
+              ? "No struggling cards match the current filters."
+              : "No cards available - clear the category / part-of-speech filter in Settings > Vocab.";
         return;
       }
       renderCard();
@@ -499,6 +557,10 @@
     }
     close();
   });
+
+  // Next always advances: if the answer is already correct this is the same as
+  // Enter's next step; otherwise it skips the current (ungraded) card.
+  document.getElementById("btn-next").addEventListener("click", advance);
 
   boot();
 </script>

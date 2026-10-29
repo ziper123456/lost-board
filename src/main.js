@@ -73,6 +73,8 @@ const DEFAULT_LYRICS_TARGETS = {
   vi: ["de", "es"],
   default: ["en"],
 };
+// Reserved drill category: random translated lyric phrases (never graded).
+const LYRICS_CAT = "__lyrics__";
 
 function lyricsTargetsConfig() {
   if (!state.lyricsTargets || typeof state.lyricsTargets !== "object") state.lyricsTargets = {};
@@ -508,6 +510,14 @@ async openFolder(path) {
   },
   async vocabPracticeBatch(categories, pos, limit) {
     if (window.__TAURI__) return invoke("vocab_practice_batch", { categories: categories || [], pos: pos || [], limit: limit || 0 });
+    return [];
+  },
+  async lyricsPhraseCount(lang) {
+    if (window.__TAURI__) return invoke("lyrics_phrase_count", { lang: lang || "es" });
+    return 0;
+  },
+  async vocabLyricsBatch(lang, limit) {
+    if (window.__TAURI__) return invoke("vocab_lyrics_batch", { lang: lang || "es", limit: limit || 0 });
     return [];
   },
   async vocabDueCount(categories, pos) {
@@ -5180,35 +5190,50 @@ function renderVocabSettings() {
 
   const catHead = document.createElement("div");
   catHead.className = "item-row";
-  catHead.innerHTML = `<label>Categories</label><span class="muted">popup only — empty = all</span>`;
+  catHead.innerHTML = `<label>Categories</label><span class="muted">popup only — empty = all; Lyrics = random translated lines (not graded, uses Practice size).</span>`;
   panel.appendChild(catHead);
   const catBox = document.createElement("div");
   catBox.className = "vocab-cats";
   catBox.innerHTML = `<span class="muted">loading…</span>`;
   panel.appendChild(catBox);
-  native.vocabCategories().then((cats) => {
-    if (!catBox.isConnected) return;
-    if (!cats.length) {
-      catBox.innerHTML = `<span class="muted">no categories found</span>`;
-      return;
-    }
-    const sel = new Set(v.drillCats || []);
-    catBox.innerHTML = cats
-      .map((c) => `<label class="vocab-cat"><input type="checkbox" data-cat="${escapeHtml(c.name)}" ${sel.has(c.name) ? "checked" : ""} />${escapeHtml(c.name)} <span class="muted">(${c.count})</span></label>`)
-      .join("");
-    catBox.querySelectorAll("input[type=checkbox]").forEach((box) =>
-      box.addEventListener("change", () => {
-        v.drillCats = [...catBox.querySelectorAll("input[type=checkbox]:checked")].map((b) => b.dataset.cat);
-        commit();
-      })
-    );
-  }).catch(() => {
-    if (catBox.isConnected) catBox.innerHTML = `<span class="muted">couldn't load categories</span>`;
-  });
+  Promise.all([
+    native.vocabCategories().catch(() => []),
+    native.lyricsPhraseCount(v.lang || "es").catch(() => 0),
+  ])
+    .then(([cats, lyricsCount]) => {
+      if (!catBox.isConnected) return;
+      const list = Array.isArray(cats) ? cats : [];
+      const sel = new Set(v.drillCats || []);
+      const lyricsOn = sel.has(LYRICS_CAT);
+      const real = list.map(
+        (c) =>
+          `<label class="vocab-cat"><input type="checkbox" data-cat="${escapeHtml(c.name)}" ${!lyricsOn && sel.has(c.name) ? "checked" : ""} />${escapeHtml(c.name)} <span class="muted">(${c.count})</span></label>`
+      );
+      catBox.innerHTML =
+        `<label class="vocab-cat"><input type="checkbox" data-cat="${LYRICS_CAT}" ${lyricsOn ? "checked" : ""} />Lyrics <span class="muted">(${Number(lyricsCount) || 0})</span></label>` +
+        real.join("") +
+        (list.length ? "" : `<span class="muted">no word categories found</span>`);
+      catBox.querySelectorAll("input[type=checkbox]").forEach((box) =>
+        box.addEventListener("change", () => {
+          const all = [...catBox.querySelectorAll("input[type=checkbox]")];
+          if (box.dataset.cat === LYRICS_CAT) {
+            if (box.checked) all.forEach((b) => { if (b !== box) b.checked = false; });
+          } else if (box.checked) {
+            const lyrics = all.find((b) => b.dataset.cat === LYRICS_CAT);
+            if (lyrics) lyrics.checked = false;
+          }
+          v.drillCats = all.filter((b) => b.checked).map((b) => b.dataset.cat);
+          commit();
+        })
+      );
+    })
+    .catch(() => {
+      if (catBox.isConnected) catBox.innerHTML = `<span class="muted">couldn't load categories</span>`;
+    });
 
   const posHead = document.createElement("div");
   posHead.className = "item-row";
-  posHead.innerHTML = `<label>Part of speech</label><span class="muted">popup only — empty = all</span>`;
+  posHead.innerHTML = `<label>Part of speech</label><span class="muted">popup only — empty = all; ignored for Lyrics</span>`;
   panel.appendChild(posHead);
   const posBox = document.createElement("div");
   posBox.className = "vocab-cats";
@@ -5389,9 +5414,10 @@ function renderVocabSettings() {
   panel.appendChild(srsProg);
   const barEl = srsProg.querySelector(".vocab-mastery-bar");
   const progEl = srsProg.querySelector("#vocab-srs-progress");
+  const wordCats = () => (v.drillCats || []).filter((c) => c !== LYRICS_CAT);
   const loadStats = () =>
     native
-      .vocabSrsStats(v.drillCats || [], v.drillPos || [])
+      .vocabSrsStats(wordCats(), v.drillPos || [])
       .then((s) => {
         if (!s) {
           progEl.textContent = "";
@@ -5422,7 +5448,7 @@ function renderVocabSettings() {
   catTable.innerHTML = `<span class="muted">loading…</span>`;
   panel.appendChild(catTable);
   native
-    .vocabCategoryStats(v.drillCats || [], v.drillPos || [])
+    .vocabCategoryStats(wordCats(), v.drillPos || [])
     .then((rows) => {
       if (!catTable.isConnected) return;
       if (!rows || !rows.length) {

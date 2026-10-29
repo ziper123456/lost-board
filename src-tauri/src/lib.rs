@@ -2081,10 +2081,15 @@ struct LyricsTranslation {
     translations: std::collections::HashMap<String, Vec<String>>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 struct TranslationEntry {
     provider: String,
     translations: std::collections::HashMap<String, Vec<String>>,
+    /// Exact source lines used for this translation. Missing in older cache
+    /// files (serde default); the lyrics category backfills them from the
+    /// lyrics cache so phrases survive a later lyrics-cache clear.
+    #[serde(default)]
+    source_lines: Vec<String>,
 }
 
 const TRANSLATION_CACHE_MAX: usize = 1000;
@@ -2187,7 +2192,11 @@ async fn lyrics_translate(
         }
         cache.insert(
             key,
-            TranslationEntry { provider: provider.clone(), translations: translations.clone() },
+            TranslationEntry {
+                provider: provider.clone(),
+                translations: translations.clone(),
+                source_lines: lines.to_vec(),
+            },
         );
     }
     persist_translation_cache(&app);
@@ -2661,6 +2670,8 @@ pub fn run() {
             vocab_due_card,
             vocab_due_batch,
             vocab_practice_batch,
+            vocab_lyrics_batch,
+            lyrics_phrase_count,
             vocab_record_review,
             vocab_due_count,
             vocab_reset_srs,
@@ -3409,6 +3420,231 @@ fn vocab_practice_batch(
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// Lyrics drill: random translated lyric phrases (never graded).
+// The translation cache stores target lines keyed by a hash of the source
+// lines but not the source text itself; recover it from the lyrics cache.
+// ---------------------------------------------------------------------------
+
+const LYRICS_CATEGORY: &str = "__lyrics__";
+
+fn parse_plain_lines(text: &str) -> Vec<String> {
+    text.split('\n')
+        .map(|line| line.split('^').next().unwrap_or("").trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn clean_lyric_line(line: &str) -> String {
+    line.split('^').next().unwrap_or("").trim().to_string()
+}
+
+fn useful_lyric_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.starts_with('[') {
+        return false;
+    }
+    trimmed.chars().filter(|c| c.is_alphabetic()).count() >= 3
+}
+
+fn translation_lines<'a>(
+    translations: &'a std::collections::HashMap<String, Vec<String>>,
+    target: &str,
+) -> Option<&'a Vec<String>> {
+    translations
+        .get(target)
+        .or_else(|| translations.iter().find(|(k, _)| k.eq_ignore_ascii_case(target)).map(|(_, v)| v))
+}
+
+fn translation_line(
+    translations: &std::collections::HashMap<String, Vec<String>>,
+    target: &str,
+    index: usize,
+    count: usize,
+) -> Option<String> {
+    translation_lines(translations, target)
+        .filter(|lines| lines.len() == count)
+        .and_then(|lines| lines.get(index))
+        .map(|line| clean_lyric_line(line))
+}
+
+/// Build one lyrics card for `lang` (es | de | both). The drill always renders
+/// `en` as the prompt, so that field holds the prompt language (not necessarily
+/// English); `es`/`de` hold the requested answers.
+fn make_lyric_card(
+    source_lang: &str,
+    source_line: &str,
+    translations: &std::collections::HashMap<String, Vec<String>>,
+    count: usize,
+    index: usize,
+    lang: &str,
+) -> Option<(String, String, String)> {
+    let source_lang = source_lang.to_ascii_lowercase();
+    let source = clean_lyric_line(source_line);
+    if !useful_lyric_text(&source) {
+        return None;
+    }
+    let es = || translation_line(translations, "es", index, count);
+    let de = || translation_line(translations, "de", index, count);
+    let en = || translation_line(translations, "en", index, count);
+
+    let (prompt, es_answer, de_answer) = match lang {
+        "es" => {
+            if source_lang != "es" {
+                (source, es()?, String::new())
+            } else {
+                (en().or_else(de)?, source, String::new())
+            }
+        }
+        "de" => {
+            if source_lang != "de" {
+                (source, String::new(), de()?)
+            } else {
+                (en().or_else(es)?, String::new(), source)
+            }
+        }
+        "both" => {
+            if source_lang != "es" && source_lang != "de" {
+                (source, es()?, de()?)
+            } else if source_lang == "es" {
+                (en()?, source, de()?)
+            } else {
+                (en()?, es()?, source)
+            }
+        }
+        _ => return None,
+    };
+
+    if !useful_lyric_text(&prompt) {
+        return None;
+    }
+    let ok = match lang {
+        "es" => useful_lyric_text(&es_answer),
+        "de" => useful_lyric_text(&de_answer),
+        "both" => useful_lyric_text(&es_answer) && useful_lyric_text(&de_answer),
+        _ => false,
+    };
+    ok.then_some((prompt, es_answer, de_answer))
+}
+
+fn lyric_source_sets() -> std::collections::HashMap<String, Vec<String>> {
+    let results: Vec<Option<LyricsResult>> =
+        lyrics_cache().lock().unwrap().values().cloned().collect();
+    let mut sets = std::collections::HashMap::new();
+    for result in results.into_iter().flatten() {
+        if !result.synced.is_empty() {
+            let lines: Vec<String> = result.synced.iter().map(|l| l.text.clone()).collect();
+            sets.entry(sha256_hex(lines.join("\n").as_bytes())).or_insert(lines);
+        }
+        if !result.plain.is_empty() {
+            let lines = parse_plain_lines(&result.plain);
+            if !lines.is_empty() {
+                sets.entry(sha256_hex(lines.join("\n").as_bytes())).or_insert(lines);
+            }
+        }
+    }
+    sets
+}
+
+fn collect_lyric_cards(
+    source_sets: &std::collections::HashMap<String, Vec<String>>,
+    translations: &std::collections::HashMap<String, TranslationEntry>,
+    lang: &str,
+) -> Vec<VocabCard> {
+    let mut cards = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (key, entry) in translations {
+        let mut parts = key.split('|');
+        let (Some(hash), Some(source), Some(_targets)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let lines = if !entry.source_lines.is_empty() {
+            &entry.source_lines
+        } else {
+            match source_sets.get(hash) {
+                Some(lines) => lines,
+                None => continue,
+            }
+        };
+        for (index, line) in lines.iter().enumerate() {
+            let Some((prompt, es, de)) =
+                make_lyric_card(source, line, &entry.translations, lines.len(), index, lang)
+            else {
+                continue;
+            };
+            let dedup = format!("{prompt}\u{1f}{es}\u{1f}{de}");
+            if !seen.insert(dedup) {
+                continue;
+            }
+            let short = &hash[..hash.len().min(12)];
+            cards.push(VocabCard {
+                id: format!("lyrics-{short}-{index}-{lang}"),
+                en: prompt,
+                es,
+                de,
+                cats: vec![LYRICS_CATEGORY.to_string()],
+            });
+        }
+    }
+    cards
+}
+
+/// Backfill `source_lines` on legacy cache entries while the lyrics cache still
+/// has the matching lines. Without this, clearing/pruning the lyrics cache would
+/// silently drop old phrase cards even though their translations remain.
+fn backfill_translation_sources(app: &tauri::AppHandle) {
+    let source_sets = lyric_source_sets();
+    let mut changed = false;
+    {
+        let mut cache = translation_cache().lock().unwrap();
+        for (key, entry) in cache.iter_mut() {
+            if !entry.source_lines.is_empty() {
+                continue;
+            }
+            let Some(hash) = key.split('|').next() else { continue };
+            if let Some(lines) = source_sets.get(hash) {
+                entry.source_lines = lines.clone();
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        persist_translation_cache(app);
+    }
+}
+
+/// Number of lyric phrase cards available for a drill language.
+#[tauri::command]
+fn lyrics_phrase_count(app: tauri::AppHandle, lang: String) -> Result<usize, String> {
+    ensure_lyrics_cache_loaded(&app);
+    ensure_translation_cache_loaded(&app);
+    backfill_translation_sources(&app);
+    let source_sets = lyric_source_sets();
+    let entries = translation_cache().lock().unwrap().clone();
+    Ok(collect_lyric_cards(&source_sets, &entries, &lang).len())
+}
+
+/// Random, ungraded lyric phrase cards (session-sized by the caller).
+#[tauri::command]
+fn vocab_lyrics_batch(
+    app: tauri::AppHandle,
+    lang: String,
+    limit: usize,
+) -> Result<Vec<VocabCard>, String> {
+    ensure_lyrics_cache_loaded(&app);
+    ensure_translation_cache_loaded(&app);
+    backfill_translation_sources(&app);
+    let source_sets = lyric_source_sets();
+    let entries = translation_cache().lock().unwrap().clone();
+    let mut cards = collect_lyric_cards(&source_sets, &entries, &lang);
+    use rand::seq::SliceRandom;
+    cards.shuffle(&mut rand::thread_rng());
+    if limit > 0 && cards.len() > limit {
+        cards.truncate(limit);
+    }
+    Ok(cards)
+}
+
 /// Record a graded review. `grade` is again | hard | good | easy.
 #[tauri::command]
 fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) -> Result<(), String> {
@@ -3755,7 +3991,12 @@ fn open_drill_window(
         // A different mode must be honoured: reload the popup so it re-reads the
         // config and rebuilds its queue. Same mode → just focus (never steal
         // focus on the scheduler tick).
-        let same_mode = VOCAB_POPUP.lock().unwrap().practice == practice;
+        let same_mode = {
+            let old = VOCAB_POPUP.lock().unwrap();
+            let old_lyrics = old.cats.iter().any(|c| c == LYRICS_CATEGORY);
+            let new_lyrics = cats.iter().any(|c| c == LYRICS_CATEGORY);
+            old.practice == practice && old_lyrics == new_lyrics
+        };
         if !same_mode {
             *VOCAB_POPUP.lock().unwrap() = new_config;
             let _ = w.eval("location.reload()");
@@ -4611,20 +4852,105 @@ mod srs_tests {
         let mut cache = std::collections::HashMap::new();
         cache.insert(
             "a".to_string(),
-            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "opencode".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         let mut imported = std::collections::HashMap::new();
         imported.insert(
             "a".to_string(),
-            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         imported.insert(
             "b".to_string(),
-            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new() },
+            TranslationEntry { provider: "deepl".into(), translations: std::collections::HashMap::new(), ..Default::default() },
         );
         let added = merge_translations(&mut cache, imported);
         assert_eq!(added, 1, "only the new key is added");
         assert_eq!(cache.get("a").unwrap().provider, "opencode", "existing entry kept");
         assert!(cache.contains_key("b"));
+    }
+
+    #[test]
+    fn lyric_cards_pick_prompt_and_targets() {
+        let mut tr = std::collections::HashMap::new();
+        tr.insert("es".to_string(), vec!["No me creas".to_string()]);
+        tr.insert("de".to_string(), vec!["Glaub mir nicht".to_string()]);
+        assert_eq!(
+            make_lyric_card("en", "Don't believe me", &tr, 1, 0, "es"),
+            Some(("Don't believe me".into(), "No me creas".into(), String::new()))
+        );
+        assert_eq!(
+            make_lyric_card("en", "Don't believe me", &tr, 1, 0, "both"),
+            Some(("Don't believe me".into(), "No me creas".into(), "Glaub mir nicht".into()))
+        );
+
+        // Spanish source: an English prompt is used so the answer is not leaked.
+        let mut es_source = std::collections::HashMap::new();
+        es_source.insert("en".to_string(), vec!["Don't believe me".to_string()]);
+        es_source.insert("de".to_string(), vec!["Glaub mir nicht".to_string()]);
+        assert_eq!(
+            make_lyric_card("es", "No me creas", &es_source, 1, 0, "es"),
+            Some(("Don't believe me".into(), "No me creas".into(), String::new()))
+        );
+        assert_eq!(
+            make_lyric_card("es", "No me creas", &es_source, 1, 0, "both"),
+            Some(("Don't believe me".into(), "No me creas".into(), "Glaub mir nicht".into()))
+        );
+        assert_eq!(make_lyric_card("en", "Hello world", &es_source, 1, 0, "both"), None);
+    }
+
+    #[test]
+    fn lyric_plain_lines_strip_bilingual_alt() {
+        assert_eq!(
+            parse_plain_lines("A^B\r\nC^D\n\n"),
+            vec!["A".to_string(), "C".to_string()]
+        );
+    }
+
+    #[test]
+    fn lyric_cards_skip_junk_and_duplicates() {
+        let lines = vec![
+            "Hello there".to_string(),
+            "Oh".to_string(),
+            "[Music]".to_string(),
+        ];
+        let hash = sha256_hex(lines.join("\n").as_bytes());
+        let mut sets = std::collections::HashMap::new();
+        sets.insert(hash.clone(), lines);
+        let mut translations = std::collections::HashMap::new();
+        translations.insert(
+            "es".to_string(),
+            vec!["Hola".to_string(), "Oh".to_string(), "Musica".to_string()],
+        );
+        let mut entries = std::collections::HashMap::new();
+        entries.insert(
+            format!("{hash}|en|es"),
+            TranslationEntry { provider: "test".into(), translations, ..Default::default() },
+        );
+        let cards = collect_lyric_cards(&sets, &entries, "es");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].en, "Hello there");
+        assert_eq!(cards[0].es, "Hola");
+        assert_eq!(cards[0].cats, vec![LYRICS_CATEGORY.to_string()]);
+    }
+
+    #[test]
+    fn lyric_cards_use_stored_source_lines() {
+        let mut translations = std::collections::HashMap::new();
+        translations.insert("es".to_string(), vec!["Hola".to_string()]);
+        let mut entries = std::collections::HashMap::new();
+        entries.insert(
+            "deadbeef|en|es".to_string(),
+            TranslationEntry {
+                provider: "test".into(),
+                translations,
+                source_lines: vec!["Hello there".to_string()],
+            },
+        );
+        // No lyrics-cache source set: the entry is self-contained.
+        let sets = std::collections::HashMap::new();
+        let cards = collect_lyric_cards(&sets, &entries, "es");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].en, "Hello there");
+        assert_eq!(cards[0].es, "Hola");
     }
 }
