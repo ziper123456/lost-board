@@ -1093,7 +1093,7 @@ function openTileMenu(clientX, clientY, compId) {
 function openGridMenu(clientX, clientY) {
   const order = [
     ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
-    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["caption", "Captions"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
     ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
     ["system", "System"],
   ];
@@ -2789,6 +2789,7 @@ function renderWeatherBody(c, body) {
         hour: "2-digit",
         minute: "2-digit",
         timeZone: w.tz,
+        hour12: false,
       });
     body.innerHTML = `
       <div class="wea-card">
@@ -3099,6 +3100,7 @@ function openTileSettings(id) {
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
   if (comp.kind === "lyrics") selectedLyricsId = id;
+  if (comp.kind === "caption") selectedCaptionId = id;
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
@@ -3405,6 +3407,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "vocab") renderVocabSettings();
   if (comp.kind === "meme") renderMemeSettings();
   if (comp.kind === "calendar") renderCalendarSettings();
+  if (comp.kind === "caption") renderCaptionSettings();
 }
 
 function ensureLauncher() {
@@ -4427,12 +4430,15 @@ function renderBackupSettings() {
 // Captions tile + settings. System-audio loopback is owned by the Rust engine;
 // the tile polls it for partial/final lines. One language per session.
 // ---------------------------------------------------------------------------
+let selectedCaptionId = null;
+
 function fmtCaptionTime(at) {
   try {
     return new Date(at * 1000).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      hour12: false,
     });
   } catch {
     return "";
@@ -4658,6 +4664,31 @@ function renderCaptionSettings() {
   intro.textContent =
     "Listens to the whole PC's output audio. One language per session; speech in other languages is decoded as the selected one.";
   panel.appendChild(intro);
+
+  const comps = state.compartments.filter((c) => c.kind === "caption");
+  if (comps.length) {
+    const comp = comps.find((c) => c.id === selectedCaptionId) || comps[0];
+    selectedCaptionId = comp.id;
+    comp.data = comp.data || {};
+
+    const tileRow = document.createElement("div");
+    tileRow.className = "item-row";
+    tileRow.innerHTML = `<label>Tile</label><select id="caption-select">${comps
+      .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+      .join("")}</select>`;
+    panel.appendChild(tileRow);
+    appendCollapsibleRow(panel, comp);
+    appendAppearanceRow(panel, comp);
+    tileRow.querySelector("#caption-select").addEventListener("change", (e) => {
+      selectedCaptionId = e.target.value;
+      renderCaptionSettings();
+    });
+  } else {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "No Captions tile yet — add one from Grid > Add a tile.";
+    panel.appendChild(note);
+  }
 
   const statusRow = document.createElement("div");
   statusRow.className = "item-row";
