@@ -275,6 +275,15 @@ shuffle independently (different words in each is variety, not a bug).
   adjective / adverb / phrase / other) **in addition to** the category filter; when both are set
   a card must match both (empty = all). POS comes from enrichment and scopes the drill popup and
   the mastery stats; the tile (and its due badge) stay whole-deck.
+- **FR-VOC-022** The drill category filter shall include a **Lyrics** category: a session of random
+  translated lyric phrases from the lyric translation cache, **never graded or scheduled**. Each
+  phrase pairs a source line with its translation for the drill language (for an ES source the
+  English translation becomes the prompt so the answer is not leaked); lyrics use the Practice
+  session size and take precedence over word categories / POS filters.
+- **FR-VOC-023** The drill footer shall show **Show answer** and **Next**; Dismiss and Snooze-30min
+  shall be icon buttons in the header. **Next** shall advance immediately, skipping the current card
+  when it has not been answered correctly; once the answer is correct it behaves like Enter. Enter
+  itself keeps its existing behaviour.
 
 ### 2.14 Meme tile: rotation + local captioning + expanded view (built — PR #32)
 
@@ -660,6 +669,11 @@ Given automatic backups are enabled with a folder and a schedule,
 When the scheduled local time is reached (or 4 hours have passed since the last run),
 Then one timestamped JSON bundle with the config, localStorage, and lyrics caches is written to the
 folder, and "Export now" performs the same export immediately.
+
+### AC-052: Lyrics drill category
+Given translated lyric lines exist, when Lyrics is selected in the drill categories and a popup
+opens, then random source lines are shown with their translations for the drill language, no review
+is recorded, and Next can skip a phrase without answering it.
 
 ---
 
