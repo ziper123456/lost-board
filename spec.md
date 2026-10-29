@@ -225,8 +225,9 @@ shuffle independently (different words in each is variety, not a bug).
   language (popup language setting: ES / DE / Both, mirroring vocab-app modes), drawn from
   the selected categories when a category filter is set (popup-only; empty filter = all cards).
   A popup runs a **session** of up to N due cards and steps through them (see FR-VOC-015).
-- **FR-VOC-006** Typing shall auto-check on match (case- and diacritic-insensitive, port of
-  vocab-app matching); max 2 attempts per word, then the answer is revealed — or immediately
+- **FR-VOC-006** Typing shall auto-check on match (case- and diacritic-insensitive; German **ß**
+  is accepted as **s**; Spanish **¿ ¡ ? !** are ignored; port of vocab-app matching); max 2 attempts
+  per word, then the answer is revealed — or immediately
   via the reveal button. Revealing keeps the card **open** so the user can read and retype it;
   typing the correct answer is what advances (retyping after reveal is part of learning).
 - **FR-VOC-007** On a correct answer the popup shall show a brief success state and advance to

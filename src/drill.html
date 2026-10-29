@@ -118,8 +118,8 @@
 <script src="vocab-match.js"></script>
 <script>
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
-  // Port of vocab-app typingMatch: lowercase + NFD diacritic-strip + trim.
-  const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  // Same normalization as the matcher (ß→s, Spanish punctuation ignored, accents folded).
+  const norm = (s) => window.VocabMatch.norm(s);
   const escapeHtml = (s) =>
     (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 

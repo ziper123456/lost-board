@@ -11,11 +11,21 @@
  *  - INDEFINITE articles (un/una/..., ein/eine/...) are stripped and treated as
  *    "no article": they don't encode a checkable gender here, so they never
  *    cause a slip.
+ *  - Answer matching is case- and diacritic-insensitive. German ß is accepted as
+ *    a single s ("groß" can be typed "gros"), and Spanish ¿ ¡ ? ! punctuation is
+ *    ignored ("¿Cómo estás?" can be typed "como estas").
  */
 (function (global) {
   "use strict";
 
-  const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const norm = (s) =>
+    (s || "")
+      .toLowerCase()
+      .replace(/[ßẞ]/g, "s")
+      .replace(/[¿¡?!]/g, "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
   const DEFINITE = ["el", "la", "los", "las", "der", "die", "das"];
   const INDEFINITE = ["un", "una", "unos", "unas", "ein", "eine", "einen", "einem", "einer", "eines"];
 
