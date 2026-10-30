@@ -1268,3 +1268,15 @@ input[type="color"]:hover { border-color: var(--accent); }
 .caption-model-bar i { display: block; height: 100%; background: var(--accent); }
 .caption-model-row .btn { margin-left: auto; }
 #caption-status-line.err { color: var(--red); }
+
+.caption-root.split .caption-lines { flex: 1 1 0; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.caption-translations { flex: 1 1 0; min-height: 0; overflow-y: auto; font-size: 0.82em; line-height: 1.35; display: flex; flex-direction: column; gap: 2px; }
+.caption-tr-line { color: var(--text); overflow-wrap: anywhere; }
+.caption-tr-text { color: var(--text); }
+.caption-tr-error { color: var(--red); }
+.caption-tr-provider { color: var(--muted); font-size: 0.62em; text-transform: uppercase; letter-spacing: 0.4px; margin-left: 6px; }
+.caption-tr-retry { padding: 1px 6px; font-size: 0.7em; margin-left: 6px; }
+.caption-tr-banner { color: var(--red); font-size: 0.72em; padding: 4px 0; }
+#cap-split.active { border-color: var(--accent); color: var(--accent); }
+
+.caption-translations[hidden] { display: none; }

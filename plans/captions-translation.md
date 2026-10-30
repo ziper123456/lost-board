@@ -1,6 +1,6 @@
 # Plan - Captions translation (split view, local LibreTranslate)
 
-Status: **Planned** (2026-10-30). Not started. Follow-up to PR #58.
+Status: **Built** (2026-10-30, PR pending). Split view, local LibreTranslate Docker, opt-in fallback, and opencode Fix are implemented.
 Spec: `spec.md` FR-CAP-007..010 (to add).
 
 ## Goal
@@ -61,7 +61,7 @@ LibreTranslate:
 - Container name: `lost-board-libretranslate`.
 - Publish on loopback with an ephemeral host port (`-p 127.0.0.1::5000`) and inspect the mapped
   port, avoiding conflicts.
-- Env: `LT_LOAD_ONLY=en,de,es`; volume: `lost-board-lt-models:/home/libretranslate/.local`.
+- Env: `LT_LOAD_ONLY=en,de,es,fr,it,pt,nl,ru`; volume: `lost-board-lt-models:/home/libretranslate/.local`.
 - Health check: `GET /health`; states: `offline`, `starting`, `pulling`, `ready`, `error`.
 - Pull image if missing; show status. First run also downloads Argos models.
 - Stop on app exit by default; setting to keep it running.
@@ -173,4 +173,4 @@ Under Settings → Captions → Translation:
 
 ## Corrections log
 
-- Not started.
+- 2026-10-30: Implemented `seq`, split view + newest-first backfill, LibreTranslate batch client/cache, app-managed Docker lifecycle (ephemeral port, image pull, health), opt-in DeepL fallback, and per-line opencode `Fix`. Docker/health paths are compile-tested; live Docker test still requires Docker Desktop running.

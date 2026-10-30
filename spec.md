@@ -414,6 +414,20 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-CAP-006** Transcripts shall auto-save as Markdown (`[HH:MM:SS] text`) to the configured folder
   or app-data `captions/`; the tile offers **Save as…**, **Open folder**, and **Clear**. API keys and
   audio never leave the machine; only model downloads use the network.
+- **FR-CAP-007** The Captions tile shall offer a **split translated view**: the original timeline on
+  top, and one English translation per **finalized** line below, aligned by line sequence. Partial
+  text is never sent for translation.
+- **FR-CAP-008** Translation shall use a **local LibreTranslate/Argos** service in an app-managed
+  Docker container. Settings shall show Docker/container/health status with Start, Stop, and Test
+  actions; Docker not running, image pulls, and first-run model downloads shall produce actionable
+  states rather than blocking the captions engine.
+- **FR-CAP-009** Translation shall run only while the split view is on: new finalized lines translate
+  automatically, and opening the split view backfills existing untranslated lines newest-first.
+  The tile shall show pending, retryable error, and provider states; cached translations survive
+  closing/reopening the split view and are discarded when the caption session changes.
+- **FR-CAP-010** Cloud translation fallback shall be **opt-in and off by default**, and shall never be
+  used without explicit user enablement. A per-line AI cleanup may use the opencode cloud provider
+  only on explicit action, clearly labelled as cloud.
 
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
@@ -701,6 +715,12 @@ Given the German pack is installed and Listen is on, when German speech plays th
 output device, then partial text appears and pauses produce timestamped final lines; toggling off
 stops capture, changing the output device restarts capture without losing the transcript, and the
 Markdown session file is written when auto-save is on.
+
+### AC-054: Caption translation split view
+Given a non-English caption session is listening with split view on and the local translator ready,
+when finalized lines arrive, then each line gets one aligned English translation (newest-first
+backfill on open), partials are not sent, the original and translated panes scroll independently,
+translation errors are visible and retryable, and cloud fallback is not used unless enabled.
 
 ---
 

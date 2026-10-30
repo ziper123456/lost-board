@@ -14,10 +14,15 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
 mod captions;
+mod captions_translate;
 use captions::{
     caption_clear, caption_devices, caption_download_model, caption_models, caption_open_folder,
     caption_poll, caption_remove_model, caption_save, caption_set_device, caption_start,
     caption_stop,
+};
+use captions_translate::{
+    caption_polish_line, caption_translate_batch, caption_translate_health, caption_translator_start,
+    caption_translator_set_keep_running, caption_translator_status, caption_translator_stop,
 };
 
 #[derive(Serialize, Clone)]
@@ -1884,7 +1889,7 @@ fn deepl_lang(code: &str, target: bool) -> String {
 }
 
 /// Batch-translate lines with DeepL, preserving order (one request per ≤50 lines).
-async fn deepl_translate_batch(
+pub(crate) async fn deepl_translate_batch(
     lines: &[String],
     source: &str,
     target: &str,
@@ -2019,7 +2024,7 @@ fn extract_json_object(text: &str) -> Option<serde_json::Value> {
 
 /// Translate aligned lines with the opencode LLM (strict JSON). Returns None when
 /// the CLI is unavailable / fails / returns a mismatched line count.
-async fn llm_translate_lines(
+pub(crate) async fn llm_translate_lines(
     lines: &[String],
     targets: &[String],
     source: &str,
@@ -2080,6 +2085,55 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         out.insert(key, lines_out);
     }
     Some(out)
+}
+
+/// Explicit per-line cleanup for captions. Sends the source, the draft
+/// translation, and nearby lines to opencode; returns corrected English only.
+pub(crate) async fn llm_polish_line(
+    source: &str,
+    draft: &str,
+    context: &str,
+) -> Option<String> {
+    let instruction = format!(
+        "You are correcting one line of a live English caption transcript. The source is automatic speech recognition and may contain errors. \
+Source: {source}\nDraft English: {draft}\nNearby source lines: {context}\n\
+Return ONLY the corrected English line (no quotes, labels, markdown, prose, or tool calls)."
+    );
+    let (program, leading) = opencode_program();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args([
+        "run",
+        "--agent",
+        "plan",
+        "--format",
+        "json",
+        "-m",
+        LYRICS_LLM_MODEL,
+        "--title",
+        "lost-board captions",
+        &instruction,
+    ]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if let Some(session_id) = parse_opencode_session_id(&stdout) {
+        delete_opencode_session(&session_id).await;
+    }
+    if !output.status.success() {
+        return None;
+    }
+    let text = parse_opencode_text(&stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -2618,7 +2672,7 @@ fn open_path(path: &str) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
@@ -2713,6 +2767,13 @@ pub fn run() {
             caption_remove_model,
             caption_save,
             caption_open_folder,
+            caption_polish_line,
+            caption_translate_batch,
+            caption_translate_health,
+            caption_translator_start,
+            caption_translator_set_keep_running,
+            caption_translator_status,
+            caption_translator_stop,
             open_solution,
             open_url,
             fetch_rss,
@@ -2753,8 +2814,13 @@ pub fn run() {
             spotify_queue,
             get_system_stats,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running lost-board");
+        .build(tauri::generate_context!())
+        .expect("error while building lost-board");
+    app.run(|_app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            captions_translate::stop_on_exit();
+        }
+    });
 }
 
 const STATE_FILE_NAME: &str = "dashboard-state.json";

@@ -62,6 +62,14 @@ const DEFAULT_STATE = {
     autoSave: true,
     saveDir: "",
     finalizeMs: 700,
+    translation: {
+      target: "en",
+      provider: "libretranslate",
+      libreUrl: "",
+      allowCloudFallback: false,
+      keepRunning: false,
+      cleanup: false,
+    },
   },
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
@@ -521,6 +529,39 @@ async openFolder(path) {
   },
   async captionOpenFolder() {
     if (window.__TAURI__) return invoke("caption_open_folder");
+  },
+  async captionTranslateBatch(lines, source, target, provider, endpoint, allowCloudFallback) {
+    if (window.__TAURI__)
+      return invoke("caption_translate_batch", {
+        lines,
+        source,
+        target,
+        provider,
+        endpoint,
+        allowCloudFallback,
+      });
+    return { provider, translations: [], error: "" };
+  },
+  async captionTranslateHealth(endpoint) {
+    if (window.__TAURI__) return invoke("caption_translate_health", { endpoint });
+    return false;
+  },
+  async captionPolishLine(source, draft, context) {
+    if (window.__TAURI__) return invoke("caption_polish_line", { source, draft, context });
+    return "";
+  },
+  async captionTranslatorStatus() {
+    if (window.__TAURI__) return invoke("caption_translator_status");
+    return { state: "offline", error: "not in Tauri" };
+  },
+  async captionTranslatorStart() {
+    if (window.__TAURI__) return invoke("caption_translator_start");
+  },
+  async captionTranslatorStop() {
+    if (window.__TAURI__) return invoke("caption_translator_stop");
+  },
+  async captionTranslatorSetKeepRunning(keep) {
+    if (window.__TAURI__) return invoke("caption_translator_set_keep_running", { keep });
   },
   async setAutostart(enabled) {
     if (window.__TAURI__) return invoke("set_autostart", { enabled });
@@ -4219,6 +4260,24 @@ function captionConfig() {
   }
   if (!Number.isFinite(Number(state.captions.finalizeMs))) state.captions.finalizeMs = 700;
   state.captions.finalizeMs = Math.min(5000, Math.max(300, Number(state.captions.finalizeMs) || 700));
+  const tr = state.captions.translation;
+  if (!tr || typeof tr !== "object") {
+    state.captions.translation = {
+      target: "en",
+      provider: "libretranslate",
+      libreUrl: "",
+      allowCloudFallback: false,
+      keepRunning: false,
+      cleanup: false,
+    };
+  } else {
+    if (!["en"].includes(tr.target)) tr.target = "en";
+    if (tr.provider !== "libretranslate") tr.provider = "libretranslate";
+    if (typeof tr.libreUrl !== "string") tr.libreUrl = "";
+    tr.allowCloudFallback = tr.allowCloudFallback === true;
+    tr.keepRunning = tr.keepRunning === true;
+    tr.cleanup = tr.cleanup === true;
+  }
   return state.captions;
 }
 
@@ -4447,6 +4506,29 @@ function renderBackupSettings() {
 // ---------------------------------------------------------------------------
 let selectedCaptionId = null;
 
+// One global caption session at a time. Translations are keyed by line seq
+// and discarded when the session changes.
+const captionTrState = {
+  session: 0,
+  entries: new Map(),
+  pending: new Set(),
+  queue: [],
+  busy: false,
+  ready: false,
+  error: "",
+};
+
+function resetCaptionTranslations(session) {
+  if (captionTrState.session === session) return;
+  captionTrState.session = session;
+  captionTrState.entries.clear();
+  captionTrState.pending.clear();
+  captionTrState.queue.length = 0;
+  captionTrState.busy = false;
+  captionTrState.ready = false;
+  captionTrState.error = "";
+}
+
 function fmtCaptionTime(at) {
   try {
     return new Date(at * 1000).toLocaleTimeString([], {
@@ -4468,27 +4550,36 @@ async function renderCaptionBody(c, body) {
         <label class="caption-listen"><input type="checkbox" class="switch" id="cap-listen" /> Listen</label>
         <select id="cap-lang" title="Caption model"></select>
         <select id="cap-device" title="Output device"></select>
+        <button class="btn ghost" id="cap-split" title="Show English translation">Split EN</button>
       </div>
       <div class="caption-status" id="cap-status"></div>
       <div class="caption-lines" id="cap-lines"><div class="muted">No speech yet.</div></div>
+      <div class="caption-translations" id="cap-translations" hidden></div>
       <div class="caption-actions">
-        <button class="btn ghost" id="cap-save">Save as…</button>
+        <button class="btn ghost" id="cap-save">Save as.</button>
         <button class="btn ghost" id="cap-open">Open folder</button>
-        <button class="btn ghost" id="cap-packs">Packs…</button>
+        <button class="btn ghost" id="cap-packs">Packs.</button>
         <button class="btn ghost" id="cap-clear">Clear</button>
       </div>
     </div>`;
 
+  const rootEl = body.querySelector(".caption-root");
   const listen = body.querySelector("#cap-listen");
   const langSel = body.querySelector("#cap-lang");
   const deviceSel = body.querySelector("#cap-device");
+  const splitBtn = body.querySelector("#cap-split");
   const statusEl = body.querySelector("#cap-status");
   const linesEl = body.querySelector("#cap-lines");
+  const transEl = body.querySelector("#cap-translations");
+  const trCfg = cfg.translation;
 
   let installed = [];
   let running = false;
   let modelSig = "";
   let tick = 0;
+  let split = c.data.split === true;
+  let lastStatus = null;
+  let translatorStarting = false;
 
   const setStatus = (text, isError) => {
     statusEl.textContent = text;
@@ -4551,6 +4642,221 @@ async function renderCaptionBody(c, body) {
     if (nearBottom) linesEl.scrollTop = linesEl.scrollHeight;
   };
 
+  const sourceLang = () => String(lastStatus?.lang || "").toLowerCase();
+  const targetLang = () => trCfg.target || "en";
+  const canTranslate = () => {
+    const source = sourceLang();
+    return Boolean(source) && source !== targetLang();
+  };
+
+  const applySplit = () => {
+    rootEl.classList.toggle("split", split);
+    transEl.hidden = !split;
+    splitBtn.classList.toggle("active", split);
+    splitBtn.setAttribute("aria-pressed", String(split));
+    splitBtn.title = split ? "Hide English translation" : "Show English translation";
+  };
+
+  const renderTranslations = (s) => {
+    if (!split) return;
+    const nearBottom = transEl.scrollHeight - transEl.scrollTop - transEl.clientHeight < 48;
+    const rows = (s.lines || [])
+      .map((line) => {
+        const entry = captionTrState.entries.get(line.seq);
+        let text;
+        let retry = "";
+        let fix = "";
+        if (!entry || entry.status === "pending") {
+          text = `<span class="muted">Translating...</span>`;
+        } else if (entry.status === "error") {
+          text = `<span class="caption-tr-error">Translation unavailable</span>`;
+          retry = `<button class="btn ghost caption-tr-retry" data-retry="${line.seq}">Retry</button>`;
+        } else {
+          text = escapeHtml(entry.text || "");
+          if (trCfg.cleanup) {
+            fix = `<button class="btn ghost caption-tr-retry" data-fix="${line.seq}">Fix</button>`;
+          }
+        }
+        const provider =
+          entry?.status === "done" && entry.provider
+            ? `<span class="caption-tr-provider">${escapeHtml(entry.provider)}</span>`
+            : "";
+        return `<div class="caption-tr-line" data-seq="${line.seq}"><span class="caption-time">${escapeHtml(fmtCaptionTime(line.at))}</span><span class="caption-tr-text">${text}</span>${provider}${retry}${fix}</div>`;
+      })
+      .join("");
+    const banner = captionTrState.error
+      ? `<div class="caption-tr-banner">${escapeHtml(captionTrState.error)}</div>`
+      : "";
+    transEl.innerHTML =
+      banner + rows || `<div class="muted">Translations appear here as lines finish.</div>`;
+    if (nearBottom) transEl.scrollTop = transEl.scrollHeight;
+    transEl.querySelectorAll("[data-retry]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const seq = Number(btn.dataset.retry);
+        captionTrState.entries.delete(seq);
+        captionTrState.error = "";
+        const line = (s.lines || []).find((l) => l.seq === seq);
+        if (line) enqueueTranslation(line);
+        renderTranslations(s);
+        void drainTranslations();
+      })
+    );
+    transEl.querySelectorAll("[data-fix]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const seq = Number(btn.dataset.fix);
+        const line = (s.lines || []).find((l) => l.seq === seq);
+        const entry = captionTrState.entries.get(seq);
+        if (!line || !entry) return;
+        const session = captionTrState.session;
+        btn.disabled = true;
+        btn.textContent = "Fixing...";
+        const context = (s.lines || [])
+          .filter((l) => Math.abs(l.seq - seq) <= 1 && l.seq !== seq)
+          .map((l) => l.text)
+          .join("\n");
+        try {
+          const text = await native.captionPolishLine(line.text, entry.text, context);
+          if (captionTrState.session !== session) return;
+          if (text && String(text).trim()) {
+            entry.text = String(text).trim();
+            entry.provider = "opencode";
+            entry.status = "done";
+            entry.error = "";
+            captionTrState.error = "";
+          }
+        } catch (e) {
+          captionTrState.error = String(e?.message || e);
+        }
+        if (lastStatus) renderTranslations(lastStatus);
+      })
+    );
+  };
+
+  const enqueueTranslation = (line) => {
+    if (!line?.text) return;
+    if (captionTrState.entries.has(line.seq) || captionTrState.pending.has(line.seq)) return;
+    captionTrState.pending.add(line.seq);
+    captionTrState.queue.push({ seq: line.seq, text: line.text });
+  };
+
+  const syncTranslations = (s) => {
+    resetCaptionTranslations(s.session);
+    lastStatus = s;
+    if (!split || !canTranslate()) {
+      renderTranslations(s);
+      return;
+    }
+    if (!captionTrState.ready) {
+      if (!translatorStarting && !captionTrState.error) void ensureTranslator();
+      renderTranslations(s);
+      return;
+    }
+    const ids = new Set((s.lines || []).map((l) => l.seq));
+    for (const seq of [...captionTrState.entries.keys()]) {
+      if (!ids.has(seq)) captionTrState.entries.delete(seq);
+    }
+    for (const seq of [...captionTrState.pending]) {
+      if (!ids.has(seq)) captionTrState.pending.delete(seq);
+    }
+    captionTrState.queue = captionTrState.queue.filter((q) => ids.has(q.seq));
+    // Backfill newest-first; already translated/pending lines are skipped.
+    for (let i = s.lines.length - 1; i >= 0; i--) enqueueTranslation(s.lines[i]);
+    renderTranslations(s);
+    void drainTranslations();
+  };
+
+  const drainTranslations = async () => {
+    if (!split || !canTranslate() || captionTrState.busy || !captionTrState.queue.length) return;
+    const session = captionTrState.session;
+    const source = sourceLang();
+    const target = targetLang();
+    const batch = captionTrState.queue.splice(0, 10);
+    captionTrState.busy = true;
+    try {
+      const res = await native.captionTranslateBatch(
+        batch,
+        source,
+        target,
+        trCfg.provider,
+        trCfg.libreUrl,
+        trCfg.allowCloudFallback === true
+      );
+      if (captionTrState.session !== session) return;
+      const out = res?.translations || [];
+      const seen = new Set();
+      for (const item of out) {
+        seen.add(item.seq);
+        const ok = !item.error && String(item.text || "").trim();
+        captionTrState.entries.set(item.seq, {
+          status: ok ? "done" : "error",
+          text: item.text || "",
+          provider: res.provider || "",
+          error: item.error || (ok ? "" : "empty translation"),
+        });
+        captionTrState.pending.delete(item.seq);
+      }
+      for (const item of batch) {
+        if (seen.has(item.seq)) continue;
+        captionTrState.entries.set(item.seq, {
+          status: "error",
+          text: "",
+          provider: res?.provider || "",
+          error: "missing translation",
+        });
+        captionTrState.pending.delete(item.seq);
+      }
+      captionTrState.error = "";
+      if (lastStatus) renderTranslations(lastStatus);
+    } catch (e) {
+      if (captionTrState.session === session) {
+        captionTrState.error = String(e?.message || e);
+        for (const item of batch) {
+          captionTrState.entries.set(item.seq, {
+            status: "error",
+            text: "",
+            provider: "",
+            error: captionTrState.error,
+          });
+          captionTrState.pending.delete(item.seq);
+        }
+        if (lastStatus) renderTranslations(lastStatus);
+      }
+    } finally {
+      captionTrState.busy = false;
+      if (captionTrState.session === session && split) void drainTranslations();
+    }
+  };
+
+  const ensureTranslator = async () => {
+    if (translatorStarting) return;
+    translatorStarting = true;
+    try {
+      let status = await native.captionTranslatorStatus().catch(() => null);
+      if (!status || status.state !== "ready") {
+        status = await native.captionTranslatorStart();
+      }
+      if (status?.endpoint) {
+        trCfg.libreUrl = status.endpoint;
+        saveState();
+      }
+      if (!status || status.state !== "ready") {
+        throw new Error(status?.error || "Local translator is not ready.");
+      }
+      captionTrState.ready = true;
+      captionTrState.error = "";
+      for (const [seq, entry] of [...captionTrState.entries]) {
+        if (entry.status === "error") captionTrState.entries.delete(seq);
+      }
+    } catch (e) {
+      captionTrState.ready = false;
+      captionTrState.error = String(e?.message || e);
+    } finally {
+      translatorStarting = false;
+      refresh();
+    }
+  };
+
+
   const refresh = async () => {
     if (!body.isConnected) return;
     let s;
@@ -4563,6 +4869,15 @@ async function renderCaptionBody(c, body) {
     running = s.status === "listening" || s.status === "loading";
     listen.checked = running;
     langSel.disabled = running || !installed.length;
+    lastStatus = s;
+    const can = canTranslate();
+    splitBtn.disabled = !can;
+    if (!can && split) {
+      split = false;
+      c.data.split = false;
+      saveState();
+    }
+    applySplit();
     renderLines(s);
 
     let statusText;
@@ -4582,6 +4897,7 @@ async function renderCaptionBody(c, body) {
       statusError = true;
     }
     setStatus(statusText, statusError);
+    syncTranslations(s);
 
     if (!cfg.deviceId && deviceSel.value) deviceSel.value = "";
 
@@ -4602,6 +4918,7 @@ async function renderCaptionBody(c, body) {
   await fillDevices();
   // Reflect a model chosen in Settings.
   if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
+  applySplit();
   await refresh();
   const timer = setInterval(refresh, 400);
   addTimer(body, timer);
@@ -4647,6 +4964,16 @@ async function renderCaptionBody(c, body) {
     } catch (e) {
       setStatus(String(e?.message || e), true);
     }
+    refresh();
+  });
+
+  splitBtn.addEventListener("click", () => {
+    if (splitBtn.disabled) return;
+    split = !split;
+    c.data.split = split;
+    saveState();
+    captionTrState.error = "";
+    applySplit();
     refresh();
   });
 
@@ -4878,11 +5205,68 @@ function renderCaptionSettings() {
   folderRow.innerHTML = `<label>Transcript folder</label><span class="muted" id="caption-folder">${cfg.saveDir ? escapeHtml(cfg.saveDir) : "app-data/captions"}</span><button class="btn ghost" id="caption-pick-folder">Choose…</button><button class="btn ghost" id="caption-clear-folder">Clear</button><button class="btn ghost" id="caption-open-folder">Open</button>`;
   panel.appendChild(folderRow);
 
+  const tr = cfg.translation;
+  const trHead = document.createElement("h3");
+  trHead.textContent = "Translation";
+  panel.appendChild(trHead);
+
+  const trRow = document.createElement("div");
+  trRow.className = "item-row";
+  trRow.innerHTML = `<label>Target</label><select id="caption-tr-target"><option value="en">English</option></select>
+    <label>Provider</label><select id="caption-tr-provider"><option value="libretranslate">LibreTranslate (local)</option></select>
+    <span class="muted">One English translation per finalized line.</span>`;
+  panel.appendChild(trRow);
+
+  const trStatusRow = document.createElement("div");
+  trStatusRow.className = "item-row";
+  trStatusRow.innerHTML = `<label>Local translator</label><span class="muted" id="caption-tr-status">checking...</span>
+    <button class="btn primary" id="caption-tr-start">Start</button>
+    <button class="btn ghost" id="caption-tr-stop">Stop</button>
+    <button class="btn ghost" id="caption-tr-test">Test</button>`;
+  panel.appendChild(trStatusRow);
+
+  const trFallbackRow = document.createElement("div");
+  trFallbackRow.className = "item-row";
+  trFallbackRow.innerHTML = `<label>Allow cloud fallback <input type="checkbox" class="switch" id="caption-tr-fallback" ${tr.allowCloudFallback ? "checked" : ""} /></label>
+    <label>Keep translator running after exit <input type="checkbox" class="switch" id="caption-tr-keep" ${tr.keepRunning ? "checked" : ""} /></label>
+    <label>Fix lines with opencode (cloud) <input type="checkbox" class="switch" id="caption-tr-cleanup" ${tr.cleanup ? "checked" : ""} /></label>
+    <span class="muted">Cloud fallback uses DeepL only when enabled; opencode Fix sends the selected line off-device.</span>`;
+  panel.appendChild(trFallbackRow);
+
   const langSel = langRow.querySelector("#caption-lang");
   const devSel = devRow.querySelector("#caption-device");
   const pauseSel = pauseRow.querySelector("#caption-finalize");
   const langNote = langRow.querySelector("#caption-lang-note");
+  const trStatusLine = trStatusRow.querySelector("#caption-tr-status");
   pauseSel.value = String(Number(cfg.finalizeMs) || 700);
+  const setTrStatus = (text, err) => {
+    trStatusLine.textContent = text;
+    trStatusLine.classList.toggle("err", !!err);
+  };
+  const refreshTranslatorStatus = async () => {
+    setTrStatus("checking...", false);
+    try {
+      const st = await native.captionTranslatorStatus();
+      if (st?.endpoint) {
+        tr.libreUrl = st.endpoint;
+        saveState();
+      }
+      if (st?.state === "ready") {
+        captionTrState.ready = true;
+        captionTrState.error = "";
+        setTrStatus(`Ready - ${st.endpoint}`, false);
+      } else if (st?.error) {
+        setTrStatus(st.error, true);
+      } else {
+        setTrStatus(st?.state || "offline", false);
+      }
+    } catch (e) {
+      setTrStatus(String(e?.message || e), true);
+    }
+  };
+  trRow.querySelector("#caption-tr-target").value = tr.target || "en";
+  trRow.querySelector("#caption-tr-provider").value = tr.provider || "libretranslate";
+
 
   const loadSelectors = async () => {
     const [models, devices, poll] = await Promise.all([
@@ -4965,6 +5349,70 @@ function renderCaptionSettings() {
     });
   });
 
+  trRow.querySelector("#caption-tr-target").addEventListener("change", (e) => {
+    tr.target = e.target.value || "en";
+    saveState();
+    render();
+  });
+  trRow.querySelector("#caption-tr-provider").addEventListener("change", (e) => {
+    tr.provider = e.target.value || "libretranslate";
+    saveState();
+    render();
+  });
+  trFallbackRow.querySelector("#caption-tr-fallback").addEventListener("change", (e) => {
+    tr.allowCloudFallback = e.target.checked;
+    saveState();
+  });
+  trFallbackRow.querySelector("#caption-tr-keep").addEventListener("change", (e) => {
+    tr.keepRunning = e.target.checked;
+    saveState();
+    native.captionTranslatorSetKeepRunning(tr.keepRunning).catch(() => {});
+  });
+  trFallbackRow.querySelector("#caption-tr-cleanup").addEventListener("change", (e) => {
+    tr.cleanup = e.target.checked;
+    saveState();
+    render();
+  });
+  trStatusRow.querySelector("#caption-tr-start").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    setTrStatus("Starting translator (first run may pull the image and models)...", false);
+    try {
+      const st = await native.captionTranslatorStart();
+      if (st?.endpoint) {
+        tr.libreUrl = st.endpoint;
+        saveState();
+      }
+      captionTrState.ready = st?.state === "ready";
+      if (captionTrState.ready) captionTrState.error = "";
+      setTrStatus(st?.state === "ready" ? `Ready - ${st.endpoint}` : st?.state || "offline", st?.state !== "ready");
+      render();
+    } catch (err) {
+      setTrStatus(String(err?.message || err), true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  trStatusRow.querySelector("#caption-tr-stop").addEventListener("click", async () => {
+    try {
+      await native.captionTranslatorStop();
+      captionTrState.ready = false;
+      captionTrState.error = "Translator stopped.";
+      setTrStatus("stopped", false);
+      render();
+    } catch (err) {
+      setTrStatus(String(err?.message || err), true);
+    }
+  });
+  trStatusRow.querySelector("#caption-tr-test").addEventListener("click", async () => {
+    try {
+      const ok = await native.captionTranslateHealth(tr.libreUrl);
+      setTrStatus(ok ? "health OK" : "health failed", !ok);
+    } catch (err) {
+      setTrStatus(String(err?.message || err), true);
+    }
+  });
+  refreshTranslatorStatus();
   fillModelRows();
   loadSelectors();
   native
@@ -7139,7 +7587,7 @@ const KIND_DEFAULTS = {
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },
-  caption: { title: "Captions", data: {} },
+  caption: { title: "Captions", data: { split: false } },
   project: { title: "Projects", data: { roots: [] } },
 };
 
@@ -7387,6 +7835,9 @@ async function initialize() {
       } else {
         saveState();
       }
+      native
+        .captionTranslatorSetKeepRunning(captionConfig().translation.keepRunning === true)
+        .catch(() => {});
     } catch (e) {
       console.error("Failed to load app state", e);
     }
