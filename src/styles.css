@@ -1192,14 +1192,29 @@ input[type="color"]:hover { border-color: var(--accent); }
   opacity: var(--lyr-context-opacity, 0.55);
   font-size: calc(0.82em * var(--lyr-context-scale, 0.85));
 }
+/* Focus: the next line slides down into the current slot and translations
+   fade in underneath. Full mode keeps the original upward fade. */
+.lyr-lines.focus .lyr-line.cur { animation: none; }
+.lyr-lines.focus .lyr-line.cur.anim { animation: lyr-line-in-down 0.34s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.lyr-lines.focus .lyr-line.cur .lyr-tr { animation: lyr-tr-in 0.3s ease 0.12s both; }
 @keyframes lyr-line-in {
   from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lyr-line-in-down {
+  from { opacity: 0; transform: translateY(-1.1em); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lyr-tr-in {
+  from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .lyr-lines { scroll-behavior: auto; }
   .lyr-line { transition: none; }
   .lyr-line.cur { animation: none; }
+  .lyr-lines.focus .lyr-line.cur.anim,
+  .lyr-lines.focus .lyr-line.cur .lyr-tr { animation: none; }
   .spot-eq.playing i { animation: none; }
   .meter .fill { transition: none; }
   .meter .fill::after { animation: none; opacity: 0; }

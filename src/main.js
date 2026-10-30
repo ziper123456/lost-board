@@ -1598,6 +1598,7 @@ async function renderLyricsBody(c, body) {
   const offsetMs = Number(data.offsetMs) || 0;
   const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
   let full = data.full === true;
+  let lastAnimatedIdx = -2;
 
   let synced = [];
   let plainLines = [];
@@ -1728,6 +1729,7 @@ async function renderLyricsBody(c, body) {
     linesEl.classList.toggle("focus", !effectiveFull);
 
     if (effectiveFull) {
+      lastAnimatedIdx = -2;
       const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}|${translations ? "tr" : ""}`;
       if (fullRenderKey !== key) {
         const lines = synced.length ? synced.map((l) => l.text) : plainLines;
@@ -1746,12 +1748,15 @@ async function renderLyricsBody(c, body) {
       if (follow && synced.length && currentIdx >= 0) scrollCurrent();
     } else {
       fullRenderKey = "";
+      const animateCurrent = currentIdx !== lastAnimatedIdx;
+      lastAnimatedIdx = currentIdx;
       const order = LyricsUtil.focusOrder(synced.length, currentIdx, prevN, nextN);
       linesEl.innerHTML = order
         .map((i) => {
           const l = synced[i];
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
-          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
+          const anim = animateCurrent && i === currentIdx ? " anim" : "";
+          return `<div class="lyr-line${cls}${anim}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
         .join("");
     }
