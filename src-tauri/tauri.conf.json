@@ -29,7 +29,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["resources/cards.csv", "resources/cards-extra.json"],
+    "resources": {
+      "resources/cards.csv": "resources/cards.csv",
+      "resources/cards-extra.json": "resources/cards-extra.json",
+      "resources/vosk/extracted/vosk-win64-0.3.45/libvosk.dll": "libvosk.dll",
+      "resources/vosk/extracted/vosk-win64-0.3.45/libgcc_s_seh-1.dll": "libgcc_s_seh-1.dll",
+      "resources/vosk/extracted/vosk-win64-0.3.45/libstdc++-6.dll": "libstdc++-6.dll",
+      "resources/vosk/extracted/vosk-win64-0.3.45/libwinpthread-1.dll": "libwinpthread-1.dll"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

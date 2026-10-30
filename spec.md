@@ -394,6 +394,27 @@ auth, custom images are user-supplied, captioning is fully local.
   can be **exported/imported** as JSON; importing **merges into** the existing cache without
   overwriting existing entries. The UI shall note that lyrics are sent to the selected provider.
 
+### 2.19 Captions tile (system audio, live)
+
+- **FR-CAP-001** A Captions tile shall capture the **whole PC's output audio** via WASAPI loopback
+  (default or selected output device) while its **Listen** toggle is on, and stop capturing when
+  toggled off. Listening is off by default and after an app restart.
+- **FR-CAP-002** The session shall use **one selected language** from installed model packs. The
+  language selector is disabled while listening; speech in other languages is decoded as the selected
+  language (not filtered or translated).
+- **FR-CAP-003** Language packs (Vosk models) shall be downloaded from **Settings → Captions**, with
+  size/license and progress; nothing is downloaded automatically. Removing a model is blocked while
+  it is selected or active. German is the default selection. German and Spanish each offer a
+  small and a large pack; the large packs use more CPU and RAM.
+- **FR-CAP-004** The output device shall be selectable **both in the tile and in Settings** and kept
+  in sync; changing it while listening restarts capture on the new device and keeps the transcript.
+- **FR-CAP-005** The tile shall show live partial text and finalized lines (timestamped), finalized
+  at Vosk silence endpoints with a configurable line-break pause (default 0.7 s); the UI keeps the
+  latest 500 lines.
+- **FR-CAP-006** Transcripts shall auto-save as Markdown (`[HH:MM:SS] text`) to the configured folder
+  or app-data `captions/`; the tile offers **Save as…**, **Open folder**, and **Clear**. API keys and
+  audio never leave the machine; only model downloads use the network.
+
 ### 2.9 Compartment: Service Healthcheck — DROPPED
 
 ~~FR-HLT-001..007 (probe-only GET healthchecks)~~ — **dropped 2026-10-07** (deemed unnecessary).
@@ -674,6 +695,12 @@ folder, and "Export now" performs the same export immediately.
 Given translated lyric lines exist, when Lyrics is selected in the drill categories and a popup
 opens, then random source lines are shown with their translations for the drill language, no review
 is recorded, and Next can skip a phrase without answering it.
+
+### AC-053: Live captions
+Given the German pack is installed and Listen is on, when German speech plays through the selected
+output device, then partial text appears and pauses produce timestamped final lines; toggling off
+stops capture, changing the output device restarts capture without losing the transcript, and the
+Markdown session file is written when auto-save is on.
 
 ---
 

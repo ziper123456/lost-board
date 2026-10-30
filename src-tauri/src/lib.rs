@@ -13,6 +13,13 @@ use tauri::Manager;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
+mod captions;
+use captions::{
+    caption_clear, caption_devices, caption_download_model, caption_models, caption_open_folder,
+    caption_poll, caption_remove_model, caption_save, caption_set_device, caption_start,
+    caption_stop,
+};
+
 #[derive(Serialize, Clone)]
 struct DiskStat {
     mount: String,
@@ -2695,6 +2702,17 @@ pub fn run() {
             pick_icon,
             classify_path,
             open_folder,
+            caption_start,
+            caption_stop,
+            caption_poll,
+            caption_set_device,
+            caption_clear,
+            caption_devices,
+            caption_models,
+            caption_download_model,
+            caption_remove_model,
+            caption_save,
+            caption_open_folder,
             open_solution,
             open_url,
             fetch_rss,

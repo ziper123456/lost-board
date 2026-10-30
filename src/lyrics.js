@@ -31,6 +31,15 @@
     return { start: Math.max(0, i - p), end: Math.min(len, i + n + 1) };
   }
 
+  // Focus display order: upcoming lines above the current line, then the
+  // current line, then older lines below it.
+  function focusOrder(len, idx, prev, next) {
+    const win = focusWindow(len, idx, prev, next);
+    const order = [];
+    for (let i = win.end - 1; i >= win.start; i--) order.push(i);
+    return order;
+  }
+
   // Playback position (ms) from a sample taken at `at` (performance.now),
   // evaluated at `now`, plus a sync offset. Clamped to [0, duration].
   function positionMs(track, at, now, offset) {
@@ -42,7 +51,7 @@
     return Math.max(0, p + (Number(offset) || 0));
   }
 
-  // Plain lyrics → non-empty trimmed lines. Providers sometimes store bilingual
+  // Plain lyrics -> non-empty trimmed lines. Providers sometimes store bilingual
   // lines as `original^translation`; keep the original (our translator handles
   // the rest).
   function parsePlain(text) {
@@ -67,7 +76,7 @@
   }
 
   // Small inline SVG flags (Windows doesn't render flag emoji). Only the four
-  // supported target languages; unknown → no icon.
+  // supported target languages; unknown -> no icon.
   const FLAG_SVGS = {
     en: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="20" fill="#012169"/><path d="M0,0 L30,20 M30,0 L0,20" stroke="#fff" stroke-width="4"/><path d="M0,0 L30,20 M30,0 L0,20" stroke="#C8102E" stroke-width="2"/><rect x="12" width="6" height="20" fill="#fff"/><rect y="7" width="30" height="6" fill="#fff"/><rect x="13.5" width="3" height="20" fill="#C8102E"/><rect y="8.5" width="30" height="3" fill="#C8102E"/></svg>`,
     de: `<svg viewBox="0 0 30 20" xmlns="http://www.w3.org/2000/svg"><rect width="30" height="6.67" fill="#000"/><rect y="6.67" width="30" height="6.67" fill="#DD0000"/><rect y="13.33" width="30" height="6.67" fill="#FFCE00"/></svg>`,
@@ -79,7 +88,7 @@
     return FLAG_SVGS[String(lang || "").toLowerCase()] || "";
   }
 
-  const api = { activeIndex, focusWindow, positionMs, parsePlain, trackKey, targetsFor, flagSvg };
+  const api = { activeIndex, focusWindow, focusOrder, positionMs, parsePlain, trackKey, targetsFor, flagSvg };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   global.LyricsUtil = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

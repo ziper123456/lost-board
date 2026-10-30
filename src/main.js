@@ -56,6 +56,13 @@ const DEFAULT_STATE = {
     lastError: "",
     lastErrorAt: 0,
   },
+  captions: {
+    lang: "de",
+    deviceId: "",
+    autoSave: true,
+    saveDir: "",
+    finalizeMs: 700,
+  },
   compartments: [
     { id: "sys", kind: "system", title: "System", x: 0, y: 0, w: 3, h: 2 },
     { id: "wea", kind: "weather", title: "Weather", x: 3, y: 0, w: 3, h: 2, data: { location: "" } },
@@ -477,6 +484,44 @@ async openFolder(path) {
       return invoke("backup_export", { destDir, filename, stateJson, localStorageJson });
     return null;
   },
+  async captionDevices() {
+    if (window.__TAURI__) return invoke("caption_devices");
+    return [];
+  },
+  async captionModels() {
+    if (window.__TAURI__) return invoke("caption_models");
+    return [];
+  },
+  async captionDownloadModel(modelId) {
+    if (window.__TAURI__) return invoke("caption_download_model", { modelId });
+  },
+  async captionRemoveModel(modelId) {
+    if (window.__TAURI__) return invoke("caption_remove_model", { modelId });
+  },
+  async captionStart(modelId, deviceId, autoSave, saveDir, finalizeMs) {
+    if (window.__TAURI__)
+      return invoke("caption_start", { modelId, deviceId, autoSave, saveDir, finalizeMs });
+  },
+  async captionStop() {
+    if (window.__TAURI__) return invoke("caption_stop");
+  },
+  async captionSetDevice(deviceId) {
+    if (window.__TAURI__) return invoke("caption_set_device", { deviceId });
+  },
+  async captionPoll() {
+    if (window.__TAURI__) return invoke("caption_poll");
+    return { status: "idle", lang: "de", device_id: "", device_name: "", partial: "", lines: [], error: "", save_error: "", session: 0 };
+  },
+  async captionClear() {
+    if (window.__TAURI__) return invoke("caption_clear");
+  },
+  async captionSave() {
+    if (window.__TAURI__) return invoke("caption_save");
+    return null;
+  },
+  async captionOpenFolder() {
+    if (window.__TAURI__) return invoke("caption_open_folder");
+  },
   async setAutostart(enabled) {
     if (window.__TAURI__) return invoke("set_autostart", { enabled });
   },
@@ -745,7 +790,9 @@ function tileBodySig(c) {
   const extra =
     c.kind === "lyrics"
       ? { tr: state.lyricsTranslate === true, langs: state.lyricsLang || {}, targets: state.lyricsTargets || {} }
-      : {};
+      : c.kind === "caption"
+        ? { captions: state.captions || {} }
+        : {};
   return JSON.stringify({ k: c.kind, d: c.data || {}, ...extra });
 }
 function tileIconHtml(c) {
@@ -1047,7 +1094,7 @@ function openTileMenu(clientX, clientY, compId) {
 function openGridMenu(clientX, clientY) {
   const order = [
     ["launcher", "Folders & Files"], ["project", "Projects"], ["bookmarks", "Bookmarks"],
-    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
+    ["azure", "Azure DevOps"], ["spotify", "Spotify"], ["lyrics", "Lyrics"], ["caption", "Captions"], ["vocab", "Vocab"], ["meme", "Memes"], ["calendar", "Calendar"],
     ["weather", "Weather"], ["news", "News"], ["translate", "Translate"], ["frame", "Frame"],
     ["system", "System"],
   ];
@@ -1364,6 +1411,8 @@ async function renderCompartmentBody(c, body) {
     renderSpotifyBody(c, body);
   } else if (c.kind === "lyrics") {
     renderLyricsBody(c, body);
+  } else if (c.kind === "caption") {
+    renderCaptionBody(c, body);
   } else if (c.kind === "project") {
     renderProjectsBody(c, body);
   } else if (c.kind === "vocab") {
@@ -1538,11 +1587,18 @@ async function renderLyricsBody(c, body) {
     const x = Number(v);
     return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
   };
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
   const prevN = clampN(data.prevLines, 3);
   const nextN = clampN(data.nextLines, 3);
+  const contextOpacity = clampPct(data.contextOpacity, 55, 0, 100);
+  const contextScale = clampPct(data.contextScale, 85, 50, 130);
   const offsetMs = Number(data.offsetMs) || 0;
   const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
   let full = data.full === true;
+  let lastAnimatedIdx = -2;
 
   let synced = [];
   let plainLines = [];
@@ -1588,6 +1644,8 @@ async function renderLyricsBody(c, body) {
   const linesEl = body.querySelector(".lyr-lines");
   const emptyEl = body.querySelector(".lyr-empty");
   linesEl.style.textAlign = align;
+  linesEl.style.setProperty("--lyr-context-opacity", String(contextOpacity / 100));
+  linesEl.style.setProperty("--lyr-context-scale", String(contextScale / 100));
   emptyEl.style.textAlign = align;
 
   const updateOffsetLabel = () => {
@@ -1671,6 +1729,7 @@ async function renderLyricsBody(c, body) {
     linesEl.classList.toggle("focus", !effectiveFull);
 
     if (effectiveFull) {
+      lastAnimatedIdx = -2;
       const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}|${translations ? "tr" : ""}`;
       if (fullRenderKey !== key) {
         const lines = synced.length ? synced.map((l) => l.text) : plainLines;
@@ -1689,13 +1748,15 @@ async function renderLyricsBody(c, body) {
       if (follow && synced.length && currentIdx >= 0) scrollCurrent();
     } else {
       fullRenderKey = "";
-      const win = LyricsUtil.focusWindow(synced.length, currentIdx, prevN, nextN);
-      linesEl.innerHTML = synced
-        .slice(win.start, win.end)
-        .map((l, k) => {
-          const i = win.start + k;
+      const animateCurrent = currentIdx !== lastAnimatedIdx;
+      lastAnimatedIdx = currentIdx;
+      const order = LyricsUtil.focusOrder(synced.length, currentIdx, prevN, nextN);
+      linesEl.innerHTML = order
+        .map((i) => {
+          const l = synced[i];
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
-          return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
+          const anim = animateCurrent && i === currentIdx ? " anim" : "";
+          return `<div class="lyr-line${cls}${anim}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
         .join("");
     }
@@ -2741,6 +2802,7 @@ function renderWeatherBody(c, body) {
         hour: "2-digit",
         minute: "2-digit",
         timeZone: w.tz,
+        hour12: false,
       });
     body.innerHTML = `
       <div class="wea-card">
@@ -3013,6 +3075,7 @@ function activateTab(tabName) {
   if (tabName === "vocab") renderVocabSettings();
   if (tabName === "meme") renderMemeSettings();
   if (tabName === "calendar") renderCalendarSettings();
+  if (tabName === "captions") renderCaptionSettings();
   if (tabName === "design") renderDesignSettings();
 }
 
@@ -3033,6 +3096,7 @@ const KIND_TAB = {
   vocab: "vocab",
   meme: "meme",
   calendar: "calendar",
+  caption: "captions",
 };
 
 function openTileSettings(id) {
@@ -3049,6 +3113,7 @@ function openTileSettings(id) {
   if (comp.kind === "frame") selectedFrameId = id;
   if (comp.kind === "spotify") selectedSpotifyId = id;
   if (comp.kind === "lyrics") selectedLyricsId = id;
+  if (comp.kind === "caption") selectedCaptionId = id;
   if (comp.kind === "project") selectedProjectId = id;
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
@@ -3355,6 +3420,7 @@ function renderTabPanel(comp) {
   if (comp.kind === "vocab") renderVocabSettings();
   if (comp.kind === "meme") renderMemeSettings();
   if (comp.kind === "calendar") renderCalendarSettings();
+  if (comp.kind === "caption") renderCaptionSettings();
 }
 
 function ensureLauncher() {
@@ -4147,6 +4213,15 @@ function backupConfig() {
   return state.backup;
 }
 
+function captionConfig() {
+  if (!state.captions || typeof state.captions !== "object") {
+    state.captions = { lang: "de", deviceId: "", autoSave: true, saveDir: "", finalizeMs: 700 };
+  }
+  if (!Number.isFinite(Number(state.captions.finalizeMs))) state.captions.finalizeMs = 700;
+  state.captions.finalizeMs = Math.min(5000, Math.max(300, Number(state.captions.finalizeMs) || 700));
+  return state.captions;
+}
+
 function localStorageSnapshot() {
   const out = {};
   try {
@@ -4364,6 +4439,540 @@ function renderBackupSettings() {
       status.textContent = `export failed: ${e.message || e}`;
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Captions tile + settings. System-audio loopback is owned by the Rust engine;
+// the tile polls it for partial/final lines. One language per session.
+// ---------------------------------------------------------------------------
+let selectedCaptionId = null;
+
+function fmtCaptionTime(at) {
+  try {
+    return new Date(at * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return "";
+  }
+}
+
+async function renderCaptionBody(c, body) {
+  const cfg = captionConfig();
+  body.innerHTML = `
+    <div class="caption-root">
+      <div class="caption-controls">
+        <label class="caption-listen"><input type="checkbox" class="switch" id="cap-listen" /> Listen</label>
+        <select id="cap-lang" title="Caption model"></select>
+        <select id="cap-device" title="Output device"></select>
+      </div>
+      <div class="caption-status" id="cap-status"></div>
+      <div class="caption-lines" id="cap-lines"><div class="muted">No speech yet.</div></div>
+      <div class="caption-actions">
+        <button class="btn ghost" id="cap-save">Save as…</button>
+        <button class="btn ghost" id="cap-open">Open folder</button>
+        <button class="btn ghost" id="cap-packs">Packs…</button>
+        <button class="btn ghost" id="cap-clear">Clear</button>
+      </div>
+    </div>`;
+
+  const listen = body.querySelector("#cap-listen");
+  const langSel = body.querySelector("#cap-lang");
+  const deviceSel = body.querySelector("#cap-device");
+  const statusEl = body.querySelector("#cap-status");
+  const linesEl = body.querySelector("#cap-lines");
+
+  let installed = [];
+  let running = false;
+  let modelSig = "";
+  let tick = 0;
+
+  const setStatus = (text, isError) => {
+    statusEl.textContent = text;
+    statusEl.classList.toggle("err", !!isError);
+  };
+
+  const installedModels = async () => {
+    try {
+      const list = await native.captionModels();
+      return (list || []).filter((m) => m.installed);
+    } catch {
+      return [];
+    }
+  };
+
+  const fillLanguages = () => {
+    const keep = cfg.lang;
+    langSel.innerHTML = installed.length
+      ? installed.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join("")
+      : `<option value="">No packs installed</option>`;
+    const pick = installed.some((m) => m.id === keep) ? keep : installed[0]?.id || "";
+    langSel.value = pick;
+    if (pick && pick !== cfg.lang) {
+      cfg.lang = pick;
+      saveState();
+    }
+    langSel.disabled = running || !installed.length;
+    listen.disabled = !installed.length;
+  };
+
+  const fillDevices = async () => {
+    let list = [];
+    try {
+      list = await native.captionDevices();
+    } catch {
+      list = [];
+    }
+    deviceSel.innerHTML =
+      `<option value="">System default</option>` +
+      (list || [])
+        .map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`)
+        .join("");
+    if (![...deviceSel.options].some((o) => o.value === cfg.deviceId)) cfg.deviceId = "";
+    deviceSel.value = cfg.deviceId;
+  };
+
+  const renderLines = (s) => {
+    const nearBottom = linesEl.scrollHeight - linesEl.scrollTop - linesEl.clientHeight < 48;
+    const lines = (s.lines || [])
+      .map(
+        (line) =>
+          `<div class="caption-line"><span class="caption-time">${escapeHtml(fmtCaptionTime(line.at))}</span>${escapeHtml(line.text)}</div>`
+      )
+      .join("");
+    const partial = s.partial
+      ? `<div class="caption-line caption-partial">${escapeHtml(s.partial)}</div>`
+      : "";
+    linesEl.innerHTML =
+      lines || partial ? lines + partial : `<div class="muted">No speech yet.</div>`;
+    if (nearBottom) linesEl.scrollTop = linesEl.scrollHeight;
+  };
+
+  const refresh = async () => {
+    if (!body.isConnected) return;
+    let s;
+    try {
+      s = await native.captionPoll();
+    } catch {
+      return;
+    }
+    if (!s || !body.isConnected) return;
+    running = s.status === "listening" || s.status === "loading";
+    listen.checked = running;
+    langSel.disabled = running || !installed.length;
+    renderLines(s);
+
+    let statusText;
+    let statusError = false;
+    if (s.status === "error") {
+      statusText = s.error || "Caption engine error";
+      statusError = true;
+    } else if (s.status === "loading") {
+      statusText = `Loading ${s.model_name || "model"}.`;
+    } else if (s.status === "listening") {
+      statusText = `Listening - ${s.device_name || "output"} - ${s.model_name || String(s.lang || "").toUpperCase()}`;
+    } else {
+      statusText = installed.length ? "Idle" : "No language packs installed - download one in Settings > Captions.";
+    }
+    if (s.save_error) {
+      statusText = `${statusText} - ${s.save_error}`;
+      statusError = true;
+    }
+    setStatus(statusText, statusError);
+
+    if (!cfg.deviceId && deviceSel.value) deviceSel.value = "";
+
+    if (++tick % 12 === 0) {
+      const next = await installedModels();
+      const sig = next.map((m) => m.id).join(",");
+      if (sig !== modelSig) {
+        modelSig = sig;
+        installed = next;
+        fillLanguages();
+      }
+    }
+  };
+
+  installed = await installedModels();
+  modelSig = installed.map((m) => m.id).join(",");
+  fillLanguages();
+  await fillDevices();
+  // Reflect a model chosen in Settings.
+  if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
+  await refresh();
+  const timer = setInterval(refresh, 400);
+  addTimer(body, timer);
+
+  listen.addEventListener("change", async () => {
+    if (listen.checked) {
+      const lang = langSel.value;
+      if (!lang) {
+        listen.checked = false;
+        setStatus("Download a language pack in Settings → Captions.", true);
+        return;
+      }
+      cfg.lang = lang;
+      cfg.deviceId = deviceSel.value;
+      saveState();
+      try {
+        await native.captionStart(lang, cfg.deviceId, cfg.autoSave === true, cfg.saveDir || "", cfg.finalizeMs || 700);
+      } catch (e) {
+        listen.checked = false;
+        setStatus(String(e?.message || e), true);
+      }
+    } else {
+      try {
+        await native.captionStop();
+      } catch {
+        /* ignore */
+      }
+    }
+    refresh();
+  });
+
+  langSel.addEventListener("change", () => {
+    if (running) return;
+    cfg.lang = langSel.value;
+    saveState();
+  });
+
+  deviceSel.addEventListener("change", async () => {
+    cfg.deviceId = deviceSel.value;
+    saveState();
+    try {
+      await native.captionSetDevice(cfg.deviceId);
+    } catch (e) {
+      setStatus(String(e?.message || e), true);
+    }
+    refresh();
+  });
+
+  body.querySelector("#cap-save").addEventListener("click", async () => {
+    try {
+      const path = await native.captionSave();
+      if (path) setStatus(`Saved: ${path}`);
+    } catch (e) {
+      setStatus(`Save failed: ${e?.message || e}`, true);
+    }
+  });
+  body.querySelector("#cap-open").addEventListener("click", () => {
+    native.captionOpenFolder().catch((e) => setStatus(String(e?.message || e), true));
+  });
+  body.querySelector("#cap-packs").addEventListener("click", () => {
+    settingsEl.classList.remove("hidden");
+    activateTab("captions");
+  });
+  body.querySelector("#cap-clear").addEventListener("click", (e) => {
+    showConfirmPopup(
+      running ? "Stop listening and clear the transcript?" : "Clear the transcript?",
+      {
+        x: e.clientX,
+        y: e.clientY,
+        confirmLabel: "Clear",
+        onConfirm: async () => {
+          try {
+            await native.captionStop();
+            await native.captionClear();
+          } catch (err) {
+            setStatus(String(err?.message || err), true);
+          }
+          refresh();
+        },
+      }
+    );
+  });
+}
+
+function renderCaptionSettings() {
+  const panel = document.getElementById("caption-list");
+  if (!panel) return;
+  if (panel.__capTimer) {
+    clearInterval(panel.__capTimer);
+    panel.__capTimer = null;
+  }
+  panel.innerHTML = "";
+  const cfg = captionConfig();
+
+  const intro = document.createElement("p");
+  intro.className = "muted";
+  intro.textContent =
+    "Listens to the whole PC's output audio. One language per session; speech in other languages is decoded as the selected one.";
+  panel.appendChild(intro);
+
+  const comps = state.compartments.filter((c) => c.kind === "caption");
+  if (comps.length) {
+    const comp = comps.find((c) => c.id === selectedCaptionId) || comps[0];
+    selectedCaptionId = comp.id;
+    comp.data = comp.data || {};
+
+    const tileRow = document.createElement("div");
+    tileRow.className = "item-row";
+    tileRow.innerHTML = `<label>Tile</label><select id="caption-select">${comps
+      .map((c) => `<option value="${c.id}" ${c.id === comp.id ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+      .join("")}</select>`;
+    panel.appendChild(tileRow);
+    appendCollapsibleRow(panel, comp);
+    appendAppearanceRow(panel, comp);
+    tileRow.querySelector("#caption-select").addEventListener("change", (e) => {
+      selectedCaptionId = e.target.value;
+      renderCaptionSettings();
+    });
+  } else {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "No Captions tile yet — add one from Grid > Add a tile.";
+    panel.appendChild(note);
+  }
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "item-row";
+  statusRow.innerHTML = `<span class="muted" id="caption-status-line">idle</span>`;
+  panel.appendChild(statusRow);
+  const statusLine = statusRow.querySelector("#caption-status-line");
+
+  const listHead = document.createElement("h3");
+  listHead.textContent = "Language packs";
+  panel.appendChild(listHead);
+  const list = document.createElement("div");
+  list.className = "caption-models";
+  panel.appendChild(list);
+
+  const fillModelRows = async () => {
+    let models = [];
+    try {
+      models = (await native.captionModels()) || [];
+    } catch {
+      models = [];
+    }
+    let running = false;
+    try {
+      const s = await native.captionPoll();
+      running = s.status === "listening" || s.status === "loading";
+      statusLine.textContent =
+        s.status === "listening"
+          ? `Listening (${s.model_name || String(s.lang).toUpperCase()} - ${s.device_name || "output"})`
+          : s.status === "loading"
+            ? `Loading ${s.model_name || "model"}.`
+            : s.status === "error"
+              ? s.error || "error"
+              : "idle";
+      if (s.save_error) statusLine.textContent += ` - ${s.save_error}`;
+      statusLine.classList.toggle("err", s.status === "error" || !!s.save_error);
+    } catch {
+      statusLine.textContent = "idle";
+    }
+    if (!models.length) {
+      list.innerHTML = `<span class="muted">couldn't load the model catalog</span>`;
+      return;
+    }
+    list.innerHTML = models
+      .map((m) => {
+        const state = m.downloading
+          ? `${Math.round((m.progress || 0) * 100)}%`
+          : m.installed
+            ? "Installed"
+            : m.error
+              ? m.error
+              : "Not installed";
+        const size = Number(m.size_mb) || 0;
+        const sizeText = size >= 1024 ? `${(size / 1024).toFixed(1)} GB` : `${size} MB`;
+        const actions = m.installed
+          ? `<button class="btn ghost" data-remove="${escapeHtml(m.id)}" ${
+              running || m.id === cfg.lang ? "disabled title=\"Stop listening and select another model first\"" : ""
+            }>Remove</button>`
+          : `<button class="btn ghost" data-download="${escapeHtml(m.id)}" ${
+              m.downloading ? "disabled" : ""
+            }>Download</button>`;
+        return `<div class="caption-model-row">
+          <span class="caption-model-name">${escapeHtml(m.name)}</span>
+          <span class="muted">${sizeText} · ${escapeHtml(m.license || "")}</span>
+          <span class="caption-model-state ${m.error ? "err" : ""}">${escapeHtml(state)}</span>
+          ${m.downloading ? `<span class="caption-model-bar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></span>` : ""}
+          ${actions}
+        </div>`;
+      })
+      .join("");
+
+    list.querySelectorAll("[data-download]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const modelId = btn.dataset.download;
+        btn.disabled = true;
+        try {
+          await native.captionDownloadModel(modelId);
+        } catch (e) {
+          statusLine.textContent = String(e?.message || e);
+        }
+        pollWhileDownloading();
+      })
+    );
+    list.querySelectorAll("[data-remove]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        const modelId = btn.dataset.remove;
+        const model = models.find((m) => m.id === modelId);
+        showConfirmPopup(`Remove the ${model?.name || modelId} model?`, {
+          x: e.clientX,
+          y: e.clientY,
+          onConfirm: async () => {
+            try {
+              await native.captionRemoveModel(modelId);
+            } catch (err) {
+              statusLine.textContent = String(err?.message || err);
+            }
+            renderCaptionSettings();
+          },
+        });
+      })
+    );
+  };
+
+  const pollWhileDownloading = () => {
+    if (panel.__capTimer) clearInterval(panel.__capTimer);
+    panel.__capTimer = setInterval(async () => {
+      const models = await native.captionModels().catch(() => []);
+      if (!models.some((m) => m.downloading)) {
+        clearInterval(panel.__capTimer);
+        panel.__capTimer = null;
+        renderCaptionSettings();
+        return;
+      }
+      fillModelRows();
+    }, 700);
+  };
+
+  const defaults = document.createElement("h3");
+  defaults.textContent = "Defaults";
+  panel.appendChild(defaults);
+
+  const langRow = document.createElement("div");
+  langRow.className = "item-row";
+  langRow.innerHTML = `<label>Model</label><select id="caption-lang"></select><span class="muted" id="caption-lang-note">installed packs only</span>`;
+  panel.appendChild(langRow);
+
+  const devRow = document.createElement("div");
+  devRow.className = "item-row";
+  devRow.innerHTML = `<label>Output device</label><select id="caption-device"></select><button class="btn ghost" id="caption-refresh-devices">Refresh</button>`;
+  panel.appendChild(devRow);
+
+  const pauseRow = document.createElement("div");
+  pauseRow.className = "item-row";
+  pauseRow.innerHTML = `<label>Line break pause</label><select id="caption-finalize">
+    <option value="500">0.5 s</option>
+    <option value="700">0.7 s</option>
+    <option value="1000">1.0 s</option>
+    <option value="1200">1.2 s</option>
+    <option value="1500">1.5 s</option>
+    <option value="2000">2.0 s</option>
+  </select><span class="muted">silence before a new line; next session</span>`;
+  panel.appendChild(pauseRow);
+
+  const saveRow = document.createElement("div");
+  saveRow.className = "item-row";
+  saveRow.innerHTML = `<label>Auto-save transcript <input type="checkbox" class="switch" id="caption-autosave" ${cfg.autoSave ? "checked" : ""} /></label><span class="muted">next session</span>`;
+  panel.appendChild(saveRow);
+
+  const folderRow = document.createElement("div");
+  folderRow.className = "item-row";
+  folderRow.innerHTML = `<label>Transcript folder</label><span class="muted" id="caption-folder">${cfg.saveDir ? escapeHtml(cfg.saveDir) : "app-data/captions"}</span><button class="btn ghost" id="caption-pick-folder">Choose…</button><button class="btn ghost" id="caption-clear-folder">Clear</button><button class="btn ghost" id="caption-open-folder">Open</button>`;
+  panel.appendChild(folderRow);
+
+  const langSel = langRow.querySelector("#caption-lang");
+  const devSel = devRow.querySelector("#caption-device");
+  const pauseSel = pauseRow.querySelector("#caption-finalize");
+  const langNote = langRow.querySelector("#caption-lang-note");
+  pauseSel.value = String(Number(cfg.finalizeMs) || 700);
+
+  const loadSelectors = async () => {
+    const [models, devices, poll] = await Promise.all([
+      native.captionModels().catch(() => []),
+      native.captionDevices().catch(() => []),
+      native.captionPoll().catch(() => null),
+    ]);
+    const installed = (models || []).filter((m) => m.installed);
+    const running = poll && (poll.status === "listening" || poll.status === "loading");
+    langSel.innerHTML = installed.length
+      ? installed.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join("")
+      : `<option value="">No packs installed</option>`;
+    if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
+    else if (installed.length) {
+      cfg.lang = installed[0].id;
+      saveState();
+      langSel.value = cfg.lang;
+    }
+    langSel.disabled = !!running || !installed.length;
+    langNote.textContent = installed.length ? "installed packs only" : "download a pack below";
+
+    devSel.innerHTML =
+      `<option value="">System default</option>` +
+      (devices || [])
+        .map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`)
+        .join("");
+    if (![...devSel.options].some((o) => o.value === cfg.deviceId)) {
+      cfg.deviceId = "";
+      saveState();
+    }
+    devSel.value = cfg.deviceId;
+  };
+
+  langSel.addEventListener("change", () => {
+    cfg.lang = langSel.value;
+    saveState();
+    render();
+    renderCaptionSettings();
+  });
+  devSel.addEventListener("change", async () => {
+    cfg.deviceId = devSel.value;
+    saveState();
+    try {
+      await native.captionSetDevice(cfg.deviceId);
+    } catch (e) {
+      statusLine.textContent = String(e?.message || e);
+    }
+    render();
+  });
+  devRow.querySelector("#caption-refresh-devices").addEventListener("click", () => {
+    loadSelectors();
+    render();
+  });
+  saveRow.querySelector("#caption-autosave").addEventListener("change", (e) => {
+    cfg.autoSave = e.target.checked;
+    saveState();
+  });
+  pauseSel.addEventListener("change", () => {
+    cfg.finalizeMs = Math.min(5000, Math.max(300, Number(pauseSel.value) || 700));
+    saveState();
+  });
+  folderRow.querySelector("#caption-pick-folder").addEventListener("click", async () => {
+    const dir = await native.pickFolder();
+    if (!dir) return;
+    cfg.saveDir = dir;
+    saveState();
+    folderRow.querySelector("#caption-folder").textContent = dir;
+    render();
+  });
+  folderRow.querySelector("#caption-clear-folder").addEventListener("click", () => {
+    cfg.saveDir = "";
+    saveState();
+    folderRow.querySelector("#caption-folder").textContent = "app-data/captions";
+    render();
+  });
+  folderRow.querySelector("#caption-open-folder").addEventListener("click", () => {
+    const open = cfg.saveDir ? native.openFolder(cfg.saveDir) : native.captionOpenFolder();
+    open.catch((e) => {
+      statusLine.textContent = String(e?.message || e);
+    });
+  });
+
+  fillModelRows();
+  loadSelectors();
+  native
+    .captionModels()
+    .then((models) => {
+      if ((models || []).some((m) => m.downloading)) pollWhileDownloading();
+    })
+    .catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -4778,6 +5387,17 @@ function renderLyricsSettings() {
       .map((v) => `<option value="${v}" ${(comp.data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
       .join("")}</select></label>`;
   panel.appendChild(row2);
+
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
+  const row3 = document.createElement("div");
+  row3.className = "item-row";
+  row3.innerHTML = `
+    <label>Context dim <input id="lyr-opacity" type="number" min="0" max="100" value="${clampPct(comp.data.contextOpacity, 55, 0, 100)}" />%</label>
+    <label>Context size <input id="lyr-scale" type="number" min="50" max="130" value="${clampPct(comp.data.contextScale, 85, 50, 130)}" />%</label>`;
+  panel.appendChild(row3);
   const commit = () => {
     saveState();
     render();
@@ -4800,6 +5420,14 @@ function renderLyricsSettings() {
   });
   row2.querySelector("#lyr-align").addEventListener("change", (e) => {
     comp.data.align = e.target.value;
+    commit();
+  });
+  row3.querySelector("#lyr-opacity").addEventListener("change", (e) => {
+    comp.data.contextOpacity = clampPct(e.target.value, 55, 0, 100);
+    commit();
+  });
+  row3.querySelector("#lyr-scale").addEventListener("change", (e) => {
+    comp.data.contextScale = clampPct(e.target.value, 85, 50, 130);
     commit();
   });
 
@@ -6507,10 +7135,11 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
-  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false } },
+  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false, contextOpacity: 55, contextScale: 85 } },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },
+  caption: { title: "Captions", data: {} },
   project: { title: "Projects", data: { roots: [] } },
 };
 
