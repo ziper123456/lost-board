@@ -510,7 +510,7 @@ async openFolder(path) {
   },
   async captionPoll() {
     if (window.__TAURI__) return invoke("caption_poll");
-    return { status: "idle", lang: "de", device_id: "", device_name: "", partial: "", lines: [], error: "", session: 0 };
+    return { status: "idle", lang: "de", device_id: "", device_name: "", partial: "", lines: [], error: "", save_error: "", session: 0 };
   },
   async captionClear() {
     if (window.__TAURI__) return invoke("caption_clear");
@@ -1739,10 +1739,12 @@ async function renderLyricsBody(c, body) {
     } else {
       fullRenderKey = "";
       const win = LyricsUtil.focusWindow(synced.length, currentIdx, prevN, nextN);
+      // Focus order is reversed: upcoming lines sit above the current line and
+      // older lines fall below it.
       linesEl.innerHTML = synced
         .slice(win.start, win.end)
         .map((l, k) => {
-          const i = win.start + k;
+          const i = win.end - 1 - k;
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
           return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
@@ -4553,11 +4555,23 @@ async function renderCaptionBody(c, body) {
     langSel.disabled = running || !installed.length;
     renderLines(s);
 
-    if (s.status === "error") setStatus(s.error || "Caption engine error", true);
-    else if (s.status === "loading") setStatus(`Loading ${s.model_name || "model"}.`);
-    else if (s.status === "listening")
-      setStatus(`Listening - ${s.device_name || "output"} - ${s.model_name || String(s.lang || "").toUpperCase()}`);
-    else setStatus(installed.length ? "Idle" : "No language packs installed - download one in Settings > Captions.");
+    let statusText;
+    let statusError = false;
+    if (s.status === "error") {
+      statusText = s.error || "Caption engine error";
+      statusError = true;
+    } else if (s.status === "loading") {
+      statusText = `Loading ${s.model_name || "model"}.`;
+    } else if (s.status === "listening") {
+      statusText = `Listening - ${s.device_name || "output"} - ${s.model_name || String(s.lang || "").toUpperCase()}`;
+    } else {
+      statusText = installed.length ? "Idle" : "No language packs installed - download one in Settings > Captions.";
+    }
+    if (s.save_error) {
+      statusText = `${statusText} - ${s.save_error}`;
+      statusError = true;
+    }
+    setStatus(statusText, statusError);
 
     if (!cfg.deviceId && deviceSel.value) deviceSel.value = "";
 
@@ -4641,14 +4655,24 @@ async function renderCaptionBody(c, body) {
     settingsEl.classList.remove("hidden");
     activateTab("captions");
   });
-  body.querySelector("#cap-clear").addEventListener("click", async () => {
-    try {
-      if (running) await native.captionStop();
-      await native.captionClear();
-    } catch (e) {
-      setStatus(String(e?.message || e), true);
-    }
-    refresh();
+  body.querySelector("#cap-clear").addEventListener("click", (e) => {
+    showConfirmPopup(
+      running ? "Stop listening and clear the transcript?" : "Clear the transcript?",
+      {
+        x: e.clientX,
+        y: e.clientY,
+        confirmLabel: "Clear",
+        onConfirm: async () => {
+          try {
+            await native.captionStop();
+            await native.captionClear();
+          } catch (err) {
+            setStatus(String(err?.message || err), true);
+          }
+          refresh();
+        },
+      }
+    );
   });
 }
 
@@ -4725,7 +4749,8 @@ function renderCaptionSettings() {
             : s.status === "error"
               ? s.error || "error"
               : "idle";
-      statusLine.classList.toggle("err", s.status === "error");
+      if (s.save_error) statusLine.textContent += ` - ${s.save_error}`;
+      statusLine.classList.toggle("err", s.status === "error" || !!s.save_error);
     } catch {
       statusLine.textContent = "idle";
     }

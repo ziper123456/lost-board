@@ -25,6 +25,7 @@ const MAX_LINES: usize = 500;
 const SAMPLE_RATE: u32 = 16_000;
 const CHUNK: usize = 1600; // 100 ms
 const DEFAULT_FINALIZE_MS: u64 = 700;
+const MAX_BACKLOG_SAMPLES: usize = SAMPLE_RATE as usize * 4; // 4 s of 16 kHz mono
 
 #[derive(Clone, Serialize)]
 pub struct CaptionLine {
@@ -43,6 +44,7 @@ pub struct CaptionStatus {
     partial: String,
     lines: Vec<CaptionLine>,
     error: String,
+    save_error: String,
     session: u64,
 }
 
@@ -186,6 +188,7 @@ struct EngineState {
     partial: String,
     lines: Vec<CaptionLine>,
     error: String,
+    save_error: String,
     session: u64,
     stop: Option<Arc<AtomicBool>>,
     handle: Option<JoinHandle<()>>,
@@ -206,6 +209,7 @@ impl Default for EngineState {
             partial: String::new(),
             lines: Vec::new(),
             error: String::new(),
+            save_error: String::new(),
             session: 0,
             stop: None,
             handle: None,
@@ -275,6 +279,7 @@ fn snapshot() -> CaptionStatus {
         partial: e.partial.clone(),
         lines: e.lines.clone(),
         error: e.error.clone(),
+        save_error: e.save_error.clone(),
         session: e.session,
     }
 }
@@ -341,6 +346,7 @@ fn start_capture(
         if !preserve {
             e.lines.clear();
             e.partial.clear();
+            e.save_error.clear();
             e.session = now_secs();
             e.file_path = None;
         }
@@ -361,7 +367,13 @@ fn start_capture(
     let thread_app = app.clone();
     let thread_device = device_id.clone();
     let handle = thread::spawn(move || {
-        if let Err(err) = capture_loop(&thread_app, &thread_device, &path, &stop_thread, finalize_ms) {
+        if let Err(err) = capture_loop(
+            &thread_app,
+            &thread_device,
+            &path,
+            &stop_thread,
+            finalize_ms,
+        ) {
             if !stop_thread.load(Ordering::SeqCst) {
                 set_error(&err);
             }
@@ -393,7 +405,15 @@ pub fn caption_start(
     save_dir: String,
     finalize_ms: u64,
 ) -> Result<(), String> {
-    start_capture(app, model_id, device_id, auto_save, save_dir, finalize_ms, false)
+    start_capture(
+        app,
+        model_id,
+        device_id,
+        auto_save,
+        save_dir,
+        finalize_ms,
+        false,
+    )
 }
 
 #[tauri::command]
@@ -419,7 +439,15 @@ pub fn caption_set_device(app: tauri::AppHandle, device_id: String) -> Result<()
         e.device_id = device_id;
         return Ok(());
     }
-    start_capture(app, model_id, device_id, auto_save, save_dir, finalize_ms, true)
+    start_capture(
+        app,
+        model_id,
+        device_id,
+        auto_save,
+        save_dir,
+        finalize_ms,
+        true,
+    )
 }
 
 #[tauri::command]
@@ -433,6 +461,7 @@ pub fn caption_clear() -> Result<(), String> {
     e.session = 0;
     e.file_path = None;
     e.error.clear();
+    e.save_error.clear();
     e.status = "idle".into();
     Ok(())
 }
@@ -464,7 +493,11 @@ pub fn caption_devices() -> Result<Vec<CaptionDevice>, String> {
             name,
         });
     }
-    out.sort_by(|a, b| b.is_default.cmp(&a.is_default).then_with(|| a.name.cmp(&b.name)));
+    out.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(out)
 }
 
@@ -504,7 +537,11 @@ pub fn caption_download_model(app: tauri::AppHandle, model_id: String) -> Result
     }
     downloads().lock().unwrap().insert(
         spec.id.to_string(),
-        DownloadState { downloading: true, progress: 0.0, error: String::new() },
+        DownloadState {
+            downloading: true,
+            progress: 0.0,
+            error: String::new(),
+        },
     );
 
     let root = models_root(&app);
@@ -521,7 +558,11 @@ pub fn caption_download_model(app: tauri::AppHandle, model_id: String) -> Result
         let mut jobs = downloads().lock().unwrap();
         jobs.insert(
             spec.id.to_string(),
-            DownloadState { downloading: false, progress: 1.0, error: String::new() },
+            DownloadState {
+                downloading: false,
+                progress: 1.0,
+                error: String::new(),
+            },
         );
     });
     Ok(())
@@ -617,7 +658,9 @@ fn capture_loop(
     let enumerator = DeviceEnumerator::new().map_err(|e| e.to_string())?;
     let device = resolve_device(&enumerator, device_id)?;
     let resolved_id = device.get_id().unwrap_or_default();
-    let friendly = device.get_friendlyname().unwrap_or_else(|_| "Output device".into());
+    let friendly = device
+        .get_friendlyname()
+        .unwrap_or_else(|_| "Output device".into());
     {
         let mut e = engine().lock().unwrap();
         e.device_id = resolved_id;
@@ -626,7 +669,9 @@ fn capture_loop(
 
     let mut audio_client = device.get_iaudioclient().map_err(|e| e.to_string())?;
     let desired = WaveFormat::new(16, 16, &SampleType::Int, SAMPLE_RATE as usize, 1, None);
-    let (_, min_time) = audio_client.get_device_period().map_err(|e| e.to_string())?;
+    let (_, min_time) = audio_client
+        .get_device_period()
+        .map_err(|e| e.to_string())?;
     let mode = StreamMode::EventsShared {
         autoconvert: true,
         buffer_duration_hns: min_time,
@@ -634,7 +679,9 @@ fn capture_loop(
     audio_client
         .initialize_client(&desired, &Direction::Capture, &mode)
         .map_err(|e| format!("Failed to open system audio: {e}"))?;
-    let event = audio_client.set_get_eventhandle().map_err(|e| e.to_string())?;
+    let event = audio_client
+        .set_get_eventhandle()
+        .map_err(|e| e.to_string())?;
     let capture = audio_client
         .get_audiocaptureclient()
         .map_err(|e| e.to_string())?;
@@ -662,6 +709,7 @@ fn capture_loop(
             let hi = queue.pop_front().unwrap();
             samples.push(i16::from_le_bytes([lo, hi]));
         }
+        trim_backlog(&mut samples);
 
         while samples.len() >= CHUNK {
             let chunk: Vec<i16> = samples.drain(..CHUNK).collect();
@@ -672,6 +720,10 @@ fn capture_loop(
                     break;
                 }
             };
+            if matches!(state, DecodingState::Failed) {
+                failure = Some("Speech recognition failed.".into());
+                break;
+            }
             // Vosk's own silence endpoint is the authoritative sentence
             // boundary. Without this, rapid turn-taking can accumulate into a
             // single long utterance.
@@ -687,7 +739,12 @@ fn capture_loop(
                 if partial != last_partial {
                     last_partial = partial;
                     last_change = Instant::now();
-                } else if last_change.elapsed() >= finalize_after {
+                } else if should_finalize_partial(
+                    &partial,
+                    &last_partial,
+                    last_change.elapsed(),
+                    finalize_after,
+                ) {
                     finalize(app, &mut recognizer);
                     last_partial.clear();
                     last_change = Instant::now();
@@ -748,6 +805,30 @@ fn set_partial(text: &str) {
     e.partial = text.to_string();
 }
 
+fn set_save_error(message: String) {
+    let mut e = engine().lock().unwrap();
+    e.save_error = message;
+}
+
+/// Keep the live transcript close to real time when the recogniser falls
+/// behind (large models on a slow CPU). Returns the number of dropped samples.
+fn trim_backlog(samples: &mut Vec<i16>) -> usize {
+    let excess = samples.len().saturating_sub(MAX_BACKLOG_SAMPLES);
+    if excess > 0 {
+        samples.drain(0..excess);
+    }
+    excess
+}
+
+fn should_finalize_partial(
+    partial: &str,
+    last_partial: &str,
+    unchanged_for: Duration,
+    threshold: Duration,
+) -> bool {
+    !partial.trim().is_empty() && partial == last_partial && unchanged_for >= threshold
+}
+
 fn finalize(app: &tauri::AppHandle, recognizer: &mut Recognizer) {
     let text = recognizer
         .final_result()
@@ -760,8 +841,42 @@ fn finalize(app: &tauri::AppHandle, recognizer: &mut Recognizer) {
     add_line(app, text);
 }
 
-fn add_line(_app: &tauri::AppHandle, text: String) {
-    let line = CaptionLine { at: now_secs(), text };
+fn caption_file_header(model_id: &str) -> String {
+    format!(
+        "# Captions\n\nModel: {}\n\n",
+        spec_for(model_id).map(|s| s.name).unwrap_or(model_id)
+    )
+}
+
+fn append_caption_line(path: &Path, line: &CaptionLine) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("open failed: {e}"))?;
+    let time = Local
+        .timestamp_opt(line.at as i64, 0)
+        .single()
+        .map(|d| d.format("%H:%M:%S").to_string())
+        .unwrap_or_default();
+    writeln!(file, "- [{time}] {}", line.text).map_err(|e| format!("write failed: {e}"))
+}
+
+fn create_caption_file(dir: &Path, model_id: &str, line: &CaptionLine) -> Result<PathBuf, String> {
+    fs::create_dir_all(dir).map_err(|e| format!("create folder failed: {e}"))?;
+    let name = format!("captions-{}.md", Local::now().format("%Y-%m-%d_%H-%M-%S"));
+    let path = dir.join(name);
+    fs::write(&path, caption_file_header(model_id))
+        .map_err(|e| format!("create file failed: {e}"))?;
+    append_caption_line(&path, line)?;
+    Ok(path)
+}
+
+fn add_line(app: &tauri::AppHandle, text: String) {
+    let line = CaptionLine {
+        at: now_secs(),
+        text,
+    };
     let (auto_save, save_dir, model_id, file_path) = {
         let mut e = engine().lock().unwrap();
         e.lines.push(line.clone());
@@ -770,44 +885,72 @@ fn add_line(_app: &tauri::AppHandle, text: String) {
             e.lines.drain(0..drop);
         }
         e.partial.clear();
-        (e.auto_save, e.save_dir.clone(), e.model_id.clone(), e.file_path.clone())
+        (
+            e.auto_save,
+            e.save_dir.clone(),
+            e.model_id.clone(),
+            e.file_path.clone(),
+        )
     };
     if !auto_save {
         return;
     }
-    let path = match file_path {
-        Some(path) => path,
-        None => {
-            let _ = fs::create_dir_all(&save_dir);
-            let name = format!("captions-{}.md", Local::now().format("%Y-%m-%d_%H-%M-%S"));
-            let path = save_dir.join(name);
-            let header = format!(
-                "# Captions\n\nModel: {}\n\n",
-                spec_for(&model_id).map(|s| s.name).unwrap_or(&model_id)
-            );
-            if fs::write(&path, header).is_err() {
-                return;
+
+    if let Some(path) = file_path {
+        if let Err(err) = append_caption_line(&path, &line) {
+            // The original folder may have disappeared mid-session. Try the
+            // app-data fallback once so the transcript is not silently lost.
+            let fallback = captions_dir(app);
+            if fallback != save_dir {
+                if let Ok(fallback_path) = create_caption_file(&fallback, &model_id, &line) {
+                    let mut e = engine().lock().unwrap();
+                    e.save_dir = fallback;
+                    e.file_path = Some(fallback_path);
+                    e.save_error = format!(
+                        "Auto-save failed in {}: {err}; using app-data captions.",
+                        path.display()
+                    );
+                    return;
+                }
             }
-            let mut e = engine().lock().unwrap();
-            e.file_path = Some(path.clone());
-            path
+            set_save_error(format!("Auto-save failed in {}: {err}", path.display()));
         }
-    };
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        let time = Local
-            .timestamp_opt(line.at as i64, 0)
-            .single()
-            .map(|d| d.format("%H:%M:%S").to_string())
-            .unwrap_or_default();
-        let _ = writeln!(file, "- [{time}] {}", line.text);
+        return;
+    }
+
+    match create_caption_file(&save_dir, &model_id, &line) {
+        Ok(path) => {
+            let mut e = engine().lock().unwrap();
+            e.file_path = Some(path);
+        }
+        Err(err) => {
+            let fallback = captions_dir(app);
+            if fallback != save_dir {
+                match create_caption_file(&fallback, &model_id, &line) {
+                    Ok(path) => {
+                        let mut e = engine().lock().unwrap();
+                        e.save_dir = fallback;
+                        e.file_path = Some(path);
+                        e.save_error = format!(
+                            "Auto-save failed in {}: {err}; using app-data captions.",
+                            save_dir.display()
+                        );
+                    }
+                    Err(err2) => set_save_error(format!(
+                        "Auto-save failed in {}: {err}; app-data fallback also failed: {err2}",
+                        save_dir.display()
+                    )),
+                }
+            } else {
+                set_save_error(format!("Auto-save failed in {}: {err}", save_dir.display()));
+            }
+        }
     }
 }
 
 fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|e| format!("Failed to create model folder: {e}"))?;
     let zip_path = root.join(format!(".{}.zip", spec.id));
-    let extract_dir = root.join(format!(".extract-{}", spec.id));
-    let final_dir = root.join(spec.dir);
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(6 * 3600))
@@ -819,15 +962,19 @@ fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
         .and_then(|r| r.error_for_status())
         .map_err(|e| format!("Download failed: {e}"))?;
     let total = response.content_length().unwrap_or(0);
-    let mut file = File::create(&zip_path).map_err(|e| format!("Failed to create model file: {e}"))?;
+    let mut file =
+        File::create(&zip_path).map_err(|e| format!("Failed to create model file: {e}"))?;
     let mut downloaded = 0u64;
     let mut buf = vec![0u8; 64 * 1024];
     loop {
-        let n = response.read(&mut buf).map_err(|e| format!("Download failed: {e}"))?;
+        let n = response
+            .read(&mut buf)
+            .map_err(|e| format!("Download failed: {e}"))?;
         if n == 0 {
             break;
         }
-        file.write_all(&buf[..n]).map_err(|e| format!("Failed to write model: {e}"))?;
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("Failed to write model: {e}"))?;
         downloaded += n as u64;
         if total > 0 {
             let progress = downloaded as f32 / total as f32;
@@ -838,25 +985,39 @@ fn download_and_install(root: &Path, spec: &ModelSpec) -> Result<(), String> {
     }
     drop(file);
 
-    let _ = fs::remove_dir_all(&extract_dir);
-    let file = File::open(&zip_path).map_err(|e| format!("Failed to read model archive: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid model archive: {e}"))?;
-    archive
-        .extract(&extract_dir)
-        .map_err(|e| format!("Failed to extract model: {e}"))?;
-    let src = extract_dir.join(spec.dir);
-    if !model_installed(&src) {
-        let _ = fs::remove_dir_all(&extract_dir);
-        let _ = fs::remove_file(&zip_path);
-        return Err("The downloaded archive did not contain a Vosk model.".into());
-    }
-    if final_dir.exists() {
-        fs::remove_dir_all(&final_dir).map_err(|e| format!("Failed to replace model: {e}"))?;
-    }
-    fs::rename(&src, &final_dir).map_err(|e| format!("Failed to install model: {e}"))?;
-    let _ = fs::remove_dir_all(&extract_dir);
+    let result = install_from_zip(&zip_path, root, spec);
     let _ = fs::remove_file(&zip_path);
-    Ok(())
+    result
+}
+
+/// Extract and install a downloaded Vosk model. Split from the network path so
+/// it can be tested with a local archive.
+fn install_from_zip(zip_path: &Path, root: &Path, spec: &ModelSpec) -> Result<(), String> {
+    let extract_dir = root.join(format!(".extract-{}", spec.id));
+    let final_dir = root.join(spec.dir);
+    let _ = fs::remove_dir_all(&extract_dir);
+
+    let result = (|| {
+        let file =
+            File::open(zip_path).map_err(|e| format!("Failed to read model archive: {e}"))?;
+        let mut archive =
+            zip::ZipArchive::new(file).map_err(|e| format!("Invalid model archive: {e}"))?;
+        archive
+            .extract(&extract_dir)
+            .map_err(|e| format!("Failed to extract model: {e}"))?;
+        let src = extract_dir.join(spec.dir);
+        if !model_installed(&src) {
+            return Err("The downloaded archive did not contain a Vosk model.".into());
+        }
+        if final_dir.exists() {
+            fs::remove_dir_all(&final_dir).map_err(|e| format!("Failed to replace model: {e}"))?;
+        }
+        fs::rename(&src, &final_dir).map_err(|e| format!("Failed to install model: {e}"))?;
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&extract_dir);
+    result
 }
 
 #[cfg(test)]
@@ -875,5 +1036,125 @@ mod tests {
         let es = spec_for("es-large").expect("Spanish large pack");
         assert_eq!(es.lang, "es");
         assert!(es.size_mb > 1000);
+    }
+
+    #[test]
+    fn backlog_drops_oldest_audio_beyond_cap() {
+        let mut samples = vec![1i16; MAX_BACKLOG_SAMPLES + 3200];
+        assert_eq!(trim_backlog(&mut samples), 3200);
+        assert_eq!(samples.len(), MAX_BACKLOG_SAMPLES);
+    }
+
+    #[test]
+    fn partial_finalization_needs_an_unchanged_pause() {
+        let threshold = Duration::from_millis(700);
+        assert!(!should_finalize_partial(
+            "hallo",
+            "hallo",
+            Duration::from_millis(699),
+            threshold
+        ));
+        assert!(should_finalize_partial(
+            "hallo",
+            "hallo",
+            Duration::from_millis(700),
+            threshold
+        ));
+        assert!(!should_finalize_partial(
+            "hallo welt",
+            "hallo",
+            Duration::from_millis(900),
+            threshold
+        ));
+        assert!(!should_finalize_partial(
+            "",
+            "hallo",
+            Duration::from_millis(900),
+            threshold
+        ));
+    }
+
+    #[test]
+    fn markdown_uses_model_name_and_timestamped_lines() {
+        let lines = vec![CaptionLine {
+            at: 0,
+            text: "Hallo".into(),
+        }];
+        let md = format_markdown("de", &lines);
+        assert!(md.starts_with("# Captions\n\nModel: German (small)\n\n"));
+        assert!(md.contains("Hallo"));
+        assert!(md.contains("] Hallo"));
+    }
+
+    #[test]
+    fn caption_file_contains_header_and_first_line() {
+        let root = temp_test_dir("captions-file");
+        let line = CaptionLine {
+            at: 0,
+            text: "Hallo".into(),
+        };
+        let path = create_caption_file(&root, "de", &line).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# Captions\n\nModel: German (small)\n\n"));
+        assert!(text.contains("] Hallo"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "lost-board-{name}-{}-{}",
+            std::process::id(),
+            now_secs()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn install_from_zip_installs_a_valid_model() {
+        use std::io::Write;
+        let root = temp_test_dir("captions-install");
+        let zip_path = root.join("model.zip");
+        {
+            use zip::write::SimpleFileOptions;
+            let mut writer = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            let opts = SimpleFileOptions::default();
+            writer.add_directory("vosk-test/conf/", opts).unwrap();
+            writer.start_file("vosk-test/conf/x", opts).unwrap();
+            writer.write_all(b"x").unwrap();
+            writer.finish().unwrap();
+        }
+        let spec = ModelSpec {
+            id: "test",
+            lang: "xx",
+            name: "Test",
+            dir: "vosk-test",
+            url: "",
+            size_mb: 0,
+            license: "",
+        };
+        install_from_zip(&zip_path, &root, &spec).unwrap();
+        assert!(root.join("vosk-test/conf/x").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn install_from_zip_rejects_an_invalid_archive() {
+        let root = temp_test_dir("captions-invalid");
+        let zip_path = root.join("bad.zip");
+        std::fs::write(&zip_path, b"not a zip").unwrap();
+        let spec = ModelSpec {
+            id: "bad",
+            lang: "xx",
+            name: "Bad",
+            dir: "vosk-bad",
+            url: "",
+            size_mb: 0,
+            license: "",
+        };
+        assert!(install_from_zip(&zip_path, &root, &spec).is_err());
+        assert!(!root.join("vosk-bad").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
