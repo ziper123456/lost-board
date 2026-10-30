@@ -4742,7 +4742,12 @@ async function renderCaptionBody(c, body) {
   const syncTranslations = (s) => {
     resetCaptionTranslations(s.session);
     lastStatus = s;
-    if (!split || !canTranslate()) {
+    if (
+      !split ||
+      !canTranslate() ||
+      s.status !== "listening" ||
+      !(s.lines || []).length
+    ) {
       renderTranslations(s);
       return;
     }
@@ -4920,8 +4925,22 @@ async function renderCaptionBody(c, body) {
   if (installed.some((m) => m.id === cfg.lang)) langSel.value = cfg.lang;
   applySplit();
   await refresh();
-  const timer = setInterval(refresh, 400);
-  addTimer(body, timer);
+  // Poll fast while the engine is live; idle boards only need a slow status
+  // check (and that check is what notices a session started from another tile).
+  let refreshTimer = null;
+  let stopped = false;
+  const scheduleRefresh = (delay) => {
+    if (stopped || !body.isConnected) return;
+    refreshTimer = setTimeout(async () => {
+      await refresh();
+      scheduleRefresh(running ? 400 : 1500);
+    }, delay);
+  };
+  scheduleRefresh(running ? 400 : 1500);
+  addTimer(body, () => {
+    stopped = true;
+    if (refreshTimer) clearTimeout(refreshTimer);
+  });
 
   listen.addEventListener("change", async () => {
     if (listen.checked) {
