@@ -175,3 +175,45 @@ before merge.
 
 **Verdict:** #34–#42 approved (Low/Nit only); #43 Approve-with-nits after the High fix; #44/#45
 Changes-needed → fixed → merged. `main` clean, no open PRs/issues.
+
+---
+
+## 13. PR #58 - Captions tile review (2026-10-30)
+
+**Scope:** `origin/main...origin/feat/captions-tile` at `e036430` - 5 commits, 15 files, 2032 additions.
+**Verdict: Approve-with-nits** - High/Medium findings fixed in `2529ab3`; 3 Low remain.
+
+**Good**
+- Clean captions module boundary and command registration; audio stays local; models are opt-in downloads.
+- Correct Vosk endpoint handling after the follow-up: `DecodingState::Finalized` now finalizes immediately, with a configurable 700 ms fallback.
+- Model catalog is now keyed by unique IDs, so small/large DE/ES packs coexist; temp paths are per-ID; 31 Rust tests pass.
+- Good UX: download progress, no auto-download, device selection in both places, pack removal guard, body/status/error handling, 24 h timestamps.
+- Windows bundle wiring is present (SDK zip -> link/copy -> resource map); Tauri's Windows resource dir is the exe directory, so the target paths are appropriate.
+
+**Concerns**
+
+| # | Severity | Finding | Suggested fix |
+|---|---|---|---|
+| 1 | **High** | Auto-save failures are silent (`captions.rs:781-802`): `create_dir_all`, `fs::write`, and the append open/write all ignore errors. If the chosen folder disappears or disk is full, the UI still shows "listening" and the transcript is lost when the app closes. | Surface a save error in `CaptionStatus`/tile status and retry; optionally fall back to app-data `captions/` and tell the user. |
+| 2 | Medium | **Clear** stops capture and clears the transcript with no confirmation (`main.js:4644-4648`). With auto-save off, the session is gone in one click. | Use `showConfirmPopup` like model removal; disable while a save is pending. |
+| 3 | Medium | Audio backlog is unbounded (`captions.rs:655-703`): `queue`/`samples` keep growing if Vosk is slower than real time (especially with the new 1.9 GB model). Result is increasing latency/memory, not a crash. | Cap backlog to ~1-2 s; drop oldest chunks and mark "falling behind". |
+| 4 | Medium | `DecodingState::Failed` is not handled (`captions.rs:668-683`): only `Finalized` is matched, so a decoder failure can leave the UI "listening" with no text and no error. | Treat `Failed` like `accept_waveform` errors and set the engine error state. |
+| 5 | Medium | The only caption test covers the catalog (`captions.rs:862-879`); there are no tests for `format_markdown`, the endpoint/pause state machine, or model-download failure paths. | Extract the pure finalization decision + Markdown formatter and unit-test them; mock the download/extract path. |
+| 6 | Low | `resources/vosk/NOTICE.txt` is not in `bundle.resources` (`tauri.conf.json:31-39`), so installed builds do not ship the Apache-2.0 NOTICE. | Add `resources/vosk/NOTICE.txt` to the bundle resources (or a credits/About surface). |
+| 7 | Low | `wasapi` and `vosk` are unconditional dependencies and the Vosk resources are Windows paths (`Cargo.toml:42-43`), so macOS/Linux builds are blocked more than before. | Gate WASAPI/Vosk behind `cfg(windows)` or a feature; make resources target-specific. |
+| 8 | Low | Model removal (`captions.rs:541`) and stopping during a large model load (`captions.rs:295` + `609-613`) run synchronously and can block the invoke/UI for seconds. | Move removal to the background thread; make stop non-blocking or show a "stopping" state. |
+
+**Notes**
+- No reviewer comments or CI checks on the PR.
+- Installer not built/tested (acknowledged in the PR). Resource-dir placement is correct for Windows per Tauri docs, but a packaged-build smoke test is still needed before release.
+- Nit: `spec.md` places the new 2.19 section before the historical 2.9 dropped section; harmless but worth ordering later.
+
+**Disposition after fixes (`2529ab3`)**
+- #1 fixed: auto-save failures now set `save_error`, surface in the tile/settings status, and fall back to app-data `captions/`.
+- #2 fixed: Clear now asks for confirmation and always stops the engine before clearing.
+- #3 fixed: samples are capped at 4 s; oldest audio is dropped if the recognizer falls behind.
+- #4 fixed: `DecodingState::Failed` now stops the capture with a visible error.
+- #5 fixed: tests added for backlog trimming, partial finalization, Markdown, caption-file creation, and valid/invalid model-zip installs (31 total).
+- #6-#8 remain Low follow-ups (NOTICE bundling, Windows-only gating, blocking model remove/stop).
+
+**Recommended merge path:** merge after a packaged-build smoke test; remaining Low items can ship as follow-ups.
