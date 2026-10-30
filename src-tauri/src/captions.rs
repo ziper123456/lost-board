@@ -29,6 +29,7 @@ const MAX_BACKLOG_SAMPLES: usize = SAMPLE_RATE as usize * 4; // 4 s of 16 kHz mo
 
 #[derive(Clone, Serialize)]
 pub struct CaptionLine {
+    seq: u64,
     at: u64,
     text: String,
 }
@@ -190,6 +191,7 @@ struct EngineState {
     error: String,
     save_error: String,
     session: u64,
+    next_seq: u64,
     stop: Option<Arc<AtomicBool>>,
     handle: Option<JoinHandle<()>>,
     auto_save: bool,
@@ -211,6 +213,7 @@ impl Default for EngineState {
             error: String::new(),
             save_error: String::new(),
             session: 0,
+            next_seq: 1,
             stop: None,
             handle: None,
             auto_save: true,
@@ -348,6 +351,7 @@ fn start_capture(
             e.partial.clear();
             e.save_error.clear();
             e.session = now_secs();
+            e.next_seq = 1;
             e.file_path = None;
         }
         e.status = "loading".into();
@@ -459,6 +463,7 @@ pub fn caption_clear() -> Result<(), String> {
     e.lines.clear();
     e.partial.clear();
     e.session = 0;
+    e.next_seq = 1;
     e.file_path = None;
     e.error.clear();
     e.save_error.clear();
@@ -873,12 +878,14 @@ fn create_caption_file(dir: &Path, model_id: &str, line: &CaptionLine) -> Result
 }
 
 fn add_line(app: &tauri::AppHandle, text: String) {
-    let line = CaptionLine {
-        at: now_secs(),
-        text,
-    };
-    let (auto_save, save_dir, model_id, file_path) = {
+    let (line, auto_save, save_dir, model_id, file_path) = {
         let mut e = engine().lock().unwrap();
+        let line = CaptionLine {
+            seq: e.next_seq,
+            at: now_secs(),
+            text,
+        };
+        e.next_seq += 1;
         e.lines.push(line.clone());
         if e.lines.len() > MAX_LINES {
             let drop = e.lines.len() - MAX_LINES;
@@ -886,6 +893,7 @@ fn add_line(app: &tauri::AppHandle, text: String) {
         }
         e.partial.clear();
         (
+            line,
             e.auto_save,
             e.save_dir.clone(),
             e.model_id.clone(),
@@ -1077,6 +1085,7 @@ mod tests {
     #[test]
     fn markdown_uses_model_name_and_timestamped_lines() {
         let lines = vec![CaptionLine {
+            seq: 1,
             at: 0,
             text: "Hallo".into(),
         }];
@@ -1090,6 +1099,7 @@ mod tests {
     fn caption_file_contains_header_and_first_line() {
         let root = temp_test_dir("captions-file");
         let line = CaptionLine {
+            seq: 1,
             at: 0,
             text: "Hallo".into(),
         };

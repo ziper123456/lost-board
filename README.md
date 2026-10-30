@@ -29,6 +29,7 @@ desktop background with tray + autostart.
   - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
   - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue/jump
   - `set_autostart` / `autostart_enabled` — launch on login (tray icon + background behind-mode)
+  - `list_monitors` / `apply_window_display` - default fullscreen startup + selected-monitor placement
   - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close, `vocab_popup_config`) — bundled CSV flashcards + drill popup
   - `vocab_due_card` / `vocab_due_batch` / `vocab_practice_batch` / `vocab_record_review` — drill session selection + SM-2 grading (due cards, struggling-first, ungraded practice)
   - `vocab_srs_stats` / `vocab_category_stats` / `vocab_pos_counts` / `vocab_srs_enabled` / `vocab_set_srs` / `vocab_reset_srs` — mastery buckets, per-category breakdown, part-of-speech counts, SRS toggle/reset
@@ -37,6 +38,8 @@ desktop background with tray + autostart.
   - `caption_start` / `caption_stop` / `caption_set_device` / `caption_poll` / `caption_devices` — WASAPI loopback + Vosk streaming captions
   - `caption_models` / `caption_download_model` / `caption_remove_model` — on-demand Vosk language packs
   - `caption_save` / `caption_open_folder` / `caption_clear` — Markdown transcript export/clear
+  - `caption_translate_batch` / `caption_translate_health` - local English translation batches + health
+  - `caption_translator_status` / `caption_translator_start` / `caption_translator_stop` / `caption_translator_set_keep_running` - app-managed LibreTranslate Docker lifecycle
   - `set_popup_theme` / `get_popup_theme` — push the board's design tokens into the drill popup window
   - `fetch_image_cached` / `import_image_file` / `load_cached_image` — disk-cached image pool (meme tile)
   - `save_meme_png` / `save_meme_source` / `save_meme_captioned_gif` — captioned/static/animated exports
@@ -48,6 +51,7 @@ desktop background with tray + autostart.
   with the "Desktop development with C++" workload (provides the MSVC linker) — **required to compile**.
   (If MSVC is absent, `cargo build` will fail at the linking step.)
 - [Node.js](https://nodejs.org) (for the Tauri CLI)
+- **Optional:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) for local caption translation. The app starts the `libretranslate/libretranslate` container on demand; the first run pulls the image and Argos models.
 
 ## Run / Build
 

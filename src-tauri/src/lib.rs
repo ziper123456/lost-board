@@ -14,10 +14,15 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use base64::Engine;
 
 mod captions;
+mod captions_translate;
 use captions::{
     caption_clear, caption_devices, caption_download_model, caption_models, caption_open_folder,
     caption_poll, caption_remove_model, caption_save, caption_set_device, caption_start,
     caption_stop,
+};
+use captions_translate::{
+    caption_polish_line, caption_translate_batch, caption_translate_health, caption_translator_start,
+    caption_translator_set_keep_running, caption_translator_status, caption_translator_stop,
 };
 
 #[derive(Serialize, Clone)]
@@ -1884,7 +1889,7 @@ fn deepl_lang(code: &str, target: bool) -> String {
 }
 
 /// Batch-translate lines with DeepL, preserving order (one request per ≤50 lines).
-async fn deepl_translate_batch(
+pub(crate) async fn deepl_translate_batch(
     lines: &[String],
     source: &str,
     target: &str,
@@ -2019,7 +2024,7 @@ fn extract_json_object(text: &str) -> Option<serde_json::Value> {
 
 /// Translate aligned lines with the opencode LLM (strict JSON). Returns None when
 /// the CLI is unavailable / fails / returns a mismatched line count.
-async fn llm_translate_lines(
+pub(crate) async fn llm_translate_lines(
     lines: &[String],
     targets: &[String],
     source: &str,
@@ -2080,6 +2085,55 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         out.insert(key, lines_out);
     }
     Some(out)
+}
+
+/// Explicit per-line cleanup for captions. Sends the source, the draft
+/// translation, and nearby lines to opencode; returns corrected English only.
+pub(crate) async fn llm_polish_line(
+    source: &str,
+    draft: &str,
+    context: &str,
+) -> Option<String> {
+    let instruction = format!(
+        "You are correcting one line of a live English caption transcript. The source is automatic speech recognition and may contain errors. \
+Source: {source}\nDraft English: {draft}\nNearby source lines: {context}\n\
+Return ONLY the corrected English line (no quotes, labels, markdown, prose, or tool calls)."
+    );
+    let (program, leading) = opencode_program();
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&leading);
+    cmd.args([
+        "run",
+        "--agent",
+        "plan",
+        "--format",
+        "json",
+        "-m",
+        LYRICS_LLM_MODEL,
+        "--title",
+        "lost-board captions",
+        &instruction,
+    ]);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    cmd.kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if let Some(session_id) = parse_opencode_session_id(&stdout) {
+        delete_opencode_session(&session_id).await;
+    }
+    if !output.status.success() {
+        return None;
+    }
+    let text = parse_opencode_text(&stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -2616,9 +2670,111 @@ fn open_path(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to open '{path}': {e}"))
 }
 
+#[derive(Serialize, Clone)]
+struct MonitorInfo {
+    id: String,
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+}
+
+fn monitor_id(monitor: &tauri::window::Monitor) -> String {
+    monitor
+        .name()
+        .filter(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| {
+            let size = monitor.size();
+            let pos = monitor.position();
+            format!("{}x{}@{},{}", size.width, size.height, pos.x, pos.y)
+        })
+}
+
+#[tauri::command]
+fn list_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not available".to_string())?;
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    Ok(monitors
+        .iter()
+        .enumerate()
+        .map(|(index, m)| {
+            let size = m.size();
+            MonitorInfo {
+                id: monitor_id(m),
+                name: m
+                    .name()
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Display {}", index + 1)),
+                width: size.width,
+                height: size.height,
+                x: m.position().x,
+                y: m.position().y,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn apply_window_display(
+    app: tauri::AppHandle,
+    fullscreen: bool,
+    monitor: String,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not available".to_string())?;
+    if !fullscreen {
+        return window.set_fullscreen(false).map_err(|e| e.to_string());
+    }
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let primary = window.primary_monitor().ok().flatten();
+    let target = monitors
+        .iter()
+        .find(|m| monitor_id(m) == monitor)
+        .or(primary.as_ref())
+        .or_else(|| monitors.first());
+    if let Some(target) = target {
+        let pos = target.position();
+        return window
+            .set_fullscreen_on_monitor(tauri::PhysicalPosition::new(pos.x as f64, pos.y as f64))
+            .map_err(|e| e.to_string());
+    }
+    window.set_fullscreen(true).map_err(|e| e.to_string())
+}
+
+/// Apply the saved display preference before the frontend loads. This is what
+/// makes `npm run dev` open fullscreen directly on the chosen monitor.
+fn apply_startup_window_defaults(app: &tauri::AppHandle) {
+    let Some(dir) = app.path().app_data_dir().ok() else {
+        return;
+    };
+    let Ok(text) = fs::read_to_string(dir.join(STATE_FILE_NAME)) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(display) = value.get("windowDefaults") else {
+        return;
+    };
+    if display.get("fullscreen").and_then(|v| v.as_bool()) != Some(true) {
+        return;
+    }
+    let monitor = display
+        .get("monitor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let _ = apply_window_display(app.clone(), true, monitor.to_string());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(
@@ -2661,11 +2817,14 @@ pub fn run() {
             if let Err(e) = tray.build(app) {
                 eprintln!("lost-board: failed to create tray icon: {e}");
             }
+            apply_startup_window_defaults(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             load_state,
             save_state,
+            list_monitors,
+            apply_window_display,
             export_config,
             import_config,
             backup_export,
@@ -2713,6 +2872,13 @@ pub fn run() {
             caption_remove_model,
             caption_save,
             caption_open_folder,
+            caption_polish_line,
+            caption_translate_batch,
+            caption_translate_health,
+            caption_translator_start,
+            caption_translator_set_keep_running,
+            caption_translator_status,
+            caption_translator_stop,
             open_solution,
             open_url,
             fetch_rss,
@@ -2753,8 +2919,13 @@ pub fn run() {
             spotify_queue,
             get_system_stats,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running lost-board");
+        .build(tauri::generate_context!())
+        .expect("error while building lost-board");
+    app.run(|_app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            captions_translate::stop_on_exit();
+        }
+    });
 }
 
 const STATE_FILE_NAME: &str = "dashboard-state.json";
