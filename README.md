@@ -29,6 +29,7 @@ desktop background with tray + autostart.
   - `set_deepl_key` / `deepl_translate` (+ status/clear) — DeepL via OS secret store
   - `spotify_*` — OAuth PKCE, now-playing, play/pause/skip/shuffle/repeat/volume/queue/jump
   - `set_autostart` / `autostart_enabled` — launch on login (tray icon + background behind-mode)
+  - `list_monitors` / `apply_window_display` - default fullscreen startup + selected-monitor placement
   - `read_vocab_cards` / `vocab_tick` (+ popup open/snooze/close, `vocab_popup_config`) — bundled CSV flashcards + drill popup
   - `vocab_due_card` / `vocab_due_batch` / `vocab_practice_batch` / `vocab_record_review` — drill session selection + SM-2 grading (due cards, struggling-first, ungraded practice)
   - `vocab_srs_stats` / `vocab_category_stats` / `vocab_pos_counts` / `vocab_srs_enabled` / `vocab_set_srs` / `vocab_reset_srs` — mastery buckets, per-category breakdown, part-of-speech counts, SRS toggle/reset

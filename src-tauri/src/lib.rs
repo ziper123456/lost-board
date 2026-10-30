@@ -2670,6 +2670,108 @@ fn open_path(path: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to open '{path}': {e}"))
 }
 
+#[derive(Serialize, Clone)]
+struct MonitorInfo {
+    id: String,
+    name: String,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+}
+
+fn monitor_id(monitor: &tauri::window::Monitor) -> String {
+    monitor
+        .name()
+        .filter(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| {
+            let size = monitor.size();
+            let pos = monitor.position();
+            format!("{}x{}@{},{}", size.width, size.height, pos.x, pos.y)
+        })
+}
+
+#[tauri::command]
+fn list_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorInfo>, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not available".to_string())?;
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    Ok(monitors
+        .iter()
+        .enumerate()
+        .map(|(index, m)| {
+            let size = m.size();
+            MonitorInfo {
+                id: monitor_id(m),
+                name: m
+                    .name()
+                    .filter(|name| !name.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Display {}", index + 1)),
+                width: size.width,
+                height: size.height,
+                x: m.position().x,
+                y: m.position().y,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn apply_window_display(
+    app: tauri::AppHandle,
+    fullscreen: bool,
+    monitor: String,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not available".to_string())?;
+    if !fullscreen {
+        return window.set_fullscreen(false).map_err(|e| e.to_string());
+    }
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let primary = window.primary_monitor().ok().flatten();
+    let target = monitors
+        .iter()
+        .find(|m| monitor_id(m) == monitor)
+        .or(primary.as_ref())
+        .or_else(|| monitors.first());
+    if let Some(target) = target {
+        let pos = target.position();
+        return window
+            .set_fullscreen_on_monitor(tauri::PhysicalPosition::new(pos.x as f64, pos.y as f64))
+            .map_err(|e| e.to_string());
+    }
+    window.set_fullscreen(true).map_err(|e| e.to_string())
+}
+
+/// Apply the saved display preference before the frontend loads. This is what
+/// makes `npm run dev` open fullscreen directly on the chosen monitor.
+fn apply_startup_window_defaults(app: &tauri::AppHandle) {
+    let Some(dir) = app.path().app_data_dir().ok() else {
+        return;
+    };
+    let Ok(text) = fs::read_to_string(dir.join(STATE_FILE_NAME)) else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(display) = value.get("windowDefaults") else {
+        return;
+    };
+    if display.get("fullscreen").and_then(|v| v.as_bool()) != Some(true) {
+        return;
+    }
+    let monitor = display
+        .get("monitor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let _ = apply_window_display(app.clone(), true, monitor.to_string());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -2715,11 +2817,14 @@ pub fn run() {
             if let Err(e) = tray.build(app) {
                 eprintln!("lost-board: failed to create tray icon: {e}");
             }
+            apply_startup_window_defaults(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             load_state,
             save_state,
+            list_monitors,
+            apply_window_display,
             export_config,
             import_config,
             backup_export,

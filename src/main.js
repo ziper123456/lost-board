@@ -43,6 +43,7 @@ const DEFAULT_STATE = {
   cornerRadius: 10,
   wall: false,
   backgroundMode: false,
+  windowDefaults: { fullscreen: false, monitor: "" },
   lyricsOffsets: {},
   lyricsTranslate: false,
   lyricsLang: {},
@@ -569,6 +570,13 @@ async openFolder(path) {
   async autostartEnabled() {
     if (window.__TAURI__) return invoke("autostart_enabled");
     return false;
+  },
+  async listMonitors() {
+    if (window.__TAURI__) return invoke("list_monitors");
+    return [];
+  },
+  async applyWindowDisplay(fullscreen, monitor) {
+    if (window.__TAURI__) return invoke("apply_window_display", { fullscreen, monitor });
   },
   async readVocabCards(count, categories) {
     if (window.__TAURI__) return invoke("read_vocab_cards", { count, categories: categories || [] });
@@ -3074,6 +3082,32 @@ document.getElementById("set-autostart").addEventListener("change", async (e) =>
     alert(`Autostart: ${err.message || err}`);
   }
 });
+document.getElementById("set-start-fullscreen").addEventListener("change", async (e) => {
+  const d = windowDefaultsConfig();
+  const next = e.target.checked;
+  d.fullscreen = next;
+  saveState();
+  try {
+    await native.applyWindowDisplay(next, d.monitor);
+  } catch (err) {
+    d.fullscreen = !next;
+    e.target.checked = !next;
+    saveState();
+    alert(`Default fullscreen: ${err.message || err}`);
+  }
+});
+document.getElementById("set-monitor").addEventListener("change", async (e) => {
+  const d = windowDefaultsConfig();
+  d.monitor = e.target.value;
+  saveState();
+  if (d.fullscreen) {
+    try {
+      await native.applyWindowDisplay(true, d.monitor);
+    } catch (err) {
+      alert(`Fullscreen monitor: ${err.message || err}`);
+    }
+  }
+});
 
 // Drag the settings window by its header so it can be moved aside to see the
 // dashboard behind it. The panel is centered via transform; we switch to
@@ -4252,6 +4286,42 @@ function backupConfig() {
     };
   }
   return state.backup;
+}
+
+function windowDefaultsConfig() {
+  const d = state.windowDefaults;
+  if (!d || typeof d !== "object") {
+    state.windowDefaults = { fullscreen: false, monitor: "" };
+  } else {
+    d.fullscreen = d.fullscreen === true;
+    d.monitor = typeof d.monitor === "string" ? d.monitor : "";
+  }
+  return state.windowDefaults;
+}
+
+async function populateMonitorSelect() {
+  const sel = document.getElementById("set-monitor");
+  if (!sel) return;
+  const d = windowDefaultsConfig();
+  let monitors = [];
+  try {
+    monitors = (await native.listMonitors()) || [];
+  } catch {
+    monitors = [];
+  }
+  sel.innerHTML =
+    `<option value="">Primary / first available</option>` +
+    monitors
+      .map(
+        (m) =>
+          `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)} (${m.width}x${m.height})</option>`
+      )
+      .join("");
+  if (monitors.some((m) => m.id === d.monitor)) sel.value = d.monitor;
+  else {
+    d.monitor = "";
+    sel.value = "";
+  }
 }
 
 function captionConfig() {
@@ -7870,6 +7940,8 @@ async function initialize() {
   document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
   document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
   document.getElementById("set-wall").checked = state.wall === true;
+  document.getElementById("set-start-fullscreen").checked = windowDefaultsConfig().fullscreen;
+  await populateMonitorSelect();
   // Restore background mode + autostart checkbox across restarts. Autostart
   // itself persists OS-side; only the checkbox needs syncing.
   document.getElementById("set-background").checked = state.backgroundMode === true;
@@ -7882,6 +7954,12 @@ async function initialize() {
     await applyBackgroundMode(state.backgroundMode === true);
   } catch (e) {
     console.error("Failed to restore background mode", e);
+  }
+  try {
+    const display = windowDefaultsConfig();
+    if (display.fullscreen) await native.applyWindowDisplay(true, display.monitor);
+  } catch (e) {
+    console.error("Failed to apply default fullscreen", e);
   }
   if (state.previewWidth) {
     previewEl.style.width = `${state.previewWidth}px`;
