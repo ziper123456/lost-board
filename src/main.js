@@ -4584,6 +4584,7 @@ const captionTrState = {
   pending: new Set(),
   queue: [],
   busy: false,
+  starting: false,
   ready: false,
   error: "",
 };
@@ -4595,6 +4596,7 @@ function resetCaptionTranslations(session) {
   captionTrState.pending.clear();
   captionTrState.queue.length = 0;
   captionTrState.busy = false;
+  captionTrState.starting = false;
   captionTrState.ready = false;
   captionTrState.error = "";
 }
@@ -4614,6 +4616,7 @@ function fmtCaptionTime(at) {
 
 async function renderCaptionBody(c, body) {
   const cfg = captionConfig();
+  const data = c.data || (c.data = {});
   body.innerHTML = `
     <div class="caption-root">
       <div class="caption-controls">
@@ -4647,9 +4650,9 @@ async function renderCaptionBody(c, body) {
   let running = false;
   let modelSig = "";
   let tick = 0;
-  let split = c.data.split === true;
+  let split = data.split === true;
   let lastStatus = null;
-  let translatorStarting = false;
+
 
   const setStatus = (text, isError) => {
     statusEl.textContent = text;
@@ -4822,7 +4825,7 @@ async function renderCaptionBody(c, body) {
       return;
     }
     if (!captionTrState.ready) {
-      if (!translatorStarting && !captionTrState.error) void ensureTranslator();
+      if (!captionTrState.starting && !captionTrState.error) void ensureTranslator();
       renderTranslations(s);
       return;
     }
@@ -4903,8 +4906,8 @@ async function renderCaptionBody(c, body) {
   };
 
   const ensureTranslator = async () => {
-    if (translatorStarting) return;
-    translatorStarting = true;
+    if (captionTrState.starting) return;
+    captionTrState.starting = true;
     try {
       let status = await native.captionTranslatorStatus().catch(() => null);
       if (!status || status.state !== "ready") {
@@ -4926,7 +4929,7 @@ async function renderCaptionBody(c, body) {
       captionTrState.ready = false;
       captionTrState.error = String(e?.message || e);
     } finally {
-      translatorStarting = false;
+      captionTrState.starting = false;
       refresh();
     }
   };
@@ -4949,7 +4952,7 @@ async function renderCaptionBody(c, body) {
     splitBtn.disabled = !can;
     if (!can && split) {
       split = false;
-      c.data.split = false;
+      data.split = false;
       saveState();
     }
     applySplit();
@@ -5059,7 +5062,7 @@ async function renderCaptionBody(c, body) {
   splitBtn.addEventListener("click", () => {
     if (splitBtn.disabled) return;
     split = !split;
-    c.data.split = split;
+    data.split = split;
     saveState();
     captionTrState.error = "";
     applySplit();
@@ -5463,7 +5466,12 @@ function renderCaptionSettings() {
     render();
   });
   trStatusRow.querySelector("#caption-tr-start").addEventListener("click", async (e) => {
+    if (captionTrState.starting) {
+      setTrStatus("Translator is already starting. Please wait.", false);
+      return;
+    }
     const btn = e.currentTarget;
+    captionTrState.starting = true;
     btn.disabled = true;
     setTrStatus("Starting translator (first run may pull the image and models)...", false);
     try {
@@ -5479,6 +5487,7 @@ function renderCaptionSettings() {
     } catch (err) {
       setTrStatus(String(err?.message || err), true);
     } finally {
+      captionTrState.starting = false;
       btn.disabled = false;
     }
   });

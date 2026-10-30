@@ -51,6 +51,14 @@ pub struct TranslatorStatus {
 
 static TRANSLATE_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static KEEP_RUNNING: AtomicBool = AtomicBool::new(false);
+static STARTING: AtomicBool = AtomicBool::new(false);
+
+struct StartGuard;
+impl Drop for StartGuard {
+    fn drop(&mut self) {
+        STARTING.store(false, Ordering::SeqCst);
+    }
+}
 
 fn cache() -> &'static Mutex<HashMap<String, String>> {
     TRANSLATE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -80,7 +88,7 @@ async fn libre_translate_batch(
     }
     let url = format!("{}/translate", endpoint);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(180))
         .build()
         .map_err(|e| e.to_string())?;
     let body = serde_json::json!({
@@ -124,19 +132,22 @@ async fn libre_translate_batch(
     }
 }
 
-#[tauri::command]
-pub async fn caption_translate_health(endpoint: String) -> Result<bool, String> {
-    let endpoint = endpoint_or_default(&endpoint);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+async fn health_ok(endpoint: &str, timeout: Duration) -> bool {
+    let Ok(client) = reqwest::Client::builder().timeout(timeout).build() else {
+        return false;
+    };
+    client
         .get(format!("{endpoint}/health"))
         .send()
         .await
-        .map_err(|e| format!("Translator health failed: {e}"))?;
-    Ok(resp.status().is_success())
+        .map(|resp| resp.status().is_success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub async fn caption_translate_health(endpoint: String) -> Result<bool, String> {
+    let endpoint = endpoint_or_default(&endpoint);
+    Ok(health_ok(&endpoint, Duration::from_secs(5)).await)
 }
 
 #[tauri::command]
@@ -349,8 +360,10 @@ pub async fn caption_translator_status() -> Result<TranslatorStatus, String> {
         status.endpoint = mapped_endpoint().await;
         status.state = if status.endpoint.is_empty() {
             "starting".into()
-        } else {
+        } else if health_ok(&status.endpoint, Duration::from_secs(3)).await {
             "ready".into()
+        } else {
+            "starting".into()
         };
     }
     Ok(status)
@@ -358,6 +371,10 @@ pub async fn caption_translator_status() -> Result<TranslatorStatus, String> {
 
 #[tauri::command]
 pub async fn caption_translator_start() -> Result<TranslatorStatus, String> {
+    if STARTING.swap(true, Ordering::SeqCst) {
+        return Err("Translator is already starting. Please wait.".into());
+    }
+    let _guard = StartGuard;
     let mut status = caption_translator_status().await?;
     if !status.docker_installed {
         return Err(
@@ -419,25 +436,17 @@ pub async fn caption_translator_start() -> Result<TranslatorStatus, String> {
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let endpoint = mapped_endpoint().await;
-        if !endpoint.is_empty() {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(3))
-                .build()
-                .map_err(|e| e.to_string())?;
-            if let Ok(resp) = client.get(format!("{endpoint}/health")).send().await {
-                if resp.status().is_success() {
-                    return Ok(TranslatorStatus {
-                        docker_installed: true,
-                        daemon_running: true,
-                        image_present: true,
-                        container_exists: true,
-                        running: true,
-                        endpoint,
-                        state: "ready".into(),
-                        error: String::new(),
-                    });
-                }
-            }
+        if !endpoint.is_empty() && health_ok(&endpoint, Duration::from_secs(3)).await {
+            return Ok(TranslatorStatus {
+                docker_installed: true,
+                daemon_running: true,
+                image_present: true,
+                container_exists: true,
+                running: true,
+                endpoint,
+                state: "ready".into(),
+                error: String::new(),
+            });
         }
     }
     Err("LibreTranslate did not become healthy within 60 seconds. Check Docker Desktop and the container logs.".into())
