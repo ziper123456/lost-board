@@ -17,6 +17,13 @@ assert.deepEqual(L.focusWindow(10, 9, 3, 3), { start: 6, end: 10 });
 assert.deepEqual(L.focusWindow(0, 0, 3, 3), { start: 0, end: 0 });
 assert.deepEqual(L.focusWindow(5, 2, 0, 0), { start: 2, end: 3 });
 
+// Focus display order: next lines above, current, then previous below.
+assert.deepEqual(L.focusOrder(10, 5, 0, 1), [6, 5]);
+assert.deepEqual(L.focusOrder(10, 5, 2, 2), [7, 6, 5, 4, 3]);
+assert.deepEqual(L.focusOrder(10, 0, 0, 1), [1, 0]);
+assert.deepEqual(L.focusOrder(10, 9, 2, 0), [9, 8, 7]);
+assert.deepEqual(L.focusOrder(0, 0, 2, 2), []);
+
 // positionMs: playing interpolates; paused does not; duration clamps; offset adds.
 assert.equal(L.positionMs({ progress_ms: 1000, playing: true, duration_ms: 10000 }, 100, 600, 0), 1500);
 assert.equal(L.positionMs({ progress_ms: 1000, playing: false, duration_ms: 10000 }, 100, 600, 0), 1000);

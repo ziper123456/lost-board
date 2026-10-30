@@ -1587,8 +1587,14 @@ async function renderLyricsBody(c, body) {
     const x = Number(v);
     return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
   };
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
   const prevN = clampN(data.prevLines, 3);
   const nextN = clampN(data.nextLines, 3);
+  const contextOpacity = clampPct(data.contextOpacity, 55, 0, 100);
+  const contextScale = clampPct(data.contextScale, 85, 50, 130);
   const offsetMs = Number(data.offsetMs) || 0;
   const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
   let full = data.full === true;
@@ -1637,6 +1643,8 @@ async function renderLyricsBody(c, body) {
   const linesEl = body.querySelector(".lyr-lines");
   const emptyEl = body.querySelector(".lyr-empty");
   linesEl.style.textAlign = align;
+  linesEl.style.setProperty("--lyr-context-opacity", String(contextOpacity / 100));
+  linesEl.style.setProperty("--lyr-context-scale", String(contextScale / 100));
   emptyEl.style.textAlign = align;
 
   const updateOffsetLabel = () => {
@@ -1738,13 +1746,10 @@ async function renderLyricsBody(c, body) {
       if (follow && synced.length && currentIdx >= 0) scrollCurrent();
     } else {
       fullRenderKey = "";
-      const win = LyricsUtil.focusWindow(synced.length, currentIdx, prevN, nextN);
-      // Focus order is reversed: upcoming lines sit above the current line and
-      // older lines fall below it.
-      linesEl.innerHTML = synced
-        .slice(win.start, win.end)
-        .map((l, k) => {
-          const i = win.end - 1 - k;
+      const order = LyricsUtil.focusOrder(synced.length, currentIdx, prevN, nextN);
+      linesEl.innerHTML = order
+        .map((i) => {
+          const l = synced[i];
           const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
           return `<div class="lyr-line${cls}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
         })
@@ -5377,6 +5382,17 @@ function renderLyricsSettings() {
       .map((v) => `<option value="${v}" ${(comp.data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
       .join("")}</select></label>`;
   panel.appendChild(row2);
+
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
+  const row3 = document.createElement("div");
+  row3.className = "item-row";
+  row3.innerHTML = `
+    <label>Context dim <input id="lyr-opacity" type="number" min="0" max="100" value="${clampPct(comp.data.contextOpacity, 55, 0, 100)}" />%</label>
+    <label>Context size <input id="lyr-scale" type="number" min="50" max="130" value="${clampPct(comp.data.contextScale, 85, 50, 130)}" />%</label>`;
+  panel.appendChild(row3);
   const commit = () => {
     saveState();
     render();
@@ -5399,6 +5415,14 @@ function renderLyricsSettings() {
   });
   row2.querySelector("#lyr-align").addEventListener("change", (e) => {
     comp.data.align = e.target.value;
+    commit();
+  });
+  row3.querySelector("#lyr-opacity").addEventListener("change", (e) => {
+    comp.data.contextOpacity = clampPct(e.target.value, 55, 0, 100);
+    commit();
+  });
+  row3.querySelector("#lyr-scale").addEventListener("change", (e) => {
+    comp.data.contextScale = clampPct(e.target.value, 85, 50, 130);
     commit();
   });
 
@@ -7106,7 +7130,7 @@ const KIND_DEFAULTS = {
   translate: { title: "Translate", data: { langs: ["EN", "DE", "ES"] } },
   frame: { title: "Frame", data: { path: "", fit: "cover" } },
   spotify: { title: "Spotify", data: {} },
-  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false } },
+  lyrics: { title: "Lyrics", data: { prevLines: 3, nextLines: 3, offsetMs: 0, align: "left", full: false, contextOpacity: 55, contextScale: 85 } },
   vocab: { title: "Vocab", data: { intervalSec: 10 } },
   meme: { title: "Memes", data: { intervalSec: 30 } },
   calendar: { title: "Calendar", data: {} },
