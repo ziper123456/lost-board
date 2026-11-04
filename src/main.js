@@ -688,7 +688,7 @@ const scalerEl = document.getElementById("grid-scaler");
 // Registry of interval timers owned by compartment bodies, keyed by the body
 // element they render into. Tracked at module scope so they are cleared even
 // for compartments that have been removed from `state`. Keying by body lets us
-// clear a single body's timers (e.g. the preview panel) without nuking others.
+// clear a single body's timers (e.g. a tile preview) without nuking others.
 const compartmentTimers = new Map();
 
 // Bodies of vocab tiles with speech enabled. Tracked so teardown (collapse,
@@ -778,8 +778,15 @@ let zoom = 1;
 
 // Pixel geometry for a compartment given the current column count and the
 // dashboard's live width. Positions are cell-based: x/w in columns, y/h in rows.
+// When zoomed out we widen the unscaled canvas by 1/zoom, so the scaled board
+// still fills the viewport horizontally. This keeps the right edge draggable
+// instead of leaving a dead strip next to the board.
+function gridCanvasWidth() {
+  const viewport = dashboard.clientWidth;
+  return zoom < 1 ? viewport / zoom : viewport;
+}
 function cellWidth() {
-  return (dashboard.clientWidth - GUTTER) / state.columns;
+  return (gridCanvasWidth() - GUTTER) / state.columns;
 }
 function applyBox(el, c) {
   const cw = cellWidth();
@@ -1173,8 +1180,9 @@ const overlayEls = new Map();
 function render() {
   closeCtxMenu(); // a re-render invalidates any open context menu
   // Unscaled grid size; a CSS transform scales it visually, and the scaler is
-  // sized to the scaled dimensions so the dashboard scrolls correctly.
-  const w = dashboard.clientWidth;
+  // sized to the scaled dimensions so the dashboard scrolls correctly. Zooming
+  // out widens the unscaled canvas so the board still fills the viewport.
+  const w = gridCanvasWidth();
   const h = gridHeight();
   gridEl.style.width = `${w}px`;
   gridEl.style.height = `${h}px`;
@@ -1279,8 +1287,8 @@ function render() {
   }
 
   renderOverlays();
-  // Keep the preview panel in sync if it's open (guarded by its own signature).
-  if (previewTileId) renderPreview();
+  // Keep the floating preview in sync if it's open (guarded by its signature).
+  if (previewTileId) renderPreview().catch((e) => console.error("Preview render failed", e));
 }
 
 // Collapsed tiles that are "open" show their body as a floating overlay.
@@ -3064,73 +3072,523 @@ async function renderNewsFeeds(c, body, feeds) {
 }
 
 // ---------------------------------------------------------------------------
-// Preview panel (right side). Shows a tile's content read-only, floating above
-// the grid (no reflow). Toggled from the toolbar; the eye button on a tile
-// header opens it for that tile.
+// Floating tile preview. Launcher-like tiles get a desktop-style icon grid;
+// other tiles render their normal body read-only inside a modal.
 // ---------------------------------------------------------------------------
-const previewEl = document.getElementById("preview");
-const previewBody = document.getElementById("preview-body");
+const tilePreviewEl = document.getElementById("tile-preview");
+const tilePreviewBody = document.getElementById("tile-preview-body");
+const tpTitleEl = document.getElementById("tp-title");
+const tpKindEl = document.getElementById("tp-kind");
+const tpIconEl = document.getElementById("tp-icon");
 let previewTileId = null;
+let previewSig = null;
+let previewReturnFocus = null;
+const PREVIEW_GRID_KINDS = new Set(["launcher", "bookmarks", "azure", "project"]);
+
+const KIND_LABELS = {
+  launcher: "Folders",
+  bookmarks: "Bookmarks",
+  azure: "Azure",
+  project: "Projects",
+  weather: "Weather",
+  system: "System",
+  spotify: "Spotify",
+  lyrics: "Lyrics",
+  caption: "Captions",
+  translate: "Translate",
+  frame: "Frame",
+  calendar: "Calendar",
+  vocab: "Vocab",
+  meme: "Memes",
+  news: "News",
+};
+function kindLabel(kind) {
+  return KIND_LABELS[kind] || String(kind || "").replace(/^\w/, (c) => c.toUpperCase());
+}
+function letterAvatar(label) {
+  return `<span class="tp-letter">${escapeHtml((label || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
+}
+function previewIcon(c) {
+  return tileIconHtml(c) || letterAvatar(c.title);
+}
+function basename(path) {
+  return String(path || "").split(/[\\/]/).filter(Boolean).pop() || path || "?";
+}
 
 function openPreview(id) {
   const comp = state.compartments.find((c) => c.id === id);
   if (!comp) return;
+  previewReturnFocus = document.activeElement;
   previewTileId = id;
   previewSig = null;
-  document.getElementById("preview-title").textContent = comp.title;
-  previewEl.classList.remove("hidden");
-  syncPreviewCheckbox();
-  renderPreview();
+  tilePreviewEl.classList.remove("hidden");
+  renderPreview().catch((e) => console.error("Preview render failed", e));
 }
+
 function closePreview() {
+  if (tilePreviewEl.classList.contains("hidden")) return;
   previewTileId = null;
   previewSig = null;
-  previewEl.classList.add("hidden");
-  previewBody.innerHTML = "";
-  // Only clear timers bound to the preview body — not the dashboard's live
-  // tiles (System stats, Weather clock), which must keep updating.
-  clearBodyTimers(previewBody);
+  tilePreviewEl.classList.add("hidden");
+  clearBodyTimers(tilePreviewBody);
+  tilePreviewBody.innerHTML = "";
+  tilePreviewBody.className = "tp-body compartment-body";
+  if (previewReturnFocus && document.contains(previewReturnFocus)) previewReturnFocus.focus();
+  previewReturnFocus = null;
 }
-let previewSig = null;
-function renderPreview() {
+
+async function renderPreview() {
   if (!previewTileId) return;
   const comp = state.compartments.find((c) => c.id === previewTileId);
-  if (!comp) return;
-  document.getElementById("preview-title").textContent = comp.title;
-  // Skip if the previewed tile's content is unchanged (avoids flicker/refetch
-  // when render() is triggered by unrelated actions).
-  const sig = tileBodySig(comp);
-  if (previewSig === sig && previewBody.childElementCount) return;
+  if (!comp) {
+    closePreview();
+    return;
+  }
+  tpTitleEl.textContent = comp.title;
+  tpKindEl.textContent = kindLabel(comp.kind);
+  tpIconEl.innerHTML = previewIcon(comp);
+  const grid = PREVIEW_GRID_KINDS.has(comp.kind);
+  const sig = grid ? JSON.stringify({ kind: comp.kind, data: comp.data || {} }) : tileBodySig(comp);
+  if (previewSig === sig && tilePreviewBody.childElementCount) return;
   previewSig = sig;
-  // Clear any timers still bound to the preview body (e.g. a previous tile's
-  // system-stats interval) so they don't keep overwriting the new content.
-  clearBodyTimers(previewBody);
-  renderCompartmentBody(comp, previewBody);
+  clearBodyTimers(tilePreviewBody);
+  tilePreviewBody.innerHTML = "";
+  tilePreviewBody.className = "tp-body compartment-body";
+  if (grid) {
+    tilePreviewBody.innerHTML = `<div class="tp-grid-loading">${loadingHtml("Loading preview")}</div>`;
+    const html = await previewGridHtml(comp);
+    if (previewTileId !== comp.id) return;
+    tilePreviewBody.innerHTML = html;
+    wirePreviewActions();
+  } else {
+    await renderCompartmentBody(comp, tilePreviewBody);
+  }
 }
 
-const setPreviewCheckbox = document.getElementById("set-preview");
-function syncPreviewCheckbox() {
-  if (setPreviewCheckbox) setPreviewCheckbox.checked = !previewEl.classList.contains("hidden");
+function previewCard(icon, label, subtitle, attrs, extra = "") {
+  return `<button class="tp-card" ${attrs}>
+    <span class="tp-card-icon">${icon}</span>
+    <span class="tp-card-label">${escapeHtml(label)}</span>
+    <span class="tp-card-sub">${escapeHtml(subtitle)}</span>
+    ${extra}
+  </button>`;
 }
-document.getElementById("set-preview").addEventListener("change", (e) => {
-  if (e.target.checked) openPreview(previewTileId || state.compartments[0]?.id);
-  else closePreview();
+
+async function previewGridHtml(comp) {
+  if (comp.kind === "launcher") {
+    const items = comp.data?.items || [];
+    if (!items.length) return `<div class="tp-empty">No folders or files yet — add some in Settings.</div>`;
+    return `<div class="tp-grid">${items
+      .map((it) => {
+        const kind = it.kind === "folder" ? "folder" : "solution";
+        const icon = kind === "folder" ? ICON.folder : it.kind === "solution" ? ICON.solution : ICON.file;
+        return previewCard(
+          icon,
+          it.label || basename(it.path),
+          it.path || kind,
+          `data-tp-action="${kind === "folder" ? "folder" : "solution"}" data-tp-path="${escapeHtml(it.path || "")}"`,
+        );
+      })
+      .join("")}</div>`;
+  }
+
+  if (comp.kind === "bookmarks") {
+    const urls = comp.data?.urls || [];
+    if (!urls.length) return `<div class="tp-empty">No bookmarks yet — add them in Settings.</div>`;
+    const favs = await Promise.all(urls.map((u) => faviconData(u.url)));
+    return `<div class="tp-grid">${urls
+      .map((u, i) =>
+        previewCard(
+          faviconHtml(favs[i], u.title || u.url),
+          u.title || u.url,
+          hostOf(u.url),
+          `data-tp-action="url" data-tp-url="${escapeHtml(u.url || "")}"`,
+        ),
+      )
+      .join("")}</div>`;
+  }
+
+  if (comp.kind === "azure") {
+    const d = comp.data || {};
+    const repos = d.repos || [];
+    if (!d.org || !d.project || !repos.length) {
+      return `<div class="tp-empty">No Azure repos configured — add some in Settings.</div>`;
+    }
+    const azFav = await faviconData("https://dev.azure.com");
+    const encOrg = encodeURIComponent(d.org);
+    const encProj = encodeURIComponent(d.project);
+    return `<div class="tp-grid">${repos
+      .map((r) => {
+        const base = `https://dev.azure.com/${encOrg}/${encProj}/_git/${encodeURIComponent(r.repo)}`;
+        const name = r.label || r.repo;
+        return previewCard(
+          faviconHtml(azFav, name),
+          name,
+          `${d.org}/${d.project}`,
+          `data-tp-action="url" data-tp-url="${escapeHtml(base)}"`,
+          `<span class="tp-mini" data-tp-action="url" data-tp-url="${escapeHtml(base)}/pullrequests?_a=mine">PR</span>`,
+        );
+      })
+      .join("")}</div>`;
+  }
+
+  if (comp.kind === "project") {
+    const roots = comp.data?.roots || [];
+    const entries = [];
+    for (const root of roots) {
+      for (const pr of root.projects || []) {
+        entries.push({
+          label: basename(pr.folder),
+          subtitle: root.name || basename(root.path) || "Project",
+          folder: pr.folder || "",
+          solution: pr.solution || "",
+        });
+      }
+    }
+    if (!entries.length) return `<div class="tp-empty">No projects found — configure repo roots in Settings.</div>`;
+    return `<div class="tp-grid">${entries
+      .map((pr) =>
+        previewCard(
+          ICON.folder,
+          pr.label,
+          pr.subtitle,
+          `data-tp-action="folder" data-tp-path="${escapeHtml(pr.folder)}"`,
+          pr.solution
+            ? `<span class="tp-mini" data-tp-action="solution" data-tp-path="${escapeHtml(pr.solution)}">Solution</span>`
+            : "",
+        ),
+      )
+      .join("")}</div>`;
+  }
+
+  return `<div class="tp-empty">No preview for this tile.</div>`;
+}
+
+function wirePreviewActions() {
+  tilePreviewBody.onclick = async (e) => {
+    const target = e.target.closest("[data-tp-action]");
+    if (!target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const action = target.dataset.tpAction;
+    try {
+      if (action === "folder") await native.openFolder(target.dataset.tpPath || "");
+      else if (action === "solution") await native.openSolution(target.dataset.tpPath || "");
+      else if (action === "url") await native.openUrl(target.dataset.tpUrl || "");
+      closePreview();
+    } catch (err) {
+      alert(`Could not open: ${err.message || err}`);
+    }
+  };
+}
+
+document.getElementById("tp-close").addEventListener("click", closePreview);
+document.querySelector("#tile-preview .tp-backdrop")?.addEventListener("click", closePreview);
+
+// ---------------------------------------------------------------------------
+// Quick palette (PowerToys Run-style). Ctrl+Space toggles it while the board
+// has focus; it searches tiles, places, and grid commands.
+// ---------------------------------------------------------------------------
+const quickPaletteEl = document.getElementById("quick-palette");
+const qpInput = document.getElementById("qp-input");
+const qpResults = document.getElementById("qp-results");
+let paletteReturnFocus = null;
+let paletteFlat = [];
+let paletteActive = 0;
+
+function isTypingTarget(el) {
+  return Boolean(el && el.matches && el.matches("input, textarea, select, [contenteditable='true']"));
+}
+function cachedFavicon(url, label) {
+  try {
+    return faviconHtml(faviconCache.get(new URL(url).hostname) || "", label);
+  } catch {
+    return faviconHtml("", label);
+  }
+}
+function paletteTileIcon(c) {
+  return tileIconHtml(c) || letterAvatar(c.title);
+}
+function paletteItems() {
+  const items = [];
+  const add = (group, label, subtitle, icon, action, preview, keywords, priority) =>
+    items.push({
+      group,
+      label,
+      subtitle,
+      icon,
+      action,
+      preview,
+      keywords: keywords || [],
+      priority: priority || 0,
+    });
+
+  for (const c of state.compartments) {
+    if (c.kind === "launcher") {
+      (c.data?.items || []).forEach((it) => {
+        const isFolder = it.kind === "folder";
+        add(
+          "Places",
+          it.label || basename(it.path),
+          `${isFolder ? "Folder" : it.kind === "solution" ? "Solution" : "File"} · ${it.path}`,
+          isFolder ? ICON.folder : it.kind === "solution" ? ICON.solution : ICON.file,
+          () => (isFolder ? native.openFolder(it.path) : native.openSolution(it.path)),
+          null,
+          [it.path, c.title],
+          4,
+        );
+      });
+    } else if (c.kind === "bookmarks") {
+      (c.data?.urls || []).forEach((u) => {
+        add(
+          "Places",
+          u.title || u.url,
+          `Bookmark · ${hostOf(u.url)}`,
+          cachedFavicon(u.url, u.title || u.url),
+          () => native.openUrl(u.url),
+          null,
+          [u.url, hostOf(u.url), c.title],
+          3,
+        );
+      });
+    } else if (c.kind === "azure") {
+      const d = c.data || {};
+      const repos = d.repos || [];
+      if (d.org && d.project) {
+        const encOrg = encodeURIComponent(d.org);
+        const encProj = encodeURIComponent(d.project);
+        repos.forEach((r) => {
+          const base = `https://dev.azure.com/${encOrg}/${encProj}/_git/${encodeURIComponent(r.repo)}`;
+          const name = r.label || r.repo;
+          add(
+            "Places",
+            name,
+            `Azure · ${d.project}`,
+            cachedFavicon("https://dev.azure.com", name),
+            () => native.openUrl(base),
+            null,
+            [r.repo, d.org, d.project, "azure"],
+            3,
+          );
+          add(
+            "Places",
+            `${name} pull requests`,
+            `Azure · ${d.project}`,
+            cachedFavicon("https://dev.azure.com", name),
+            () => native.openUrl(`${base}/pullrequests?_a=mine`),
+            null,
+            [r.repo, d.org, d.project, "azure", "pr", "pull request"],
+            2,
+          );
+        });
+      }
+    } else if (c.kind === "project") {
+      for (const root of c.data?.roots || []) {
+        for (const pr of root.projects || []) {
+          add(
+            "Places",
+            basename(pr.folder),
+            `Project · ${root.name || basename(root.path)}`,
+            ICON.folder,
+            () => native.openFolder(pr.folder || ""),
+            null,
+            [pr.folder, root.path, root.name],
+            2,
+          );
+          if (pr.solution) {
+            add(
+              "Places",
+              `${basename(pr.folder)} solution`,
+              `Solution · ${root.name || basename(root.path)}`,
+              ICON.solution,
+              () => native.openSolution(pr.solution),
+              null,
+              [pr.solution, pr.folder, root.name],
+              1,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  for (const c of state.compartments) {
+    add(
+      "Tiles",
+      c.title,
+      kindLabel(c.kind),
+      paletteTileIcon(c),
+      () => focusTile(c.id),
+      () => openPreview(c.id),
+      [c.kind, c.title],
+      1,
+    );
+  }
+
+  const command = (label, subtitle, icon, action, keywords, priority) =>
+    add("Commands", label, subtitle, icon, action, null, keywords, priority || 1);
+  command("Open Settings", "Grid and app configuration", ICON.settings, () => {
+    settingsEl.classList.remove("hidden");
+    activateTab("grid");
+  }, ["settings", "config"], 5);
+  command("Add tile", "Open the Add-a-tile form", ICON.plus, () => {
+    settingsEl.classList.remove("hidden");
+    activateTab("grid");
+    document.querySelector(".add-tile")?.scrollIntoView({ block: "center" });
+  }, ["new", "add", "tile"], 4);
+  command("Reset zoom to 100%", "Fit the board to the viewport width", ICON.panel, () => setZoom(1), ["zoom", "width", "fit"], 3);
+  command("Toggle fullscreen", "F11", ICON.panel, () => toggleFullscreen(), ["screen", "full", "window"], 2);
+  command("Toggle tool-wall background", "Board dot pattern", ICON.panel, () => {
+    state.wall = !state.wall;
+    saveState();
+    render();
+  }, ["wall", "background", "dots"], 1);
+  return items;
+}
+
+function updatePaletteActive() {
+  const rows = [...qpResults.querySelectorAll(".qp-item")];
+  rows.forEach((row, i) => {
+    const active = i === paletteActive;
+    row.classList.toggle("active", active);
+    row.setAttribute("aria-selected", active ? "true" : "false");
+    if (active) row.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function renderPalette(query) {
+  const groups = PaletteUtil.groupResults(paletteItems(), query, 8);
+  paletteFlat = groups.flatMap((g) => g.items);
+  paletteActive = 0;
+  if (!paletteFlat.length) {
+    qpResults.innerHTML = `<div class="qp-empty">No matches. Try a tile, folder, bookmark, or command.</div>`;
+    return;
+  }
+  let index = 0;
+  qpResults.innerHTML = groups
+    .map(
+      (g) => `<div class="qp-group">
+        <div class="qp-group-title">${escapeHtml(g.group)}</div>
+        ${g.items
+          .map(
+            (item) => `<button type="button" class="qp-item" role="option" data-index="${index++}" aria-selected="false">
+              <span class="qp-icon">${item.icon}</span>
+              <span class="qp-text">
+                <span class="qp-label">${escapeHtml(item.label)}</span>
+                <span class="qp-sub">${escapeHtml(item.subtitle || "")}</span>
+              </span>
+              <span class="qp-type">${escapeHtml(item.group)}</span>
+            </button>`,
+          )
+          .join("")}
+      </div>`,
+    )
+    .join("");
+  updatePaletteActive();
+}
+
+function openPalette(query) {
+  if (!quickPaletteEl.classList.contains("hidden")) return;
+  if (!tilePreviewEl.classList.contains("hidden")) closePreview();
+  paletteReturnFocus = document.activeElement;
+  quickPaletteEl.classList.remove("hidden");
+  qpInput.value = query || "";
+  renderPalette(qpInput.value);
+  requestAnimationFrame(() => {
+    qpInput.focus();
+    qpInput.select();
+  });
+}
+
+function closePalette() {
+  if (quickPaletteEl.classList.contains("hidden")) return;
+  quickPaletteEl.classList.add("hidden");
+  qpResults.innerHTML = "";
+  paletteFlat = [];
+  if (paletteReturnFocus && document.contains(paletteReturnFocus)) paletteReturnFocus.focus();
+  paletteReturnFocus = null;
+}
+
+function runPaletteItem(item, forcePreview) {
+  if (!item) return;
+  closePalette();
+  const fn = forcePreview && item.preview ? item.preview : item.action;
+  if (!fn) return;
+  try {
+    const result = fn();
+    if (result && typeof result.catch === "function") {
+      result.catch((err) => alert(`Could not run: ${err.message || err}`));
+    }
+  } catch (err) {
+    alert(`Could not run: ${err.message || err}`);
+  }
+}
+
+qpInput.addEventListener("input", () => renderPalette(qpInput.value));
+qpInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (paletteFlat.length) {
+      paletteActive = (paletteActive + 1) % paletteFlat.length;
+      updatePaletteActive();
+    }
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (paletteFlat.length) {
+      paletteActive = (paletteActive - 1 + paletteFlat.length) % paletteFlat.length;
+      updatePaletteActive();
+    }
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    runPaletteItem(paletteFlat[paletteActive], e.shiftKey);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closePalette();
+  }
 });
-document.getElementById("preview-close").addEventListener("click", () => {
-  closePreview();
-  syncPreviewCheckbox();
+qpResults.addEventListener("mousemove", (e) => {
+  const row = e.target.closest(".qp-item");
+  if (!row) return;
+  const index = Number(row.dataset.index);
+  if (Number.isFinite(index) && index !== paletteActive) {
+    paletteActive = index;
+    updatePaletteActive();
+  }
+});
+qpResults.addEventListener("click", (e) => {
+  const row = e.target.closest(".qp-item");
+  if (!row) return;
+  runPaletteItem(paletteFlat[Number(row.dataset.index)], false);
+});
+document.querySelector("#quick-palette .qp-backdrop")?.addEventListener("click", closePalette);
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === "Space") {
+    if (!quickPaletteEl.classList.contains("hidden")) {
+      e.preventDefault();
+      closePalette();
+      return;
+    }
+    if (isTypingTarget(e.target)) return;
+    e.preventDefault();
+    openPalette();
+  } else if (e.key === "Escape") {
+    if (!quickPaletteEl.classList.contains("hidden")) closePalette();
+    else if (!tilePreviewEl.classList.contains("hidden")) closePreview();
+  }
 });
 
-// Preview panel width control.
-const previewWidthEl = document.getElementById("preview-width");
-function applyPreviewWidth(px) {
-  previewEl.style.width = `${px}px`;
-  state.previewWidth = px;
-  saveState();
+function focusTile(id) {
+  const rec = tileEls.get(id);
+  if (!rec) return;
+  rec.el.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+  rec.el.classList.remove("tile-focus-pulse");
+  void rec.el.offsetWidth;
+  rec.el.classList.add("tile-focus-pulse");
+  setTimeout(() => rec.el.classList.remove("tile-focus-pulse"), 900);
 }
-previewWidthEl.addEventListener("change", (e) => {
-  applyPreviewWidth(clamp(Number(e.target.value) || 320, 200, 800));
-});
+
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Settings overlay wiring.
@@ -8082,10 +8540,6 @@ async function initialize() {
     if (display.fullscreen) await native.applyWindowDisplay(true, display.monitor);
   } catch (e) {
     console.error("Failed to apply default fullscreen", e);
-  }
-  if (state.previewWidth) {
-    previewEl.style.width = `${state.previewWidth}px`;
-    previewWidthEl.value = state.previewWidth;
   }
   render();
   // Re-render once the layout has settled: the very first render can measure the

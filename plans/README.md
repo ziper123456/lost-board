@@ -28,6 +28,7 @@ Read the relevant file before implementing.
 | Calendar tile (lunar + moon phase + holidays) | [`calendar-tile.md`](calendar-tile.md) ✅ PR #41 | `spec.md` §2.15, AC-035..037 |
 | Vocab spaced repetition (SM-2) | [`vocab-srs.md`](vocab-srs.md) ✅ PR #43 | `spec.md` §2.13, FR-VOC-010..014 |
 | Vocab mastery ladder + forgiving lapses | [`vocab-mastery-ladder.md`](vocab-mastery-ladder.md) — built, PR pending | `spec.md` §2.13, FR-VOC-010/014, AC-039 |
+| Full-width grid + quick palette | [`quick-palette.md`](quick-palette.md) — built, PR pending | `spec.md` FR-LAY-000..002/007, FR-UI-002..007, AC-055..056 |
 | Vocab drill sessions (cap + struggling pile + practice) | [`vocab-sessions.md`](vocab-sessions.md) ✅ PR #45 | `spec.md` §2.13, FR-VOC-015..016 |
 | Vocab card details (usage, conjugation, gender/article) | [`vocab-details.md`](vocab-details.md) ✅ PR #47 | `spec.md` §2.13, FR-VOC-017..020, AC-041..043 |
 | Vocab part-of-speech filter | [`vocab-pos-filter.md`](vocab-pos-filter.md) ✅ | `spec.md` §2.13, FR-VOC-021, AC-044 |

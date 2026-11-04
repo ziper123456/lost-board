@@ -63,6 +63,9 @@ things a website cannot: open a folder, launch a `.sln` in Visual Studio, and re
 - **FR-LAY-005** When the user removes a compartment, the system shall remove it from the grid and
   persist the change.
 - **FR-LAY-006** When the user reorders compartments, the system shall persist the order.
+- **FR-LAY-007** When zoom is below 100%, the grid canvas shall widen to fill the viewport so
+  tiles can be dragged/resized across the full width (no dead strip on the right). At 100% and
+  above, normal uniform zoom/scroll behavior applies.
 
 ### 2.2 Settings Page
 
@@ -369,6 +372,12 @@ auth, custom images are user-supplied, captioning is fully local.
 - **FR-UI-004** The Weather tile shall render an animated, country-themed conditions card.
 - **FR-UI-005** The Spotify tile volume shall be responsive and its progress bar locally
   interpolated; clicking/dragging the bar seeks.
+- **FR-UI-006** **Ctrl+Space** shall open a PowerToys Run-style quick palette while the
+  dashboard is focused. It shall search tiles, launcher/bookmark/Azure/project items, and
+  grid commands, with ↑/↓, Enter, Shift+Enter (preview tile), Esc, and mouse operation.
+- **FR-UI-007** The right preview rail is replaced by a floating preview overlay. Launcher-like
+  tiles (folders, bookmarks, Azure, projects) show a desktop-style icon grid; other tiles render
+  their normal content read-only. Closing the overlay shall clear preview timers.
 
 ### 2.18 Lyrics tile (synced, LRCLIB)
 
@@ -729,6 +738,17 @@ Given a non-English caption session is listening with split view on and the loca
 when finalized lines arrive, then each line gets one aligned English translation (newest-first
 backfill on open), partials are not sent, the original and translated panes scroll independently,
 translation errors are visible and retryable, and cloud fallback is not used unless enabled.
+
+### AC-055: Full-width zoom-out canvas
+Given a 15-column layout at 80% zoom on a 1920px viewport, when the dashboard renders, then the
+scaled grid fills 1920px, a tile can be dragged/resized to the far-right column, and the 100%+
+zoom behavior is unchanged.
+
+### AC-056: Quick palette and floating preview
+Given the dashboard is focused, when Ctrl+Space is pressed, then a centered search palette opens
+and searches tiles, launcher/bookmark/Azure/project items, and commands; Enter opens, Shift+Enter
+previews a tile, Esc closes. Preview for launcher-like tiles shows an icon grid; other tiles show
+read-only content, and closing clears live timers.
 
 ---
 
