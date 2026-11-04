@@ -928,8 +928,10 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
 .vocab-mastery-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
 .vocab-mastery-seg { height: 100%; transition: width 0.4s ease; }
 .vocab-mastery-seg.mature { background: #3fb950; }
+.vocab-mastery-seg.strong { background: #39c5cf; }
 .vocab-mastery-seg.young { background: #58a6ff; }
 .vocab-mastery-seg.learning { background: #d29922; }
+.vocab-mastery-seg.relearning { background: #f85149; }
 .vocab-mastery-seg.new { background: #6e7681; }
 .vocab-mastery-table { overflow-x: auto; }
 .vocab-mastery-table table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }

@@ -18,7 +18,7 @@ Read the relevant file before implementing.
    larger features get a file here. Never duplicate code in both places —
    point at the single source.
 
-## Active plans — all built through 2026-10-15, kept for reference
+## Active plans
 
 | Item | Plan / tracking | Spec |
 |---|---|---|
@@ -27,6 +27,7 @@ Read the relevant file before implementing.
 | Meme tile (rotation + captioning + expanded view) | [`meme-tile.md`](meme-tile.md) ✅ PR #32 | `spec.md` §2.14, AC-027..033 |
 | Calendar tile (lunar + moon phase + holidays) | [`calendar-tile.md`](calendar-tile.md) ✅ PR #41 | `spec.md` §2.15, AC-035..037 |
 | Vocab spaced repetition (SM-2) | [`vocab-srs.md`](vocab-srs.md) ✅ PR #43 | `spec.md` §2.13, FR-VOC-010..014 |
+| Vocab mastery ladder + forgiving lapses | [`vocab-mastery-ladder.md`](vocab-mastery-ladder.md) — built, PR pending | `spec.md` §2.13, FR-VOC-010/014, AC-039 |
 | Vocab drill sessions (cap + struggling pile + practice) | [`vocab-sessions.md`](vocab-sessions.md) ✅ PR #45 | `spec.md` §2.13, FR-VOC-015..016 |
 | Vocab card details (usage, conjugation, gender/article) | [`vocab-details.md`](vocab-details.md) ✅ PR #47 | `spec.md` §2.13, FR-VOC-017..020, AC-041..043 |
 | Vocab part-of-speech filter | [`vocab-pos-filter.md`](vocab-pos-filter.md) ✅ | `spec.md` §2.13, FR-VOC-021, AC-044 |

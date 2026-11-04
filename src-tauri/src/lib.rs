@@ -3371,6 +3371,19 @@ struct SrsEntry {
 struct DueCard {
     card: VocabCard,
     due: bool,
+    stage: String,
+    interval_days: i64,
+    reps: u32,
+    lapses: u32,
+}
+
+#[derive(serde::Serialize)]
+struct ReviewState {
+    stage: String,
+    interval_days: i64,
+    due: u64,
+    reps: u32,
+    lapses: u32,
 }
 
 fn srs_map(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
@@ -3410,8 +3423,10 @@ fn write_srs_entry(app: &tauri::AppHandle, id: &str, entry: &SrsEntry) -> Result
     write_vocab_keys(app, &[("srs", serde_json::Value::Object(map))])
 }
 
-/// Canonical SM-2: quality 0–5; <3 fails (relearn soon), else expanding interval
-/// by an ease factor. Capped at 730 days so ease never explodes the interval.
+/// SM-2: quality 0–5; <3 fails (relearn soon), else expanding interval by an
+/// ease factor. A fail keeps half the old interval as a relearning step (capped
+/// below Mature, so a failed card can never stay Mature) instead of zeroing all
+/// progress. Intervals are capped at 730 days so ease never explodes.
 fn sm2_next(mut e: SrsEntry, quality: u32, now: u64) -> SrsEntry {
     let q = quality.min(5);
     if e.ease < 1.3 {
@@ -3420,15 +3435,17 @@ fn sm2_next(mut e: SrsEntry, quality: u32, now: u64) -> SrsEntry {
     if q < 3 {
         e.lapses += 1;
         e.reps = 0;
-        e.ivl = 0;
-        e.ease = (e.ease - 0.2).max(1.3);
+        e.ivl = (e.ivl / 2).clamp(1, MATURE_DAYS - 1);
+        e.ease = (e.ease - 0.15).max(1.3);
         e.due = now + 10 * 60; // relearn in ~10 minutes
     } else {
         e.reps += 1;
+        // Rep 1 preserves the half-interval left by a lapse; a brand-new card
+        // starts at 1 day. Rep 2 never shortens a preserved interval below 6.
         e.ivl = if e.reps == 1 {
-            1
+            e.ivl.max(1)
         } else if e.reps == 2 {
-            6
+            e.ivl.max(6)
         } else {
             ((e.ivl.max(1) as f64) * e.ease).round() as i64
         };
@@ -3488,21 +3505,30 @@ fn vocab_due_card(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<Strin
     }
     use rand::seq::SliceRandom;
     let now = now_secs();
-    if srs_enabled(&app) {
-        let typed = parse_srs(&srs_map(&app));
-        let mut due: Vec<&VocabCard> = matching
+    let srs_on = srs_enabled(&app);
+    let typed = if srs_on {
+        parse_srs(&srs_map(&app))
+    } else {
+        std::collections::HashMap::new()
+    };
+    let mut due: Vec<&VocabCard> = if srs_on {
+        matching
             .iter()
             .copied()
             .filter(|c| typed.get(&c.id).map(|e| e.due).unwrap_or(0) <= now)
-            .collect();
-        if !due.is_empty() {
-            due.shuffle(&mut rand::thread_rng());
-            return Ok(Some(DueCard { card: due[0].clone(), due: true }));
-        }
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if !due.is_empty() {
+        due.shuffle(&mut rand::thread_rng());
+        let card = due[0];
+        return Ok(Some(due_card(card, true, typed.get(&card.id))));
     }
     let mut m = matching.clone();
     m.shuffle(&mut rand::thread_rng());
-    Ok(Some(DueCard { card: m[0].clone(), due: false }))
+    let card = m[0];
+    Ok(Some(due_card(card, false, typed.get(&card.id))))
 }
 
 /// Pick up to `limit` distinct due cards (0 = all), shuffled; when
@@ -3533,11 +3559,11 @@ fn pick_due_batch<'a>(
     let out: Vec<DueCard> = due
         .into_iter()
         .take(take)
-        .map(|c| DueCard { card: c.clone(), due: true })
+        .map(|c| due_card(c, true, typed.get(&c.id)))
         .collect();
     if out.is_empty() {
         if let Some(c) = matching.choose(&mut rand::thread_rng()) {
-            return vec![DueCard { card: (*c).clone(), due: false }];
+            return vec![due_card(c, false, typed.get(&c.id))];
         }
     }
     out
@@ -3560,7 +3586,7 @@ fn vocab_due_batch(
         use rand::seq::SliceRandom;
         return Ok(matching
             .choose(&mut rand::thread_rng())
-            .map(|c| vec![DueCard { card: (*c).clone(), due: false }])
+            .map(|c| vec![due_card(c, false, None)])
             .unwrap_or_default());
     }
     let typed = parse_srs(&srs_map(&app));
@@ -3591,21 +3617,22 @@ fn pick_practice_batch<'a>(
 }
 
 /// Extra practice: matching cards that are NOT due but that you keep failing
-/// (high lapses). Never graded — the popup must not call vocab_record_review,
-/// so these reps leave the schedule and mastery untouched.
+/// (high lapses). Never graded - the popup must not call vocab_record_review,
+/// so these reps leave the schedule and mastery untouched. The state is still
+/// included read-only so the popup can show the current level.
 #[tauri::command]
 fn vocab_practice_batch(
     app: tauri::AppHandle,
     categories: Vec<String>,
     pos: Vec<String>,
     limit: usize,
-) -> Result<Vec<VocabCard>, String> {
+) -> Result<Vec<DueCard>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
     let matching = vocab_filtered(&app, all, &categories, &pos);
     let typed = parse_srs(&srs_map(&app));
     Ok(pick_practice_batch(&matching, &typed, now_secs(), limit)
         .into_iter()
-        .cloned()
+        .map(|c| due_card(c, false, typed.get(&c.id)))
         .collect())
 }
 
@@ -3836,7 +3863,7 @@ fn vocab_lyrics_batch(
 
 /// Record a graded review. `grade` is again | hard | good | easy.
 #[tauri::command]
-fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) -> Result<(), String> {
+fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) -> Result<ReviewState, String> {
     let q = match grade.as_str() {
         "again" => 2,
         "hard" => 3,
@@ -3846,7 +3873,8 @@ fn vocab_record_review(app: tauri::AppHandle, card_id: String, grade: String) ->
     };
     let map = srs_map(&app);
     let next = sm2_next(get_srs(&map, &card_id), q, now_secs());
-    write_srs_entry(&app, &card_id, &next)
+    write_srs_entry(&app, &card_id, &next)?;
+    Ok(review_state(&next))
 }
 
 /// How many cards are due right now (for the tile badge). 0 when SRS is off.
@@ -3882,26 +3910,66 @@ fn vocab_srs_enabled(app: tauri::AppHandle) -> bool {
     srs_enabled(&app)
 }
 
-/// Mastery is read back from the card's own SM-2 state (the interval only grows
-/// with repeated success and collapses on a fail), so it reflects durability,
-/// not just "was shown". Thresholds follow the common SRS convention.
+/// Mastery is read back from the card's own SM-2 state. The interval only grows
+/// with repeated success and is halved on a fail, so it reflects durability,
+/// not just "was shown". The milestones give visible progress before maturity.
 #[derive(PartialEq)]
 enum Mastery {
     New,
+    Relearning,
     Learning,
     Young,
+    Strong,
     Mature,
 }
 
+const LEARNING_DAYS: i64 = 6; // interval < 6 days => still learning
+const STRONG_DAYS: i64 = 14; // interval >= 14 days => strong milestone
 const MATURE_DAYS: i64 = 21; // interval >= 21 days => scheduler trusts ~3+ weeks recall
 const STRUGGLE_LAPSES: u32 = 3; // failed this many times => a "leech"
 
 fn mastery_of(e: Option<&SrsEntry>) -> Mastery {
     match e {
         None => Mastery::New,
-        Some(e) if e.reps == 0 => Mastery::Learning,
+        Some(e) if e.reps == 0 => Mastery::Relearning,
         Some(e) if e.ivl >= MATURE_DAYS => Mastery::Mature,
+        Some(e) if e.ivl >= STRONG_DAYS => Mastery::Strong,
+        Some(e) if e.ivl < LEARNING_DAYS => Mastery::Learning,
         Some(_) => Mastery::Young,
+    }
+}
+
+fn mastery_label(m: &Mastery) -> &'static str {
+    match m {
+        Mastery::New => "new",
+        Mastery::Relearning => "relearning",
+        Mastery::Learning => "learning",
+        Mastery::Young => "young",
+        Mastery::Strong => "strong",
+        Mastery::Mature => "mature",
+    }
+}
+
+/// One drill card plus the SRS state the popup needs for its per-card progress
+/// line. Exposure cards can still show a previously-seen card's stage.
+fn due_card(card: &VocabCard, due: bool, e: Option<&SrsEntry>) -> DueCard {
+    DueCard {
+        card: card.clone(),
+        due,
+        stage: mastery_label(&mastery_of(e)).to_string(),
+        interval_days: e.map(|x| x.ivl).unwrap_or(0),
+        reps: e.map(|x| x.reps).unwrap_or(0),
+        lapses: e.map(|x| x.lapses).unwrap_or(0),
+    }
+}
+
+fn review_state(e: &SrsEntry) -> ReviewState {
+    ReviewState {
+        stage: mastery_label(&mastery_of(Some(e))).to_string(),
+        interval_days: e.ivl,
+        due: e.due,
+        reps: e.reps,
+        lapses: e.lapses,
     }
 }
 
@@ -3917,8 +3985,10 @@ struct SrsStats {
     due: usize,
     seen: usize,
     new: usize,
+    relearning: usize,
     learning: usize,
     young: usize,
+    strong: usize,
     mature: usize,
     struggling: usize,
 }
@@ -3935,8 +4005,10 @@ fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<Stri
         due: 0,
         seen: 0,
         new: 0,
+        relearning: 0,
         learning: 0,
         young: 0,
+        strong: 0,
         mature: 0,
         struggling: 0,
     };
@@ -3953,8 +4025,10 @@ fn vocab_srs_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec<Stri
         }
         match mastery_of(e) {
             Mastery::New => s.new += 1,
+            Mastery::Relearning => s.relearning += 1,
             Mastery::Learning => s.learning += 1,
             Mastery::Young => s.young += 1,
+            Mastery::Strong => s.strong += 1,
             Mastery::Mature => s.mature += 1,
         }
     }
@@ -3967,8 +4041,10 @@ struct CategoryStat {
     total: usize,
     due: usize,
     new: usize,
+    relearning: usize,
     learning: usize,
     young: usize,
+    strong: usize,
     mature: usize,
 }
 
@@ -4004,8 +4080,10 @@ fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec
                 total: 0,
                 due: 0,
                 new: 0,
+                relearning: 0,
                 learning: 0,
                 young: 0,
+                strong: 0,
                 mature: 0,
             });
             s.total += 1;
@@ -4014,8 +4092,10 @@ fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec
             }
             match bucket {
                 Mastery::New => s.new += 1,
+                Mastery::Relearning => s.relearning += 1,
                 Mastery::Learning => s.learning += 1,
                 Mastery::Young => s.young += 1,
+                Mastery::Strong => s.strong += 1,
                 Mastery::Mature => s.mature += 1,
             }
         }
@@ -4819,10 +4899,28 @@ mod srs_tests {
         let seed = SrsEntry { reps: 3, ivl: 30, ease: 2.5, due: now, lapses: 0 };
         let e = sm2_next(seed, 2, now);
         assert_eq!(e.reps, 0);
-        assert_eq!(e.ivl, 0);
+        assert_eq!(e.ivl, 15, "fail keeps half the previous interval");
         assert_eq!(e.lapses, 1);
         assert_eq!(e.due, now + 600);
         assert!(e.ease < 2.5);
+    }
+
+    #[test]
+    fn sm2_fail_cannot_stay_mature_and_recovers_half_interval() {
+        let now = 1_000_000u64;
+        let seed = SrsEntry { reps: 4, ivl: 60, ease: 2.5, due: now, lapses: 0 };
+        let failed = sm2_next(seed, 2, now);
+        assert_eq!(failed.ivl, MATURE_DAYS - 1);
+        assert!(matches!(mastery_of(Some(&failed)), Mastery::Relearning));
+
+        let recovered = sm2_next(failed, 4, now);
+        assert_eq!(recovered.reps, 1);
+        assert_eq!(recovered.ivl, MATURE_DAYS - 1, "first pass preserves the lapse interval");
+        assert!(matches!(mastery_of(Some(&recovered)), Mastery::Strong));
+
+        let second = sm2_next(recovered, 4, now);
+        assert_eq!(second.reps, 2);
+        assert_eq!(second.ivl, MATURE_DAYS - 1, "second pass never shortens below the lapse interval");
     }
 
     #[test]
@@ -4861,15 +4959,19 @@ mod srs_tests {
     #[test]
     fn mastery_buckets_follow_interval_and_reps() {
         assert!(matches!(mastery_of(None), Mastery::New));
-        let learning = SrsEntry { reps: 0, ivl: 0, ..Default::default() };
+        let relearning = SrsEntry { reps: 0, ivl: 0, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&relearning)), Mastery::Relearning));
+        let learning = SrsEntry { reps: 1, ivl: 1, ..Default::default() };
         assert!(matches!(mastery_of(Some(&learning)), Mastery::Learning));
         let young = SrsEntry { reps: 3, ivl: 6, ..Default::default() };
         assert!(matches!(mastery_of(Some(&young)), Mastery::Young));
+        let strong = SrsEntry { reps: 4, ivl: STRONG_DAYS, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&strong)), Mastery::Strong));
         let mature = SrsEntry { reps: 4, ivl: MATURE_DAYS, ..Default::default() };
         assert!(matches!(mastery_of(Some(&mature)), Mastery::Mature));
-        // A just-failed card (reps reset) is Learning again even if it had lapsed far.
-        let relapsed = SrsEntry { reps: 0, ivl: 0, lapses: 4, ..Default::default() };
-        assert!(matches!(mastery_of(Some(&relapsed)), Mastery::Learning));
+        // A just-failed card is Relearning even if it had lapsed far.
+        let relapsed = SrsEntry { reps: 0, ivl: MATURE_DAYS - 1, lapses: 4, ..Default::default() };
+        assert!(matches!(mastery_of(Some(&relapsed)), Mastery::Relearning));
     }
 
     #[test]
@@ -4921,6 +5023,42 @@ mod srs_tests {
         let out = pick_due_batch(&matching, &typed, 200, 0, false);
         assert_eq!(out.len(), 1);
         assert!(!out[0].due, "exposure card must not be graded");
+    }
+
+    #[test]
+    fn due_card_carries_stage_and_interval_progress() {
+        let a = tcard("a");
+        let entry = SrsEntry { reps: 3, ivl: 6, lapses: 1, ..Default::default() };
+        let due = due_card(&a, true, Some(&entry));
+        assert_eq!(due.stage, "young");
+        assert_eq!(due.interval_days, 6);
+        assert_eq!(due.reps, 3);
+        assert_eq!(due.lapses, 1);
+        assert!(due.due);
+
+        let exposure = due_card(&a, false, None);
+        assert_eq!(exposure.stage, "new");
+        assert_eq!(exposure.interval_days, 0);
+        assert!(!exposure.due);
+    }
+
+    #[test]
+    fn review_state_reports_the_post_review_level() {
+        let now = 1_000_000u64;
+        let learned = sm2_next(SrsEntry::default(), 4, now);
+        let state = review_state(&learned);
+        assert_eq!(state.stage, "learning");
+        assert_eq!(state.interval_days, 1);
+        assert_eq!(state.due, now + 86_400);
+        assert_eq!(state.reps, 1);
+
+        let seed = SrsEntry { reps: 3, ivl: 30, ease: 2.5, due: now, lapses: 0 };
+        let failed = sm2_next(seed, 2, now);
+        let state = review_state(&failed);
+        assert_eq!(state.stage, "relearning");
+        assert_eq!(state.interval_days, 15);
+        assert_eq!(state.lapses, 1);
+        assert_eq!(state.due, now + 600);
     }
 
     #[test]
