@@ -12,16 +12,42 @@
       <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>
     </button>
 
-    <!-- Right-side preview panel: shows a tile's content without reflowing the grid. -->
-    <aside id="preview" class="preview hidden">
-      <header>
-        <span id="preview-title" class="preview-title">Preview</span>
-        <button id="preview-close" class="btn ghost icon-btn" title="Close preview">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-        </button>
-      </header>
-      <div id="preview-body" class="compartment-body"></div>
-    </aside>
+    <!-- Quick palette (PowerToys Run-style) and floating tile preview. -->
+    <section id="quick-palette" class="quick-palette hidden" aria-label="Quick palette">
+      <div class="qp-backdrop" data-close="palette"></div>
+      <div class="qp-panel" role="dialog" aria-modal="true" aria-label="Quick palette">
+        <div class="qp-search">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input id="qp-input" type="text" autocomplete="off" spellcheck="false"
+            placeholder="Search tiles, places, commands…" aria-label="Search quick palette" />
+          <kbd>Ctrl Space</kbd>
+        </div>
+        <div id="qp-results" class="qp-results" role="listbox" aria-label="Quick palette results"></div>
+        <div class="qp-foot">
+          <span><kbd>↑↓</kbd> navigate</span>
+          <span><kbd>Enter</kbd> open</span>
+          <span><kbd>Shift Enter</kbd> preview tile</span>
+          <span><kbd>Esc</kbd> close</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="tile-preview" class="tile-preview hidden" aria-label="Tile preview">
+      <div class="tp-backdrop" data-close="preview"></div>
+      <div class="tp-panel" role="dialog" aria-modal="true" aria-labelledby="tp-title">
+        <header class="tp-head">
+          <div class="tp-heading">
+            <span id="tp-icon" class="tp-icon"></span>
+            <span id="tp-title" class="tp-title">Preview</span>
+            <span id="tp-kind" class="tp-kind"></span>
+          </div>
+          <button id="tp-close" class="btn ghost icon-btn" title="Close preview">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+          </button>
+        </header>
+        <div id="tile-preview-body" class="tp-body compartment-body"></div>
+      </div>
+    </section>
 
     <!-- The dashboard grid lives in this container. Compartments are created in JS. -->
     <main id="dashboard" class="dashboard">
@@ -101,10 +127,8 @@
                 </button>
               </div>
               <div class="item-row">
-                <label>Preview panel
-                  <input id="set-preview" type="checkbox" class="switch" />
-                </label>
-                <label>Width <input id="preview-width" type="number" min="200" max="800" step="20" value="320" /></label>
+                <label>Quick palette</label>
+                <span class="muted">Ctrl+Space</span>
               </div>
               <div class="item-row">
                 <button id="btn-fullscreen" class="btn ghost" title="Toggle fullscreen (F11)">Toggle fullscreen</button>
@@ -232,6 +256,7 @@
     <script src="colors.js"></script>
     <script src="lyrics.js"></script>
     <script src="backup.js"></script>
+    <script src="palette.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
