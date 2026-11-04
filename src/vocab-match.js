@@ -8,6 +8,8 @@
  *  - A noun may be typed with or without a DEFINITE article (el/la/los/las,
  *    der/die/das). A wrong definite article is reported as an "article-wrong"
  *    slip (still counts as the right noun).
+ *  - Common-gender Spanish nouns use "el/la" / "los/las"; either article (or
+ *    none) is accepted for those.
  *  - INDEFINITE articles (un/una/..., ein/eine/...) are stripped and treated as
  *    "no article": they don't encode a checkable gender here, so they never
  *    cause a slip.
@@ -27,6 +29,7 @@
       .replace(/[\u0300-\u036f]/g, "")
       .trim();
   const DEFINITE = ["el", "la", "los", "las", "der", "die", "das"];
+  const AMBIGUOUS = ["el/la", "los/las"];
   const INDEFINITE = ["un", "una", "unos", "unas", "ein", "eine", "einen", "einem", "einer", "eines"];
 
   function matchArticle(n, list) {
@@ -42,6 +45,8 @@
     const n = norm(s);
     const def = matchArticle(n, DEFINITE);
     if (def) return { article: def.article, noun: def.noun };
+    const amb = matchArticle(n, AMBIGUOUS);
+    if (amb) return { article: amb.article, noun: amb.noun };
     const indef = matchArticle(n, INDEFINITE);
     if (indef) return { article: null, noun: indef.noun };
     return { article: null, noun: n };
@@ -53,6 +58,12 @@
     return { article: art, noun: parsed.noun };
   }
 
+  function articleOk(got, expected) {
+    if (!got || !expected) return true;
+    if (!expected.includes("/")) return got === expected;
+    return got.split("/").some((a) => expected.split("/").includes(a));
+  }
+
   // -> { status: "ok" | "article-wrong" | "wrong", expectedArticle?, inputArticle? }
   function evalOne(raw, canonical, noun) {
     if (!noun) {
@@ -61,7 +72,7 @@
     const got = splitArticle(raw);
     if (!got.noun || got.noun !== noun.noun) return { status: "wrong" };
     if (!got.article || !noun.article) return { status: "ok" };
-    if (got.article === noun.article) return { status: "ok" };
+    if (articleOk(got.article, noun.article)) return { status: "ok" };
     return { status: "article-wrong", expectedArticle: noun.article, inputArticle: got.article };
   }
 

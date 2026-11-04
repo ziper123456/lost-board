@@ -3030,6 +3030,8 @@ struct VocabPopupConfig {
     position: String,
     /// Part-of-speech filter (empty = all).
     pos: Vec<String>,
+    /// Show English + masked target context before answering.
+    show_context: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -3050,6 +3052,7 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     practice_size: 10,
     position: String::new(),
     pos: Vec::new(),
+    show_context: true,
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -4131,9 +4134,9 @@ fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
 // Drill popup sizes must match `drill_position`'s placement math exactly, or a
 // bottom-anchored popup hangs off the bottom of the screen.
 const DRILL_W: f64 = 420.0;
-const DRILL_H: f64 = 360.0;
+const DRILL_H: f64 = 460.0;
 const DRILL_W_EXPANDED: f64 = 680.0;
-const DRILL_H_EXPANDED: f64 = 640.0;
+const DRILL_H_EXPANDED: f64 = 700.0;
 
 /// Map a 3x3 placement preset to logical-pixel coordinates on the primary
 /// monitor. Accepts either word order ("center-right" / "right-center").
@@ -4246,6 +4249,10 @@ fn open_drill_window(
         .get("practicePerSession")
         .and_then(|v| v.as_u64())
         .unwrap_or(10) as usize;
+    let show_context = cfg
+        .get("showContext")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let new_config = VocabPopupConfig {
         lang: lang.to_string(),
         cats: cats.to_vec(),
@@ -4255,6 +4262,7 @@ fn open_drill_window(
         practice_size,
         position: position.to_string(),
         pos: pos_filter.to_vec(),
+        show_context,
     };
     if let Some(w) = app.get_webview_window("drill") {
         // A different mode must be honoured: reload the popup so it re-reads the

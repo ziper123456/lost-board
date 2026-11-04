@@ -266,17 +266,22 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-016** **Practice mode** (manual button in Settings and the Vocab tile) shall show
   **not-due struggling** cards for extra reps. Practice is **never graded** — it must not change
   the schedule or mastery, so only genuinely spaced (due) reviews count.
-- **FR-VOC-017** After a card is answered correctly or revealed, the popup shall show a compact
-  **Learn strip**: usage example sentence(s) in the target language(s) with the word highlighted,
-  an English gloss, and — for nouns — gender/article + plural; for verbs — a present-tense
-  mini-line. The strip shall not appear before grading (no answer leak).
+- **FR-VOC-017** Before grading, the popup may show a **context strip** with the English example
+  and the target-language example(s) with the highlighted target replaced by a blank; the full
+  target answer must not be visible. The English prompt shows a small POS tag (`n`, `v`, `adj`,
+  `adv`, `phrase`, `other`). After the card is answered correctly or revealed, keep the context
+  strip and fill the blanks with the highlighted surface form, appending the dictionary answer
+  for each target language. Show a compact **Learn strip** for non-duplicated noun gender/plural,
+  verb present-tense forms, and usage notes; the strip includes Enlarge/Next. The context strip is
+  toggleable before answering and defaults on; the filled context always remains after answering.
 - **FR-VOC-018** An **Enlarge** action shall resize the drill popup in place to a larger detail
   view showing all example sentences, full conjugation tables (ES & DE, all tenses), gender/
   plural, part of speech and notes; the window returns to the compact size afterwards.
 - **FR-VOC-019** Conjugation shall be computed **locally at runtime** (offline) for single
   infinitive targets. For **nouns**, the user may type the noun **with or without** its article;
-  a **wrong article/gender is not a failure** — the noun counts correct and the card advances,
-  but the UI highlights the article mistake and shows the correct article.
+  a **wrong article/gender is not a failure** - the noun counts correct and the card advances,
+  but the UI highlights the article mistake and shows the correct article. Common-gender Spanish
+  nouns marked `el/la` or `los/las` accept either article or no article.
 - **FR-VOC-020** Usage/conjugation data shall come from an optional id-keyed enrichment file
   (`resources/cards-extra.json`), generated offline by the dev batch tool and loaded lazily;
   cards without enrichment drill exactly as before.
@@ -668,10 +673,12 @@ Given a session size of 5, when the drill opens, then it steps through up to 5 d
 and "Practice hard words" shows not-due struggling cards that are **never graded** (schedule/mastery
 unchanged).
 
-### AC-041: Learn strip on reveal/correct
-Given an enriched card, when the user answers correctly or reveals, then a Learn strip shows an
-example sentence (word highlighted) plus a gloss and, for nouns, the article/plural; nothing is
-shown before grading.
+### AC-041: Context and Learn strip
+Given an enriched card, when it first appears, then the context strip shows the English example and
+the target-language example(s) with the target masked; the full target is not visible. The English
+prompt has a small POS tag. When the user answers correctly or reveals, then the context strip
+stays visible with the blanks filled and the dictionary answer appended to each target example;
+the Learn strip shows non-duplicated noun/verb forms and notes.
 
 ### AC-042: Enlarge to full detail
 Given the Learn strip is shown, when the user clicks Enlarge, then the popup grows in place and
@@ -680,7 +687,8 @@ shows full examples + conjugation tables, and Collapse returns it to the compact
 ### AC-043: Article-optional noun matching
 Given a noun card, when the user types the noun with or without its article it counts correct; if
 the article/gender is wrong the noun still counts correct and the card advances, with the wrong
-article highlighted and the correct one shown.
+article highlighted and the correct one shown. For `el/la` / `los/las` common-gender nouns, `el`,
+`la`, the slash form, and no article are all accepted.
 
 ### AC-044: Part-of-speech filter
 Given the Vocab settings, when the user selects "Verbs" under Part of speech, then the drill and

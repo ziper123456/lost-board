@@ -51,4 +51,15 @@ assert.equal(evalOne("hola", "¡Hola!", null).status, "ok");
 assert.equal(evalOne("que tal", "¿Qué tal?", null).status, "ok");
 assert.equal(evalOne("¿cómo estás?", "como estas", null).status, "ok");
 
+// Common-gender nouns accept el/la, either article, or no article.
+assert.deepEqual(splitArticle("el/la acróbata"), { article: "el/la", noun: "acrobata" });
+assert.deepEqual(expectedNoun("el/la acróbata", "el"), { article: "el/la", noun: "acrobata" });
+const esAcrobat = expectedNoun("el/la acróbata", "el");
+assert.equal(evalOne("acróbata", "el/la acróbata", esAcrobat).status, "ok");
+assert.equal(evalOne("el acróbata", "el/la acróbata", esAcrobat).status, "ok");
+assert.equal(evalOne("la acróbata", "el/la acróbata", esAcrobat).status, "ok");
+assert.equal(evalOne("el/la acróbata", "el/la acróbata", esAcrobat).status, "ok");
+assert.equal(evalOne("los acróbatas", "el/la acróbata", esAcrobat).status, "wrong");
+assert.deepEqual(splitArticle("los/las artistas"), { article: "los/las", noun: "artistas" });
+
 console.log("match: all assertions passed");
