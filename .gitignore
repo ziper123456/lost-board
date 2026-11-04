@@ -15,6 +15,7 @@ src-tauri/gen/
 
 # Vocab enrichment batch working dir (progress/checkpoints)
 .enrich/
+.vocab-audit/
 
 # Cached favicons (fetched at runtime)
 favicons/

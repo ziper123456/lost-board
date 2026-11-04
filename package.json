@@ -10,10 +10,17 @@
     "build": "tauri build",
     "test:conjugate": "node scripts/test-conjugate.cjs",
     "test:match": "node scripts/test-match.cjs",
+    "test:context": "node scripts/test-context.cjs",
     "test:colors": "node scripts/test-colors.cjs",
     "test:lyrics": "node scripts/test-lyrics.cjs",
     "test:backup": "node scripts/test-backup.cjs",
-    "enrich": "node scripts/enrich-vocab.mjs"
+    "enrich": "node scripts/enrich-vocab.mjs",
+    "repair:vocab": "node scripts/repair-vocab.mjs",
+    "dedupe:vocab": "node scripts/dedupe-vocab.mjs",
+    "fix:audit-translations": "node scripts/fix-audit-translations.mjs",
+    "audit:vocab": "node scripts/audit-vocab.mjs --check",
+    "audit:vocab:llm": "node scripts/audit-vocab.mjs --llm",
+    "apply:vocab": "node scripts/audit-vocab.mjs --apply"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

@@ -1627,6 +1627,7 @@ function vocabConfig() {
   if (v.cardsPerSession === undefined) v.cardsPerSession = 1; // 0 = all due
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
   if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
+  if (v.showContext === undefined) v.showContext = true;
   return v;
 }
 
@@ -7110,6 +7111,7 @@ function renderVocabSettings() {
       </select>
     </label>
     <label title="Show high-lapse cards first in the session"><input type="checkbox" class="switch" id="vocab-struggling-first" ${v.strugglingFirst ? "checked" : ""} /> Prioritize hard words</label>
+    <label title="Show an English example and a masked target-language example before answering"><input type="checkbox" class="switch" id="vocab-show-context" ${v.showContext !== false ? "checked" : ""} /> Context before answer</label>
     <button class="btn ghost" id="vocab-practice" title="Extra ungraded reps on words you keep forgetting — doesn't affect mastery">Practice hard words</button>
     <span id="vocab-session-status" class="muted"></span>`;
   panel.appendChild(sessRow);
@@ -7124,6 +7126,10 @@ function renderVocabSettings() {
   });
   sessRow.querySelector("#vocab-struggling-first").addEventListener("change", (e) => {
     v.strugglingFirst = e.target.checked;
+    commit();
+  });
+  sessRow.querySelector("#vocab-show-context").addEventListener("change", (e) => {
+    v.showContext = e.target.checked;
     commit();
   });
   sessRow.querySelector("#vocab-practice").addEventListener("click", async () => {

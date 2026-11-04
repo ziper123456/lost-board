@@ -46,6 +46,10 @@
   }
   .prompt { font-size: 1.5rem; font-weight: 700; margin: 2px 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .prompt.lyrics { white-space: normal; overflow: visible; text-overflow: clip; font-size: 1.25rem; line-height: 1.3; }
+  .pos-tag {
+    font-size: 0.72rem; font-weight: 500; color: var(--muted, #8b8b98);
+    margin-left: 5px; vertical-align: middle; letter-spacing: 0;
+  }
   .answer { display: flex; gap: 8px; align-items: center; }
   .answer input {
     flex: 1; min-width: 0;
@@ -110,6 +114,20 @@
     font-size: 0.7rem; color: var(--text, #cfcfda); margin: -2px 0 8px;
     line-height: 1.3;
   }
+  .context {
+    margin: 0 0 8px; padding: 7px 9px; border: 1px solid var(--box-border, #3a3a48);
+    border-radius: 8px; background: color-mix(in srgb, var(--panel-2, #1e1e26) 82%, transparent);
+    font-size: 0.72rem; line-height: 1.35; max-height: 92px; overflow-y: auto;
+  }
+  .context[hidden] { display: none; }
+  .context-en { color: var(--muted, #8b8b98); font-style: italic; }
+  .context-line { margin-top: 2px; overflow-wrap: anywhere; }
+  .context-line b { color: var(--accent, #4f8ff7); }
+  .context-lang {
+    color: var(--muted, #8b8b98); font-size: 0.6rem; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-right: 4px;
+  }
+  .context-answer { color: var(--muted, #8b8b98); font-size: 0.68rem; margin-left: 5px; }
 
   /* Learn strip + detail pane */
   .learn { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid var(--box-border, #3a3a48); padding-top: 6px; max-height: 170px; min-height: 0; }
@@ -172,6 +190,7 @@
     <span class="word-level-days" id="word-level-days">0 / 21d</span>
   </div>
   <div class="word-level-note" id="word-level-note" hidden></div>
+  <div class="context" id="context" hidden></div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
   <div class="learn" id="learn" hidden></div>
@@ -185,6 +204,7 @@
 <script src="lyrics.js"></script>
 <script src="conjugate.js"></script>
 <script src="vocab-match.js"></script>
+<script src="vocab-context.js"></script>
 <script>
   const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
   // Same normalization as the matcher (ß→s, Spanish punctuation ignored, accents folded).
@@ -202,6 +222,7 @@
   const wordFillEl = document.getElementById("word-level-fill");
   const wordDaysEl = document.getElementById("word-level-days");
   const wordNoteEl = document.getElementById("word-level-note");
+  const contextEl = document.getElementById("context");
   const badgeEl = document.getElementById("mode-badge");
   const learnEl = document.getElementById("learn");
   const detailEl = document.getElementById("detail");
@@ -210,6 +231,7 @@
 
   let mode = "review";        // "review" (graded) | "practice" (never graded)
   let lang = "es";
+  let showContext = true;
   let cats = [];              // category filter read from the popup config
   let posFilter = [];         // part-of-speech filter read from the popup config
   let queue = [];             // [{ card, due, stage, interval_days, ... }]
@@ -339,7 +361,11 @@
     // The Learn strip is shown too (reading the usage while retyping helps), but
     // there is no Next until the user types the answer correctly.
     const answers = answerLinesHtml();
-    revealEl.innerHTML = answers ? `<div class="reveal-answers">${answers}</div>` : "";
+    if (mode === "lyrics") {
+      revealEl.innerHTML = answers ? `<div class="reveal-answers">${answers}</div>` : "";
+    } else {
+      revealEl.textContent = "";
+    }
     inputs().forEach((i) => i.classList.add("bad"));
     record("again");
     if (mode !== "lyrics") showLearn(null, { allowNext: false });
@@ -436,20 +462,31 @@
   }
   function boldHl(text, hl) {
     if (!hl) return escapeHtml(text);
-    let i = text.toLowerCase().indexOf(hl.toLowerCase());
-    let len = hl.length;
-    if (i < 0) {
-      // Fall back to a diacritic-insensitive match (accents may differ).
-      const st = stripWithMap(text.toLowerCase());
-      const sh = stripWithMap(hl.toLowerCase());
-      const j = st.text.indexOf(sh.text);
-      if (j >= 0) {
-        i = st.map[j];
-        len = st.map[j + sh.text.length - 1] + 1 - i;
+    const parts = String(hl).split(/\.\.\.|…/).map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return escapeHtml(text);
+    const findRange = (part, from) => {
+      let i = text.toLowerCase().indexOf(part.toLowerCase(), from);
+      let len = part.length;
+      if (i < 0) {
+        const st = stripWithMap(text.toLowerCase());
+        const sh = stripWithMap(part.toLowerCase());
+        const j = st.text.indexOf(sh.text);
+        if (j >= 0) {
+          i = st.map[j];
+          len = st.map[j + sh.text.length - 1] + 1 - i;
+        }
       }
+      return i >= 0 ? { i, len } : null;
+    };
+    let pos = 0;
+    let out = "";
+    for (const part of parts) {
+      const r = findRange(part, pos);
+      if (!r) return escapeHtml(text);
+      out += escapeHtml(text.slice(pos, r.i)) + "<b>" + escapeHtml(text.slice(r.i, r.i + r.len)) + "</b>";
+      pos = r.i + r.len;
     }
-    if (i < 0) return escapeHtml(text);
-    return escapeHtml(text.slice(0, i)) + "<b>" + escapeHtml(text.slice(i, i + len)) + "</b>" + escapeHtml(text.slice(i + len));
+    return out + escapeHtml(text.slice(pos));
   }
   function conjFor(langCode) {
     if (!window.VocabConjugate) return null;
@@ -457,7 +494,54 @@
     if (!card) return null;
     return window.VocabConjugate.conjugate(langCode === "es" ? card.es : card.de, langCode);
   }
+
+  function posTag(pos) {
+    return ({ noun: "n", verb: "v", adjective: "adj", adverb: "adv", phrase: "phrase", other: "other" })[pos] || "";
+  }
+
+  function renderPrompt(card) {
+    const tag = posTag(currentDetail && currentDetail.pos);
+    promptEl.innerHTML = escapeHtml(card.en) + (tag ? ` <span class="pos-tag">(${tag})</span>` : "");
+    promptEl.title = card.en;
+  }
+
+  function renderContext(revealed) {
+    contextEl.hidden = true;
+    contextEl.innerHTML = "";
+    if (mode === "lyrics" || !currentDetail || !currentDetail.example) return;
+    if (!revealed && !showContext) return;
+    const ex = currentDetail.example;
+    const card = queue[idx] && queue[idx].card;
+    const langOrder = lang === "both" ? ["es", "de"] : [lang === "de" ? "de" : "es"];
+    const parts = [];
+    if (ex.en) parts.push(`<div class="context-en">${escapeHtml(ex.en)}</div>`);
+    for (const L of langOrder) {
+      if (!ex[L]) continue;
+      if (revealed) {
+        const answer = card ? (L === "es" ? card.es : card.de) : "";
+        parts.push(
+          `<div class="context-line"><span class="context-lang">${L.toUpperCase()}</span>${boldHl(ex[L], ex["hl_" + L])}${
+            answer ? `<span class="context-answer">— ${escapeHtml(answer)}</span>` : ""
+          }</div>`,
+        );
+      } else {
+        const masked = window.VocabContext
+          ? window.VocabContext.maskHighlight(ex[L], ex["hl_" + L])
+          : null;
+        if (masked) {
+          parts.push(
+            `<div class="context-line"><span class="context-lang">${L.toUpperCase()}</span>${escapeHtml(masked)}</div>`,
+          );
+        }
+      }
+    }
+    if (!parts.length) return;
+    contextEl.innerHTML = parts.join("");
+    contextEl.hidden = false;
+  }
+
   function showLearn(slips, opts) {
+    renderContext(true);
     const allowNext = !opts || opts.allowNext !== false;
     const d = currentDetail;
     const langOrder = lang === "both" ? ["es", "de"] : [lang === "de" ? "de" : "es"];
@@ -465,12 +549,6 @@
     if (slips && slips.length) {
       const lines = slips.map((s) => `expected <b>${escapeHtml(s.expectedArticle)}</b> (you typed <s>${escapeHtml(s.inputArticle)}</s>)`);
       body += `<div class="slip">Article/gender: ${lines.join("; ")}</div>`;
-    }
-    if (d && d.example) {
-      for (const L of langOrder) {
-        if (d.example[L]) body += `<div class="ex"><span class="ex-lang">${L.toUpperCase()}</span> ${boldHl(d.example[L], d.example["hl_" + L])}</div>`;
-      }
-      if (d.example.en) body += `<div class="ex en">${escapeHtml(d.example.en)}</div>`;
     }
     if (d && d.pos === "noun") {
       const chips = [];
@@ -490,7 +568,8 @@
       }
       if (lines.length) body += `<div class="mini">${escapeHtml(lines.join("  |  "))}</div>`;
     }
-    if (!body) body = `<div class="muted">No usage data for this card yet.</div>`;
+    if (d && d.note) body += `<div class="mini">${escapeHtml(d.note)}</div>`;
+    if (!body) body = currentDetail ? "" : `<div class="muted">No usage data for this card yet.</div>`;
     learnEl.innerHTML = `<div class="learn-body">${body}</div>
       <div class="learn-actions">
         ${currentDetail ? `<button id="btn-expand">${expanded ? "Collapse" : "⤢ Enlarge"}</button>` : ""}
@@ -588,6 +667,8 @@
     errorEl.textContent = "";
     learnEl.hidden = true;
     learnEl.innerHTML = "";
+    contextEl.hidden = true;
+    contextEl.innerHTML = "";
     detailEl.hidden = true;
     detailEl.innerHTML = "";
     if (expanded) await setExpanded(false); // return to compact for a new card
@@ -602,6 +683,8 @@
       mode === "lyrics" ? null : await invoke("vocab_card_detail", { id: card.id }).catch(() => null);
     if (seq !== renderSeq) return;
     currentDetail = detail;
+    renderPrompt(card);
+    renderContext();
 
     answerWrap.innerHTML = "";
     if (lang === "both") {
@@ -635,6 +718,7 @@
     try {
       const cfg = (await invoke("vocab_popup_config").catch(() => ({}))) || {};
       lang = cfg.lang || "es";
+      showContext = cfg.show_context !== false;
       cats = Array.isArray(cfg.cats) ? cfg.cats : [];
       posFilter = Array.isArray(cfg.pos) ? cfg.pos : [];
       const lyricsOn = cats.includes("__lyrics__");

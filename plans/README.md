@@ -31,6 +31,7 @@ Read the relevant file before implementing.
 | Full-width grid + quick palette | [`quick-palette.md`](quick-palette.md) — built, PR pending | `spec.md` FR-LAY-000..002/007, FR-UI-002..007, AC-055..056 |
 | Vocab drill sessions (cap + struggling pile + practice) | [`vocab-sessions.md`](vocab-sessions.md) ✅ PR #45 | `spec.md` §2.13, FR-VOC-015..016 |
 | Vocab card details (usage, conjugation, gender/article) | [`vocab-details.md`](vocab-details.md) ✅ PR #47 | `spec.md` §2.13, FR-VOC-017..020, AC-041..043 |
+| Vocab context + full data audit | [`vocab-context-audit.md`](vocab-context-audit.md) — built, PR pending | `spec.md` §2.13, FR-VOC-017..020, AC-041/043 |
 | Vocab part-of-speech filter | [`vocab-pos-filter.md`](vocab-pos-filter.md) ✅ | `spec.md` §2.13, FR-VOC-021, AC-044 |
 | Dynamic board colours from the Spotify cover | [`spotify-cover-colors.md`](spotify-cover-colors.md) ✅ | `spec.md` §2.16, FR-DSN-005, AC-045 |
 | Lyrics tile (synced, LRCLIB) | [`lyrics-tile.md`](lyrics-tile.md) ✅ Phase 1 | `spec.md` §2.18, FR-LYR-001..005, AC-046..048 |
