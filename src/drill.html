@@ -71,6 +71,46 @@
   .error { font-size: 0.78rem; color: var(--red, #d64949); margin-top: 6px; }
   .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
 
+  /* Per-word level bar: 0..21 days, with ticks at learning/strong/mature. */
+  .word-level { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; min-height: 16px; }
+  .word-level[hidden], .word-level-note[hidden] { display: none; }
+  .word-level-stage {
+    flex: 0 0 72px; font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--muted, #8b8b98);
+  }
+  .word-level-stage.new { color: var(--muted, #8b8b98); }
+  .word-level-stage.relearning { color: var(--red, #d64949); }
+  .word-level-stage.learning { color: var(--amber, #f0c674); }
+  .word-level-stage.young { color: var(--accent, #4f8ff7); }
+  .word-level-stage.strong { color: #39c5cf; }
+  .word-level-stage.mature { color: var(--green, #2fae5f); }
+  .word-level-track {
+    position: relative; flex: 1; height: 7px; border-radius: 4px;
+    background: var(--box-border, #3a3a48); overflow: hidden;
+  }
+  .word-level-fill {
+    height: 100%; width: 0; border-radius: 4px; background: var(--muted, #8b8b98);
+    transition: width 0.35s ease, background 0.35s ease;
+  }
+  .word-level-fill.relearning { background: var(--red, #d64949); }
+  .word-level-fill.learning { background: var(--amber, #f0c674); }
+  .word-level-fill.young { background: var(--accent, #4f8ff7); }
+  .word-level-fill.strong { background: #39c5cf; }
+  .word-level-fill.mature { background: var(--green, #2fae5f); }
+  .word-level-tick {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    background: color-mix(in srgb, var(--text, #e8e8ee) 30%, transparent);
+    pointer-events: none;
+  }
+  .word-level-days {
+    flex: 0 0 auto; min-width: 62px; text-align: right; font-size: 0.66rem;
+    color: var(--muted, #8b8b98); font-variant-numeric: tabular-nums;
+  }
+  .word-level-note {
+    font-size: 0.7rem; color: var(--text, #cfcfda); margin: -2px 0 8px;
+    line-height: 1.3;
+  }
+
   /* Learn strip + detail pane */
   .learn { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; border-top: 1px solid var(--box-border, #3a3a48); padding-top: 6px; max-height: 170px; min-height: 0; }
   .learn[hidden], .detail[hidden] { display: none; }
@@ -121,6 +161,17 @@
   </div>
   <div class="mode-badge" id="mode-badge"></div>
   <div class="prompt" id="prompt">…</div>
+  <div class="word-level" id="word-level" hidden>
+    <span class="word-level-stage" id="word-level-stage">New</span>
+    <div class="word-level-track" aria-hidden="true">
+      <div class="word-level-fill" id="word-level-fill"></div>
+      <span class="word-level-tick" style="left:28.571%"></span>
+      <span class="word-level-tick" style="left:66.667%"></span>
+      <span class="word-level-tick" style="left:100%"></span>
+    </div>
+    <span class="word-level-days" id="word-level-days">0 / 21d</span>
+  </div>
+  <div class="word-level-note" id="word-level-note" hidden></div>
   <div class="answer"><input id="input" type="text" autocomplete="off" placeholder="type the translation" /></div>
   <div class="reveal" id="reveal"></div>
   <div class="learn" id="learn" hidden></div>
@@ -146,6 +197,11 @@
   const revealEl = document.getElementById("reveal");
   const errorEl = document.getElementById("error");
   const progressEl = document.getElementById("progress");
+  const wordLevelEl = document.getElementById("word-level");
+  const wordStageEl = document.getElementById("word-level-stage");
+  const wordFillEl = document.getElementById("word-level-fill");
+  const wordDaysEl = document.getElementById("word-level-days");
+  const wordNoteEl = document.getElementById("word-level-note");
   const badgeEl = document.getElementById("mode-badge");
   const learnEl = document.getElementById("learn");
   const detailEl = document.getElementById("detail");
@@ -156,7 +212,7 @@
   let lang = "es";
   let cats = [];              // category filter read from the popup config
   let posFilter = [];         // part-of-speech filter read from the popup config
-  let queue = [];             // [{ card, due }] — one session's worth of cards
+  let queue = [];             // [{ card, due, stage, interval_days, ... }]
   let idx = 0;
   let targets = [];           // accepted answers in order
   let nounTargets = [];       // per-target { article, noun } when pos === "noun"
@@ -173,11 +229,36 @@
 
   // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
   // Practice mode is never graded, so extra reps leave the schedule untouched.
-  function record(grade) {
+  async function record(grade) {
     if (mode !== "review") return;
     if (answered || !gradeable || !cardId) return;
     answered = true;
-    invoke("vocab_record_review", { cardId, grade }).catch(() => {});
+    const index = idx;
+    const item = queue[index];
+    const id = cardId;
+    if (!item) return;
+    const before = {
+      stage: String(item.stage || "new").toLowerCase(),
+      days: Number(item.interval_days) || 0,
+    };
+    try {
+      const next = await invoke("vocab_record_review", { cardId: id, grade });
+      if (!next || index !== idx || queue[index] !== item) return;
+      item.stage = next.stage;
+      item.interval_days = next.interval_days;
+      item.reps = next.reps;
+      item.lapses = next.lapses;
+      item.due = next.due;
+      const verb = { again: "Again", hard: "Hard", good: "Good", easy: "Easy" }[grade] || grade;
+      const nextText =
+        grade === "again" ? `retry in ${formatNext(next.due)}` : `next in ${formatNext(next.due)}`;
+      renderWordLevel(
+        item,
+        `${verb} · ${stageLabel(before.stage)} → ${stageLabel(next.stage)} · ${before.days}d → ${next.interval_days}d · ${nextText}`,
+      );
+    } catch (e) {
+      if (index === idx) errorEl.textContent = `Couldn't record review: ${e.message || e}`;
+    }
   }
 
   const inputs = () => [...document.querySelectorAll(".answer input")];
@@ -270,9 +351,48 @@
       return;
     }
     const pct = sessionStats && sessionStats.total ? Math.round((sessionStats.mature / sessionStats.total) * 100) : 0;
+    const milestones = sessionStats
+      ? [
+          sessionStats.strong ? `strong ${sessionStats.strong}` : "",
+          `learning ${sessionStats.learning}`,
+          sessionStats.relearning ? `relearning ${sessionStats.relearning}` : "",
+        ].filter(Boolean).join(" · ")
+      : "";
     progressEl.textContent = sessionStats && sessionStats.total
-      ? `${pos} · ${sessionDue} due · mastered ${pct}% (${sessionStats.mature}/${sessionStats.total}) · learning ${sessionStats.learning}`
+      ? `${pos} · ${sessionDue} due · mastered ${pct}% (${sessionStats.mature}/${sessionStats.total}) · ${milestones}`
       : `${pos} · ${sessionDue} due`;
+  }
+
+  const stageLabel = (stage) => {
+    const s = String(stage || "new").toLowerCase();
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  };
+
+  function formatNext(due) {
+    const secs = Math.max(0, Number(due || 0) - Date.now() / 1000);
+    if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min`;
+    if (secs < 86400) return `${Math.max(1, Math.round(secs / 3600))} h`;
+    return `${Math.max(1, Math.round(secs / 86400))}d`;
+  }
+
+  function renderWordLevel(item, note) {
+    if (mode === "lyrics" || !item) {
+      wordLevelEl.hidden = true;
+      wordNoteEl.hidden = true;
+      wordNoteEl.textContent = "";
+      return;
+    }
+    const stage = String(item.stage || "new").toLowerCase();
+    const days = Math.max(0, Number(item.interval_days) || 0);
+    wordLevelEl.hidden = false;
+    wordLevelEl.title = "Learning < 6d · Young 6–13d · Strong 14–20d · Mature 21d+";
+    wordStageEl.textContent = stageLabel(stage);
+    wordStageEl.className = `word-level-stage ${stage}`;
+    wordDaysEl.textContent = days >= 21 ? `${days}d` : `${days} / 21d`;
+    wordFillEl.className = `word-level-fill ${stage}`;
+    wordFillEl.style.width = `${Math.min(100, (days / 21) * 100)}%`;
+    wordNoteEl.textContent = note || "";
+    wordNoteEl.hidden = !note;
   }
 
   // ---- Learn strip ---------------------------------------------------------
@@ -469,6 +589,7 @@
       return VocabMatch.expectedNoun(t, currentDetail.article && currentDetail.article[L]);
     });
     updateProgress();
+    renderWordLevel(queue[idx], mode === "practice" ? "Practice · not graded" : due ? "" : "Exposure · not graded");
     inputs()[0]?.focus();
   }
 
@@ -502,7 +623,7 @@
         // Practice has its own cap (defaults to 10) - not the review session cap.
         const practiceLimit = cfg.practice_size === undefined ? 10 : Number(cfg.practice_size) || 0;
         const cards = await invoke("vocab_practice_batch", { categories: cats, pos: posFilter, limit: practiceLimit });
-        queue = (cards || []).map((c) => ({ card: c, due: false }));
+        queue = (cards || []).map((d) => ({ ...d, due: false }));
       } else {
         const limit = Number(cfg.session_size) || 0; // 1 default; 0 = all due
         const batch = await invoke("vocab_due_batch", {
@@ -511,7 +632,7 @@
           limit,
           preferStruggling: cfg.struggling_first !== false,
         });
-        queue = (batch || []).map((d) => ({ card: d.card, due: d.due === true }));
+        queue = (batch || []).map((d) => ({ ...d, due: d.due === true }));
         // Fetch the due/mastery snapshot once per session (updateProgress uses it).
         try {
           sessionDue = await invoke("vocab_due_count", { categories: cats, pos: posFilter });

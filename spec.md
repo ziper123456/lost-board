@@ -241,16 +241,22 @@ shuffle independently (different words in each is variety, not a bug).
 - **FR-VOC-010** The drill and tile shall support **spaced repetition** (SM-2): each card
   carries review state (due/interval/ease/reps/lapses) persisted by id; the drill shows a
   **due** card when one exists (graded) and falls back to a random card for passive exposure
-  (never graded). Grading is honest — reveal = fail. Toggleable in Settings; progress resettable.
+  (never graded). Grading is honest — reveal = fail. A fail schedules a ~10-minute relearn and
+  keeps half the previous interval (capped below Mature) rather than resetting every bit of
+  progress. Toggleable in Settings; progress resettable.
 - **FR-VOC-011** The tile shall show a "due today" count.
 - **FR-VOC-012** SM-2 intervals shall be capped (no interval explosion).
 - **FR-VOC-013** The Vocab settings tab shall show review **progress** (seen/total, due now,
   new). The drill popup shall follow the active **theme + design tokens** (colours, font,
   radius) so it is decorated like the tiles.
 - **FR-VOC-014** Mastery shall be read back from each card's SM-2 state (interval/reps): buckets
-  **new / learning / young / mature (≥21d)**, plus a **struggling** count (lapses ≥ 3). Settings
-  shows a mastery bar and a per-category table (scoped to the category filter; uncategorized
-  cards listed as "(uncategorized)"); the popup shows mastered %.
+  **new / relearning (reps = 0) / learning (<6d) / young (6–13d) / strong (14–20d) /
+  mature (≥21d)**, plus a **struggling** count (lapses ≥ 3). Settings shows a mastery bar and a
+  per-category table with all buckets (scoped to the category filter; uncategorized cards listed
+  as "(uncategorized)"); the popup shows mastered %, aggregate Strong/Relearning counts, and a
+  current-word level bar with the stage and progress toward 21 days. After a graded answer the bar
+  updates and shows the old → new interval plus when the card is next due; practice/exposure show
+  the level read-only and lyrics hide it.
 - **FR-VOC-015** The drill popup shall run a **session** of up to `cardsPerSession` due cards
   (0 = all), stepping through them and closing at the end. When `strugglingFirst` is on, due
   cards with the most lapses are shown first. Failed cards are still rescheduled by SM-2.
@@ -643,8 +649,10 @@ Given spaced repetition enabled, when a card is due, then the drill presents it 
 cards and grading (correct = pass, reveal = fail) reschedules it via SM-2; the tile shows a due count.
 
 ### AC-039: Vocab mastery view
-Given reviewed cards, when Settings > Vocab renders, then a mastery bar shows new/learning/young/
-mature buckets (mature = interval ≥ 21 days) and a per-category table with mastered %.
+Given reviewed cards, when Settings > Vocab renders, then a mastery bar shows new/relearning/
+learning/young/strong/mature buckets (mature = interval ≥ 21 days) and a per-category table with
+mastered % and all milestones. In the drill, the current word's level bar shows its interval
+before answering and the old → new interval plus next due after answering.
 
 ### AC-040: Drill session + practice
 Given a session size of 5, when the drill opens, then it steps through up to 5 due cards and closes;

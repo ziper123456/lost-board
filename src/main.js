@@ -6709,10 +6709,16 @@ function renderVocabSettings() {
         const seg = (cls, n) =>
           n > 0 ? `<span class="vocab-mastery-seg ${cls}" style="width:${(n / tot) * 100}%"></span>` : "";
         barEl.innerHTML =
-          seg("mature", s.mature) + seg("young", s.young) + seg("learning", s.learning) + seg("new", s.new);
+          seg("mature", s.mature) +
+          seg("strong", s.strong) +
+          seg("young", s.young) +
+          seg("learning", s.learning) +
+          seg("relearning", s.relearning) +
+          seg("new", s.new);
         const pct = s.total ? Math.round((s.mature / s.total) * 100) : 0;
+        progEl.title = "Learning < 6d · Young 6–13d · Strong 14–20d · Mature ≥ 21d";
         progEl.textContent =
-          `Mastered ${s.mature}/${s.total} (${pct}%) · learning ${s.learning} · young ${s.young} · new ${s.new} · ${s.due} due now` +
+          `Mastered ${s.mature}/${s.total} (${pct}%) · strong ${s.strong} · young ${s.young} · learning ${s.learning} · relearning ${s.relearning} · new ${s.new} · ${s.due} due now` +
           (s.struggling ? ` · ${s.struggling} struggling` : "");
       })
       .catch(() => {
@@ -6737,11 +6743,11 @@ function renderVocabSettings() {
         return;
       }
       catTable.innerHTML =
-        `<table><thead><tr><th>Category</th><th>Cards</th><th>Mastered</th><th>Learn</th><th>Young</th><th>New</th><th>Due</th></tr></thead><tbody>` +
+        `<table><thead><tr><th>Category</th><th>Cards</th><th>Mastered</th><th>Strong</th><th>Young</th><th>Learn</th><th>Relearn</th><th>New</th><th>Due</th></tr></thead><tbody>` +
         rows
           .map((r) => {
             const pct = r.total ? Math.round((r.mature / r.total) * 100) : 0;
-            return `<tr><td>${escapeHtml(r.category)}</td><td>${r.total}</td><td><b>${pct}%</b> <span class="muted">(${r.mature})</span></td><td>${r.learning}</td><td>${r.young}</td><td>${r.new}</td><td>${r.due}</td></tr>`;
+            return `<tr><td>${escapeHtml(r.category)}</td><td>${r.total}</td><td><b>${pct}%</b> <span class="muted">(${r.mature})</span></td><td>${r.strong}</td><td>${r.young}</td><td>${r.learning}</td><td>${r.relearning}</td><td>${r.new}</td><td>${r.due}</td></tr>`;
           })
           .join("") +
         `</tbody></table>`;
