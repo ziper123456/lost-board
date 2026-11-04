@@ -219,6 +219,7 @@
   let currentDetail = null;   // enrichment for the current card (or null)
   let attempts = 0;
   let answered = false;       // grade recorded for the current card?
+  let recording = false;      // backend review call in flight
   let gradeable = false;      // only grade cards that were actually due
   let awaitingNext = false;   // correct answer seen — waiting for Next/Enter
   let expanded = false;       // popup enlarged to the detail view
@@ -227,19 +228,37 @@
   let sessionDue = 0;         // snapshot fetched once per session (not per card)
   let sessionStats = null;
 
+  // Keep the session aggregate in step with the current card after a review.
+  function adjustSessionStats(before, next) {
+    if (!sessionStats) return;
+    const dec = (key) => {
+      if (typeof sessionStats[key] === "number") sessionStats[key] = Math.max(0, sessionStats[key] - 1);
+    };
+    const inc = (key) => {
+      if (typeof sessionStats[key] === "number") sessionStats[key] += 1;
+    };
+    dec(before.stage);
+    inc(next.stage);
+    if (before.stage === "new") sessionStats.seen = (sessionStats.seen || 0) + 1;
+    if (before.lapses < 3 && next.lapses >= 3) inc("struggling");
+    if (typeof sessionStats.due === "number") sessionStats.due = Math.max(0, sessionStats.due - 1);
+    if (sessionDue > 0) sessionDue -= 1;
+  }
+
   // Record the review outcome (SM-2). Honest grading: reveal = fail ("again").
   // Practice mode is never graded, so extra reps leave the schedule untouched.
   async function record(grade) {
     if (mode !== "review") return;
-    if (answered || !gradeable || !cardId) return;
-    answered = true;
+    if (recording || answered || !gradeable || !cardId) return;
     const index = idx;
     const item = queue[index];
     const id = cardId;
     if (!item) return;
+    recording = true;
     const before = {
       stage: String(item.stage || "new").toLowerCase(),
       days: Number(item.interval_days) || 0,
+      lapses: Number(item.lapses) || 0,
     };
     try {
       const next = await invoke("vocab_record_review", { cardId: id, grade });
@@ -249,6 +268,9 @@
       item.reps = next.reps;
       item.lapses = next.lapses;
       item.due = next.due;
+      answered = true;
+      adjustSessionStats(before, next);
+      updateProgress();
       const verb = { again: "Again", hard: "Hard", good: "Good", easy: "Easy" }[grade] || grade;
       const nextText =
         grade === "again" ? `retry in ${formatNext(next.due)}` : `next in ${formatNext(next.due)}`;
@@ -257,7 +279,14 @@
         `${verb} · ${stageLabel(before.stage)} → ${stageLabel(next.stage)} · ${before.days}d → ${next.interval_days}d · ${nextText}`,
       );
     } catch (e) {
-      if (index === idx) errorEl.textContent = `Couldn't record review: ${e.message || e}`;
+      if (index === idx) {
+        answered = false;
+        awaitingNext = false;
+        inputs().forEach((i) => i.classList.remove("ok"));
+        errorEl.textContent = `Couldn't record review: ${e.message || e}`;
+      }
+    } finally {
+      recording = false;
     }
   }
 

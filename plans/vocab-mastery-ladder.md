@@ -82,3 +82,7 @@ was mostly relearning being mislabelled, not proof that 21 days is too strict.
   returns `ReviewState`; the drill shows pre-answer level and post-answer
   old→new interval. Practice uses `DueCard` read-only; lyrics hide the bar.
   `cargo test --lib` => 37 passing.
+- 2026-11-04: review follow-ups — `answered` is set only after the review call
+  succeeds, and a failed call restores the input so the card can be retried.
+  The session aggregate is updated locally after each successful review instead
+  of staying a start-of-session snapshot.
