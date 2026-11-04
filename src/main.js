@@ -1647,7 +1647,11 @@ async function renderLyricsBody(c, body) {
   const offsetMs = Number(data.offsetMs) || 0;
   const align = ["left", "center", "right"].includes(data.align) ? data.align : "left";
   let full = data.full === true;
-  let lastAnimatedIdx = -2;
+  let focusNodes = new Map();
+  let focusTrackKey = "";
+  const reducedMotion =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   let synced = [];
   let plainLines = [];
@@ -1713,6 +1717,8 @@ async function renderLyricsBody(c, body) {
 
   const emptyMsg = (msg) => {
     fullRenderKey = "";
+    focusNodes.clear();
+    focusTrackKey = "";
     linesEl.innerHTML = "";
     linesEl.hidden = true;
     emptyEl.hidden = false;
@@ -1720,6 +1726,8 @@ async function renderLyricsBody(c, body) {
   };
   const emptyLoading = (msg) => {
     fullRenderKey = "";
+    focusNodes.clear();
+    focusTrackKey = "";
     linesEl.innerHTML = "";
     linesEl.hidden = true;
     emptyEl.hidden = false;
@@ -1763,6 +1771,114 @@ async function renderLyricsBody(c, body) {
       ? `<div class="lyr-tr lyr-tr-b">${escapeHtml(line.alt)}</div>`
       : "";
 
+  const focusClass = (i) => (i === currentIdx ? "cur" : i < currentIdx ? "prev" : "next");
+
+  const updateFocusNode = (node, i) => {
+    const cls = focusClass(i);
+    node.classList.toggle("cur", cls === "cur");
+    node.classList.toggle("prev", cls === "prev");
+    node.classList.toggle("next", cls === "next");
+    node.dataset.i = String(i);
+    const line = synced[i];
+    const content = `${escapeHtml(line.text)}${altHtml(line)}${i === currentIdx ? trHtml(i, false) : ""}`;
+    if (node.__content !== content) {
+      node.innerHTML = content;
+      node.__content = content;
+    }
+  };
+
+  const animateFocusNode = (node, oldRect) => {
+    if (reducedMotion) return;
+    const newRect = node.getBoundingClientRect();
+    const dy = oldRect ? oldRect.top - newRect.top : 0;
+    if (oldRect && Math.abs(dy) < 0.5) return;
+    const finalOpacity = Number(getComputedStyle(node).opacity) || 1;
+    node.animate(
+      oldRect
+        ? [{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }]
+        : [
+            { opacity: 0, transform: "translateY(-0.35em)" },
+            { opacity: finalOpacity, transform: "translateY(0)" },
+          ],
+      {
+        duration: oldRect ? 380 : 300,
+        easing: "cubic-bezier(0.2, 0.7, 0.2, 1)",
+        fill: "both",
+      }
+    );
+  };
+
+  const leaveFocusNode = (node) => {
+    if (reducedMotion) {
+      node.remove();
+      return;
+    }
+    const rect = node.getBoundingClientRect();
+    const clone = node.cloneNode(true);
+    clone.classList.remove("cur", "prev", "next");
+    clone.classList.add("lyr-line-leaving");
+    const style = getComputedStyle(node);
+    clone.style.position = "fixed";
+    clone.style.left = `${rect.left}px`;
+    clone.style.top = `${rect.top}px`;
+    clone.style.width = `${rect.width}px`;
+    clone.style.fontSize = style.fontSize;
+    clone.style.textAlign = getComputedStyle(linesEl).textAlign;
+    clone.style.color = style.color;
+    clone.style.opacity = style.opacity;
+    clone.style.pointerEvents = "none";
+    clone.style.zIndex = "4";
+    document.body.appendChild(clone);
+    node.remove();
+    clone
+      .animate(
+        [
+          { opacity: Number(style.opacity) || 1, transform: "translateY(0)" },
+          { opacity: 0, transform: "translateY(0.4em)" },
+        ],
+        { duration: 240, easing: "ease", fill: "both" }
+      )
+      .finished.finally(() => clone.remove());
+  };
+
+  const renderFocus = () => {
+    if (focusTrackKey !== trackKey) {
+      focusNodes.clear();
+      focusTrackKey = trackKey;
+    }
+    if (!focusNodes.size) linesEl.innerHTML = "";
+
+    const order = LyricsUtil.focusOrder(synced.length, currentIdx, prevN, nextN);
+    const orderSet = new Set(order);
+    const oldRects = new Map();
+    for (const [i, node] of focusNodes) {
+      if (node.isConnected) oldRects.set(i, node.getBoundingClientRect());
+    }
+    for (const node of focusNodes.values()) node.getAnimations().forEach((a) => a.cancel());
+
+    for (const [i, node] of [...focusNodes]) {
+      if (!orderSet.has(i)) {
+        focusNodes.delete(i);
+        leaveFocusNode(node);
+      }
+    }
+
+    const ordered = [];
+    for (const i of order) {
+      let node = focusNodes.get(i);
+      if (!node) {
+        node = document.createElement("div");
+        node.className = "lyr-line";
+        focusNodes.set(i, node);
+      }
+      updateFocusNode(node, i);
+      ordered.push(node);
+    }
+    linesEl.append(...ordered);
+
+    for (const [i, node] of focusNodes) animateFocusNode(node, oldRects.get(i));
+  };
+
   const renderLines = () => {
     const plainFallback = synced.length === 0 && plainLines.length > 0;
     const effectiveFull = full || plainFallback || currentIdx < 0;
@@ -1778,7 +1894,8 @@ async function renderLyricsBody(c, body) {
     linesEl.classList.toggle("focus", !effectiveFull);
 
     if (effectiveFull) {
-      lastAnimatedIdx = -2;
+      focusNodes.clear();
+      focusTrackKey = "";
       const key = `${trackKey}|${synced.length}|${full ? "f" : "p"}|${translations ? "tr" : ""}`;
       if (fullRenderKey !== key) {
         const lines = synced.length ? synced.map((l) => l.text) : plainLines;
@@ -1797,17 +1914,7 @@ async function renderLyricsBody(c, body) {
       if (follow && synced.length && currentIdx >= 0) scrollCurrent();
     } else {
       fullRenderKey = "";
-      const animateCurrent = currentIdx !== lastAnimatedIdx;
-      lastAnimatedIdx = currentIdx;
-      const order = LyricsUtil.focusOrder(synced.length, currentIdx, prevN, nextN);
-      linesEl.innerHTML = order
-        .map((i) => {
-          const l = synced[i];
-          const cls = i === currentIdx ? " cur" : i < currentIdx ? " prev" : " next";
-          const anim = animateCurrent && i === currentIdx ? " anim" : "";
-          return `<div class="lyr-line${cls}${anim}" data-i="${i}">${escapeHtml(l.text)}${altHtml(l)}${i === currentIdx ? trHtml(i, false) : ""}</div>`;
-        })
-        .join("");
+      renderFocus();
     }
     modeBtn.disabled = plainFallback;
     modeBtn.textContent = effectiveFull ? "Focus" : "Full";
