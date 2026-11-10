@@ -451,6 +451,7 @@ fn sha256_hex(data: &[u8]) -> String {
 
 const GOOGLE_FONT_DIR: &str = "google-fonts";
 const GOOGLE_FONT_CACHE_VERSION: &str = "v1";
+const GOOGLE_FONT_CACHE_MARKER: &str = "/* lost-board-google-font-cache */";
 const GOOGLE_FONT_MAX_BYTES: usize = 12 * 1024 * 1024;
 
 #[derive(Serialize)]
@@ -500,6 +501,21 @@ fn extract_css_urls(css: &str) -> Vec<String> {
     urls
 }
 
+fn font_mime_for_url(url: &str) -> &'static str {
+    let path = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+    if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".woff") {
+        "font/woff"
+    } else if path.ends_with(".ttf") {
+        "font/ttf"
+    } else if path.ends_with(".otf") {
+        "font/otf"
+    } else {
+        "application/octet-stream"
+    }
+}
+
 /// Download a Google font's CSS and all referenced woff2 files, inline the font
 /// bytes as data URIs, and cache the result under the app-data directory. The
 /// cached file is used on later launches, so a downloaded font works offline.
@@ -508,7 +524,10 @@ async fn load_google_font(app: tauri::AppHandle, family: String) -> Result<Googl
     let family = google_font_family(&family)?;
     let path = google_font_cache_path(&app, &family)?;
     if let Ok(css) = fs::read_to_string(&path) {
-        if css.contains("@font-face") && css.contains("data:font/woff2;base64,") {
+        if css.contains("@font-face")
+            && (css.contains(GOOGLE_FONT_CACHE_MARKER)
+                || css.contains("data:font/woff2;base64,"))
+        {
             return Ok(GoogleFontCss { css, cached: true });
         }
     }
@@ -561,16 +580,18 @@ async fn load_google_font(app: tauri::AppHandle, family: String) -> Result<Googl
             return Err("font file is too large".into());
         }
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let data_uri = format!("data:font/woff2;base64,{b64}");
+        let mime = font_mime_for_url(&font_url);
+        let data_uri = format!("data:{mime};base64,{b64}");
         inlined = inlined.replace(&font_url, &data_uri);
     }
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create font cache dir: {e}"))?;
     }
-    fs::write(&path, &inlined).map_err(|e| format!("Failed to cache Google font: {e}"))?;
+    let cached = format!("{GOOGLE_FONT_CACHE_MARKER}\n{inlined}");
+    fs::write(&path, &cached).map_err(|e| format!("Failed to cache Google font: {e}"))?;
     Ok(GoogleFontCss {
-        css: inlined,
+        css: cached,
         cached: false,
     })
 }
@@ -4304,8 +4325,18 @@ fn set_popup_theme(css: String) {
 }
 
 #[tauri::command]
-fn set_popup_font_css(css: String) {
-    *POPUP_FONT_CSS.lock().unwrap() = css;
+fn set_popup_font_css(app: tauri::AppHandle, css: String) {
+    *POPUP_FONT_CSS.lock().unwrap() = css.clone();
+    // Keep an already-open drill in sync; the next launch also gets the CSS via
+    // get_popup_theme, so this is only for live updates.
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("drill") {
+        let payload = serde_json::to_string(&css).unwrap_or_else(|_| "\"\"".into());
+        let js = format!(
+            "(() => {{ const id = 'lost-board-font-css'; let s = document.getElementById(id); if (!s) {{ s = document.createElement('style'); s.id = id; document.head.appendChild(s); }} s.textContent = {payload}; }})();"
+        );
+        let _ = w.eval(&js);
+    }
 }
 
 #[tauri::command]
@@ -5541,6 +5572,26 @@ mod srs_tests {
                 "https://fonts.gstatic.com/s/inter/a.woff2".to_string(),
                 "https://fonts.gstatic.com/s/inter/b.woff2".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn google_font_mime_matches_the_downloaded_file() {
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.woff2"),
+            "font/woff2"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.woff?v=1"),
+            "font/woff"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.ttf"),
+            "font/ttf"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.otf"),
+            "font/otf"
         );
     }
 }

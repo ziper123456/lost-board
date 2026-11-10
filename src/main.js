@@ -6629,7 +6629,6 @@ function renderLyricsSettings() {
     renderLyricsSettings();
   });
 
-
   const ioRow = document.createElement("div");
   ioRow.className = "item-row";
   ioRow.innerHTML = `<button class="btn ghost" id="lyr-tr-export">Export translation cache</button>
