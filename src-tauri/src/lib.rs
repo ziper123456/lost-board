@@ -3357,16 +3357,20 @@ async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Resu
         .unwrap()
         .height
         .clamp(DRILL_H_MIN, DRILL_H_MAX);
-    let (width, height) = if expanded {
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let max_h = work_area_bounds(&w)
+        .map(|(_, top, _, bottom)| ((bottom - top) as f64 / scale - 24.0).max(DRILL_H_MIN))
+        .unwrap_or(f64::INFINITY);
+    let (width, mut height) = if expanded {
         (DRILL_W_EXPANDED, (compact_h + 240.0).max(DRILL_H_EXPANDED))
     } else {
         (DRILL_W, compact_h)
     };
+    height = height.min(max_h);
 
     // Capture the geometry *before* resizing so we can keep the anchored corner
     // fixed (otherwise set_size pins the top-left, and a bottom-anchored popup
     // would jump up when it shrinks).
-    let scale = w.scale_factor().unwrap_or(1.0);
     let old_pos = w.outer_position().ok();
     let old_size = w.inner_size().ok();
     let preset = VOCAB_POPUP.lock().unwrap().position.clone();

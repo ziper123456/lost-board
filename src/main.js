@@ -8243,7 +8243,7 @@ function updateFontPreviewStatus() {
   else if (status.status === "loading") el.textContent = "Google Fonts · downloading…";
   else if (status.status === "downloaded") el.textContent = "Google Fonts · downloaded & cached";
   else if (status.status === "cached") el.textContent = "Google Fonts · loaded from cache";
-  else el.textContent = "Google Fonts · offline, using fallback";
+  else el.textContent = "Google Fonts · unavailable, using fallback";
 }
 
 function syncPopupGoogleFontCss(css) {
