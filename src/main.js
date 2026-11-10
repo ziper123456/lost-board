@@ -8486,7 +8486,7 @@ function renderDesignSettings() {
       <option value="__google" ${googleValue === "__google" ? "selected" : ""}>Other Google font…</option>
       <option value="__custom" ${selectedFont === "__custom" ? "selected" : ""}>Custom CSS stack…</option>
     </select>
-    <button class="btn ghost d-reset" title="Reset">?</button>`;
+    <button class="btn ghost d-reset" title="Reset">✕</button>`;
   panel.appendChild(fontRow);
 
   const googleFontRow = document.createElement("div");
