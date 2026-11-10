@@ -4449,7 +4449,7 @@ fn open_drill_window(
         .get("popupMonitor")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let new_config = VocabPopupConfig {
+    let mut new_config = VocabPopupConfig {
         lang: lang.to_string(),
         cats: cats.to_vec(),
         session_size,
@@ -4486,6 +4486,8 @@ fn open_drill_window(
         area.size.width as f64 / scale,
         area.size.height as f64 / scale,
     );
+    let drill_height = drill_height.min((bh - 32.0).max(DRILL_H_MIN));
+    new_config.height = drill_height;
     let (x, y) = drill_position(position, bx, by, bw, bh, drill_height);
     let phys_x = (x * scale).round() as i32;
     let phys_y = (y * scale).round() as i32;
