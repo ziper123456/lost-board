@@ -1098,6 +1098,7 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
 .vocab-cats { display: flex; flex-wrap: wrap; gap: 4px 12px; max-height: 132px; overflow-y: auto; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; }
 .vocab-cat { display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; cursor: pointer; }
 .vocab-pos-grid { display: grid; grid-template-columns: repeat(3, 30px); gap: 4px; }
+.vocab-height input { width: 58px; }
 .vocab-pos { width: 30px; height: 22px; padding: 0; }
 .vocab-pos.active { border-color: var(--accent); background: var(--panel-2); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .vocab-mastery { flex-direction: column; align-items: stretch; gap: 6px; }
@@ -1329,6 +1330,40 @@ input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:foc
 .cal-lunar { font-size: 0.58em; }
 .cal-moon { font-size: 0.6em; }
 
+/* Live font specimen in Design → Typography. It inherits the board tokens so
+   changing font, base size or heading weight updates it immediately. */
+.font-preview {
+  margin: 8px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--panel);
+  color: var(--text);
+  overflow: hidden;
+}
+.fp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.45px;
+}
+.fp-status { text-transform: none; letter-spacing: 0; font-size: 0.72rem; }
+.fp-status.error { color: var(--red); }
+.fp-title { margin-top: 8px; font-size: 1.25rem; font-weight: var(--heading-weight, 700); line-height: 1.2; }
+.fp-tile-title { margin-top: 4px; color: var(--accent); font-size: 0.9rem; font-weight: var(--heading-weight, 600); }
+.fp-body { margin: 7px 0 0; font-size: 0.95rem; line-height: 1.4; }
+.fp-vi { color: var(--muted); }
+.fp-meta {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Colour input: compact rounded swatch, no full-width stretch, no white border. */
 .item-row input[type="color"],
 input[type="color"] {
@@ -1425,6 +1460,10 @@ input[type="color"]:hover { border-color: var(--accent); }
 .lyr-target-row label { display: inline-flex; align-items: center; gap: 3px; }
 .lyr-tools { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .lyr-nudge { font-size: 0.66em; padding: 0 6px; line-height: 1.3; }
+.lyr-retry { font-size: 0.66em; padding: 0 6px; line-height: 1.3; opacity: 0.42; }
+.lyr-retry[hidden] { display: none; }
+.lyr-retry:disabled { cursor: default; }
+.lyr-retry.is-ready { opacity: 1; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .lyr-off { font-size: 0.62em; color: var(--muted); min-width: 2.6em; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Captions tile */

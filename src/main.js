@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
   windowDefaults: { fullscreen: false, monitor: "" },
   lyricsOffsets: {},
   lyricsTranslate: false,
+  lyricsDeeplFallback: false,
   lyricsLang: {},
   lyricsTargets: {},
   backup: {
@@ -122,6 +123,7 @@ const THEMES = {
 // unset token always resolves to the theme default.
 let dynamicPalette = null; // { url, accent, secondary } — transient, from the current cover
 let lastSpotifyArt = "";   // last seen cover URL (drives the dynamic palette)
+let popupGoogleFontCss = ""; // last font CSS sent to the drill popup
 
 function applyAppearance() {
   const t = THEMES[state.theme] || THEMES.dark;
@@ -206,6 +208,7 @@ function applyAppearance() {
   root.setProperty("--tile-shadow", effectiveTileShadow);
   root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
   root.setProperty("--font-size", px("fontBase", 16));
+  void ensureGoogleFontLoaded(d.googleFont);
   root.setProperty("--scroll-thumb", effectiveScroll);
   // Heading weight / transition are only set when overridden, so their per-element
   // CSS fallbacks preserve the current look until the user changes them.
@@ -426,8 +429,14 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("lyrics_detect", { text });
     return null;
   },
-  async lyricsTranslate(lines, source, targets) {
-    if (window.__TAURI__) return invoke("lyrics_translate", { lines, source, targets });
+  async lyricsTranslate(lines, source, targets, allowDeeplFallback) {
+    if (window.__TAURI__)
+      return invoke("lyrics_translate", {
+        lines,
+        source,
+        targets,
+        allowDeeplFallback: allowDeeplFallback === true,
+      });
     return null;
   },
   async lyricsTranslationsClear() {
@@ -578,6 +587,10 @@ async openFolder(path) {
   async applyWindowDisplay(fullscreen, monitor) {
     if (window.__TAURI__) return invoke("apply_window_display", { fullscreen, monitor });
   },
+  async loadGoogleFont(family) {
+    if (window.__TAURI__) return invoke("load_google_font", { family });
+    return null;
+  },
   async readVocabCards(count, categories) {
     if (window.__TAURI__) return invoke("read_vocab_cards", { count, categories: categories || [] });
     return [];
@@ -638,6 +651,9 @@ async openFolder(path) {
   },
   async setPopupTheme(css) {
     if (window.__TAURI__) return invoke("set_popup_theme", { css });
+  },
+  async setPopupFontCss(css) {
+    if (window.__TAURI__) return invoke("set_popup_font_css", { css });
   },
   async vocabTick() {
     if (window.__TAURI__) return invoke("vocab_tick");
@@ -1628,6 +1644,8 @@ function vocabConfig() {
   if (v.strugglingFirst === undefined) v.strugglingFirst = true;
   if (v.practicePerSession === undefined) v.practicePerSession = 10; // 0 = all
   if (v.showContext === undefined) v.showContext = true;
+  if (v.drillHeight === undefined) v.drillHeight = 460;
+  if (typeof v.popupMonitor !== "string") v.popupMonitor = "";
   return v;
 }
 
@@ -1683,6 +1701,7 @@ async function renderLyricsBody(c, body) {
   let autoScrolling = false;
   let translations = null; // { lang: [line, ...] } aligned to the current lines
   let translating = false;
+  let transError = "";
 
   body.innerHTML = `
     <div class="lyr-wrap">
@@ -1692,6 +1711,7 @@ async function renderLyricsBody(c, body) {
           <button class="btn ghost lyr-nudge" data-d="-100" title="Lyrics 0.1s earlier">−</button>
           <span class="lyr-off" title="Per-track lyric offset">0.0s</span>
           <button class="btn ghost lyr-nudge" data-d="100" title="Lyrics 0.1s later">+</button>
+          <button class="btn ghost lyr-retry" title="Retry translation with opencode" ${state.lyricsTranslate ? "" : "hidden"} disabled>Retry</button>
           <button class="btn ghost lyr-mode" title="Toggle full lyrics">Full</button>
         </span>
       </div>
@@ -1701,6 +1721,7 @@ async function renderLyricsBody(c, body) {
     </div>`;
   const trackEl = body.querySelector(".lyr-track");
   const modeBtn = body.querySelector(".lyr-mode");
+  const retryBtn = body.querySelector(".lyr-retry");
   const offEl = body.querySelector(".lyr-off");
   const transEl = body.querySelector(".lyr-trans");
   const linesEl = body.querySelector(".lyr-lines");
@@ -1948,10 +1969,31 @@ async function renderLyricsBody(c, body) {
     transEl.hidden = !msg;
   };
 
+  const setRetryEnabled = (enabled) => {
+    retryBtn.hidden = !state.lyricsTranslate;
+    retryBtn.disabled = !enabled;
+    retryBtn.classList.toggle("is-ready", enabled);
+    if (!enabled) retryBtn.title = "Retry translation with opencode";
+  };
+
+  const clearTranslationError = () => {
+    transError = "";
+    setRetryEnabled(false);
+  };
+
+  const showTranslationError = (msg) => {
+    transError = msg || "Translation unavailable";
+    transEl.textContent = transError;
+    transEl.hidden = false;
+    setRetryEnabled(true);
+    retryBtn.title = `Retry translation with opencode. Last error: ${transError.slice(0, 500)}`;
+  };
+
   const targetsFor = (source) => LyricsUtil.targetsFor(lyricsTargetsConfig(), source);
 
   // Low-confidence/unknown language: let the user pick (remembered per track).
   const showLangPrompt = (detected) => {
+    clearTranslationError();
     transEl.hidden = false;
     transEl.innerHTML = "";
     const label = document.createElement("span");
@@ -1980,32 +2022,39 @@ async function renderLyricsBody(c, body) {
     transEl.append(label, sel, ok);
   };
 
-  const translateLines = async (lines, source, targets, key) => {
+  const translateLines = async (lines, source, targets, key, opts = {}) => {
     const cacheKey = `${key}|${source}|${targets.join(",")}`;
-    if (lyricsTranslationCache.has(cacheKey)) {
+    if (!opts.force && lyricsTranslationCache.has(cacheKey)) {
       translations = lyricsTranslationCache.get(cacheKey);
       fullRenderKey = "";
       renderLines();
+      clearTranslationError();
       showTransStatus("");
       return;
     }
     if (translating) return;
     translating = true;
-    showTransStatus("Translating…");
+    clearTranslationError();
+    showTransStatus(opts.opencodeOnly ? "Retrying translation." : "Translating.");
     try {
-      const res = await native.lyricsTranslate(lines, source, targets);
+      const allowDeepl = opts.opencodeOnly ? false : state.lyricsDeeplFallback === true;
+      const res = await native.lyricsTranslate(lines, source, targets, allowDeepl);
       if (!body.isConnected || key !== trackKey) return;
       if (!res || !res.translations) {
-        showTransStatus("Translation unavailable");
+        showTranslationError("Translation unavailable");
         return;
       }
       lyricsTranslationCache.set(cacheKey, res.translations);
       translations = res.translations;
       fullRenderKey = "";
       renderLines();
+      clearTranslationError();
       showTransStatus("");
-    } catch {
-      if (body.isConnected && key === trackKey) showTransStatus("Translation unavailable");
+    } catch (e) {
+      if (body.isConnected && key === trackKey) {
+        const msg = String(e?.message || e || "").trim();
+        showTranslationError(msg ? `Translation unavailable: ${msg}` : "Translation unavailable");
+      }
     } finally {
       translating = false;
       // If the track changed while translating, the new one was skipped by the
@@ -2017,7 +2066,7 @@ async function renderLyricsBody(c, body) {
     }
   };
 
-  const startTranslation = async (track, key) => {
+  const startTranslation = async (track, key, opts = {}) => {
     if (!state.lyricsTranslate) return;
     const lines = synced.length ? synced.map((l) => l.text) : plainLines;
     if (!lines.length) return;
@@ -2046,7 +2095,7 @@ async function renderLyricsBody(c, body) {
       showTransStatus("No target languages set");
       return;
     }
-    await translateLines(lines, source, targets, key);
+    await translateLines(lines, source, targets, key, opts);
   };
 
   const loadLyrics = async (track) => {
@@ -2064,6 +2113,7 @@ async function renderLyricsBody(c, body) {
     currentIdx = -1;
     follow = true;
     translations = null;
+    clearTranslationError();
     showTransStatus("");
     status = "loading";
     setTrackLabel(track);
@@ -2111,6 +2161,7 @@ async function renderLyricsBody(c, body) {
       currentTrack = null;
       trackOffset = 0;
       translations = null;
+      clearTranslationError();
       showTransStatus("");
       updateOffsetLabel();
       setTrackLabel(null);
@@ -2128,6 +2179,12 @@ async function renderLyricsBody(c, body) {
     follow = true;
     saveState();
     renderLines();
+  });
+  retryBtn.addEventListener("click", () => {
+    if (retryBtn.disabled || translating || !currentTrack) return;
+    const key = LyricsUtil.trackKey(currentTrack);
+    retryBtn.disabled = true;
+    void startTranslation(currentTrack, key, { opencodeOnly: true, force: true });
   });
   body.querySelectorAll(".lyr-nudge").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3759,8 +3816,8 @@ function openTileSettings(id) {
   if (comp.kind === "vocab") selectedVocabId = id;
   if (comp.kind === "meme") selectedMemeId = id;
   if (comp.kind === "calendar") selectedCalendarId = id;
-  activateTab(tab);
   settingsEl.classList.remove("hidden");
+  activateTab(tab);
 }
 
 document.querySelectorAll(".settings-tabs .tab").forEach((tab) => {
@@ -6551,10 +6608,22 @@ function renderLyricsSettings() {
   const trRow = document.createElement("div");
   trRow.className = "item-row";
   trRow.innerHTML = `<label>Show translations (up to 2) <input type="checkbox" class="switch" id="lyr-translate" ${state.lyricsTranslate ? "checked" : ""} /></label>
-    <span class="muted">Detects the lyrics language, then translates into the other two of EN/DE/ES (VI → DE+ES). LLM via opencode first, DeepL fallback — lyrics are sent to that provider.</span>`;
+    <span class="muted">Detects the lyrics language, then translates into the other two of EN/DE/ES (VI → DE+ES). opencode is used first; DeepL is only used when the fallback below is enabled.</span>`;
   panel.appendChild(trRow);
   trRow.querySelector("#lyr-translate").addEventListener("change", (e) => {
     state.lyricsTranslate = e.target.checked;
+    saveState();
+    render();
+    renderLyricsSettings();
+  });
+
+  const fallbackRow = document.createElement("div");
+  fallbackRow.className = "item-row";
+  fallbackRow.innerHTML = `<label>Allow DeepL fallback <input type="checkbox" class="switch" id="lyr-deepl-fallback" ${state.lyricsDeeplFallback === true ? "checked" : ""} /></label>
+    <span class="muted">Off by default. When enabled, a failed opencode translation sends the whole song to DeepL and consumes API quota.</span>`;
+  panel.appendChild(fallbackRow);
+  fallbackRow.querySelector("#lyr-deepl-fallback").addEventListener("change", (e) => {
+    state.lyricsDeeplFallback = e.target.checked;
     saveState();
     render();
     renderLyricsSettings();
@@ -6808,6 +6877,7 @@ function renderProjectsSettings() {
 // (also the manual placement/focus test hook).
 // ---------------------------------------------------------------------------
 let selectedVocabId = null;
+let vocabStatsTimer = null;
 // Non-creating lookup for the settings tab — opening Vocab settings must
 // never resurrect a deleted tile (same rule as the Projects tab). The drill
 // popup config below is global and works with zero tiles.
@@ -6819,6 +6889,10 @@ function findVocabComp() {
 function renderVocabSettings() {
   const panel = document.getElementById("vocab-list");
   if (!panel) return;
+  if (vocabStatsTimer) {
+    clearInterval(vocabStatsTimer);
+    vocabStatsTimer = null;
+  }
   const comp = findVocabComp();
   const comps = state.compartments.filter((c) => c.kind === "vocab");
   const v = vocabConfig();
@@ -7002,7 +7076,7 @@ function renderVocabSettings() {
 
   const posRow = document.createElement("div");
   posRow.className = "item-row";
-  posRow.innerHTML = `<label>Popup position</label><div class="vocab-pos-grid" role="radiogroup" aria-label="Drill popup position"></div>`;
+  posRow.innerHTML = `<label>Popup position</label><div class="vocab-pos-grid" role="radiogroup" aria-label="Drill popup position"></div><label class="vocab-height">Height <input id="vocab-drill-height" type="number" min="360" max="900" step="20" value="${Math.min(900, Math.max(360, Number(v.drillHeight) || 460))}" />px</label>`;
   panel.appendChild(posRow);
   const posGrid = posRow.querySelector(".vocab-pos-grid");
   const POSITIONS = [
@@ -7029,6 +7103,42 @@ function renderVocabSettings() {
       posGrid.appendChild(b);
     }
   }
+  const heightInput = posRow.querySelector("#vocab-drill-height");
+  heightInput.addEventListener("change", () => {
+    v.drillHeight = Math.min(900, Math.max(360, Number(heightInput.value) || 460));
+    heightInput.value = v.drillHeight;
+    commit();
+  });
+
+  const monitorRow = document.createElement("div");
+  monitorRow.className = "item-row";
+  monitorRow.innerHTML = `<label>Monitor</label><select id="vocab-monitor"><option value="">Board / current monitor</option></select>`;
+  panel.appendChild(monitorRow);
+  const monitorSelect = monitorRow.querySelector("#vocab-monitor");
+  monitorSelect.addEventListener("change", () => {
+    v.popupMonitor = monitorSelect.value;
+    commit();
+  });
+  native
+    .listMonitors()
+    .then((monitors) => {
+      if (!monitorSelect.isConnected) return;
+      const list = monitors || [];
+      monitorSelect.innerHTML =
+        `<option value="">Board / current monitor</option>` +
+        list
+          .map(
+            (m) =>
+              `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)} (${m.width}x${m.height})</option>`
+          )
+          .join("");
+      if (list.some((m) => m.id === v.popupMonitor)) monitorSelect.value = v.popupMonitor;
+      else {
+        v.popupMonitor = "";
+        monitorSelect.value = "";
+      }
+    })
+    .catch(() => {});
 
   const actions = document.createElement("div");
   actions.className = "item-row";
@@ -7198,27 +7308,47 @@ function renderVocabSettings() {
   catTable.className = "vocab-mastery-table";
   catTable.innerHTML = `<span class="muted">loading…</span>`;
   panel.appendChild(catTable);
-  native
-    .vocabCategoryStats(wordCats(), v.drillPos || [])
-    .then((rows) => {
-      if (!catTable.isConnected) return;
-      if (!rows || !rows.length) {
-        catTable.innerHTML = `<span class="muted">no categories found</span>`;
-        return;
-      }
-      catTable.innerHTML =
-        `<table><thead><tr><th>Category</th><th>Cards</th><th>Mastered</th><th>Strong</th><th>Young</th><th>Learn</th><th>Relearn</th><th>New</th><th>Due</th></tr></thead><tbody>` +
-        rows
-          .map((r) => {
-            const pct = r.total ? Math.round((r.mature / r.total) * 100) : 0;
-            return `<tr><td>${escapeHtml(r.category)}</td><td>${r.total}</td><td><b>${pct}%</b> <span class="muted">(${r.mature})</span></td><td>${r.strong}</td><td>${r.young}</td><td>${r.learning}</td><td>${r.relearning}</td><td>${r.new}</td><td>${r.due}</td></tr>`;
-          })
-          .join("") +
-        `</tbody></table>`;
-    })
-    .catch(() => {
-      if (catTable.isConnected) catTable.innerHTML = `<span class="muted">couldn't load stats</span>`;
-    });
+  const loadCategoryStats = () =>
+    native
+      .vocabCategoryStats(wordCats(), v.drillPos || [])
+      .then((rows) => {
+        if (!catTable.isConnected) return;
+        if (!rows || !rows.length) {
+          catTable.innerHTML = `<span class="muted">no categories found</span>`;
+          return;
+        }
+        catTable.innerHTML =
+          `<table><thead><tr><th>Category</th><th>Cards</th><th>Mastered</th><th>Strong</th><th>Young</th><th>Learn</th><th>Relearn</th><th>New</th><th>Due</th></tr></thead><tbody>` +
+          rows
+            .map((r) => {
+              const pct = r.total ? Math.round((r.mature / r.total) * 100) : 0;
+              return `<tr><td>${escapeHtml(r.category)}</td><td>${r.total}</td><td><b>${pct}%</b> <span class="muted">(${r.mature})</span></td><td>${r.strong}</td><td>${r.young}</td><td>${r.learning}</td><td>${r.relearning}</td><td>${r.new}</td><td>${r.due}</td></tr>`;
+            })
+            .join("") +
+          `</tbody></table>`;
+      })
+      .catch(() => {
+        if (catTable.isConnected) catTable.innerHTML = `<span class="muted">couldn't load stats</span>`;
+      });
+  loadCategoryStats();
+
+  // Reviews happen in the drill window, so poll while this tab is visible to
+  // keep the mastery bar/table live without requiring a tab switch.
+  const settingsEl = document.getElementById("settings");
+  const vocabTabActive = () =>
+    panel.isConnected &&
+    settingsEl &&
+    !settingsEl.classList.contains("hidden") &&
+    document.querySelector(".settings-tabs .tab.active")?.dataset.tab === "vocab";
+  vocabStatsTimer = setInterval(() => {
+    if (!vocabTabActive()) {
+      clearInterval(vocabStatsTimer);
+      vocabStatsTimer = null;
+      return;
+    }
+    loadStats();
+    loadCategoryStats();
+  }, 2000);
   const srsChk = srsRow.querySelector("#vocab-srs");
   const srsStatus = srsRow.querySelector("#vocab-srs-status");
   native.vocabSrsEnabled().then((on) => { srsChk.checked = on === true; }).catch(() => {});
@@ -7237,6 +7367,7 @@ function renderVocabSettings() {
       await native.vocabResetSrs();
       srsStatus.textContent = "progress cleared";
       loadStats();
+      loadCategoryStats();
       render();
     } catch (err) {
       srsStatus.textContent = `failed: ${err.message || err}`;
@@ -8060,6 +8191,123 @@ const DESIGN_FONTS = [
   ["serif", "serif"],
   ["monospace", "monospace"],
 ];
+const DESIGN_GOOGLE_FONTS = [
+  ["Inter", "Inter", '"Segoe UI", system-ui, sans-serif'],
+  ["Roboto", "Roboto", "Arial, Helvetica, sans-serif"],
+  ["Open Sans", "Open Sans", '"Segoe UI", system-ui, sans-serif'],
+  ["Lato", "Lato", '"Segoe UI", system-ui, sans-serif'],
+  ["Montserrat", "Montserrat", '"Segoe UI", system-ui, sans-serif'],
+  ["Poppins", "Poppins", '"Segoe UI", system-ui, sans-serif'],
+  ["Manrope", "Manrope", '"Segoe UI", system-ui, sans-serif'],
+  ["DM Sans", "DM Sans", '"Segoe UI", system-ui, sans-serif'],
+  ["Be Vietnam Pro", "Be Vietnam Pro", '"Segoe UI", system-ui, sans-serif'],
+  ["Noto Sans", "Noto Sans", '"Segoe UI", system-ui, sans-serif'],
+  ["Merriweather", "Merriweather", 'Georgia, "Times New Roman", serif'],
+  ["Lora", "Lora", 'Georgia, "Times New Roman", serif'],
+  ["Playfair Display", "Playfair Display", 'Georgia, "Times New Roman", serif'],
+  ["Source Serif 4", "Source Serif 4", 'Georgia, "Times New Roman", serif'],
+  ["JetBrains Mono", "JetBrains Mono", 'Consolas, "Courier New", monospace'],
+  ["Fira Code", "Fira Code", 'Consolas, "Courier New", monospace'],
+  ["Roboto Mono", "Roboto Mono", 'Consolas, "Courier New", monospace'],
+  ["IBM Plex Mono", "IBM Plex Mono", 'Consolas, "Courier New", monospace'],
+];
+
+let googleFontLoad = { family: "", status: "idle", message: "" };
+let loadedGoogleFamily = "";
+let loadedGoogleSource = "cached";
+
+function googleFontStack(family, fallback) {
+  return `"${String(family).replace(/"/g, "")}", ${fallback}`;
+}
+
+function cleanGoogleFontFamily(value) {
+  const family = String(value || "").trim().replace(/\s+/g, " ");
+  return /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}$/.test(family) ? family : "";
+}
+
+function updateFontPreviewStatus() {
+  const el = document.getElementById("fp-status");
+  if (!el) return;
+  const family = state.design && state.design.googleFont;
+  if (!family) {
+    el.textContent = "System / custom stack";
+    el.classList.remove("error");
+    el.removeAttribute("title");
+    return;
+  }
+  const status = googleFontLoad.family === family ? googleFontLoad : null;
+  el.classList.toggle("error", status?.status === "error");
+  el.title = status?.message || "";
+  if (!status || status.status === "idle") el.textContent = "Google Fonts · not loaded";
+  else if (status.status === "loading") el.textContent = "Google Fonts · downloading…";
+  else if (status.status === "downloaded") el.textContent = "Google Fonts · downloaded & cached";
+  else if (status.status === "cached") el.textContent = "Google Fonts · loaded from cache";
+  else el.textContent = "Google Fonts · unavailable, using fallback";
+}
+
+function syncPopupGoogleFontCss(css) {
+  if (css === popupGoogleFontCss) return;
+  popupGoogleFontCss = css;
+  void native.setPopupFontCss(css).catch(() => {});
+}
+
+function ensureGoogleFontLoaded(family) {
+  const styleId = "google-font-style";
+  let style = document.getElementById(styleId);
+  if (!family) {
+    if (style) style.textContent = "";
+    loadedGoogleFamily = "";
+    loadedGoogleSource = "cached";
+    syncPopupGoogleFontCss("");
+    googleFontLoad = { family: "", status: "idle", message: "" };
+    updateFontPreviewStatus();
+    return;
+  }
+  if (loadedGoogleFamily === family && style && style.textContent) {
+    googleFontLoad = { family, status: loadedGoogleSource, message: "" };
+    updateFontPreviewStatus();
+    return;
+  }
+  if (googleFontLoad.family === family && googleFontLoad.status === "loading") return;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = styleId;
+    document.head.appendChild(style);
+  }
+  style.textContent = "";
+  googleFontLoad = { family, status: "loading", message: "" };
+  updateFontPreviewStatus();
+  native
+    .loadGoogleFont(family)
+    .then((result) => {
+      if (!result || !result.css) throw new Error("empty font response");
+      if (!state.design || state.design.googleFont !== family) return;
+      style.textContent = result.css;
+      loadedGoogleFamily = family;
+      loadedGoogleSource = result.cached ? "cached" : "downloaded";
+      syncPopupGoogleFontCss(result.css);
+      googleFontLoad = {
+        family,
+        status: loadedGoogleSource,
+        message: "",
+      };
+      updateFontPreviewStatus();
+    })
+    .catch((err) => {
+      if (!state.design || state.design.googleFont !== family) return;
+      style.textContent = "";
+      loadedGoogleFamily = "";
+      loadedGoogleSource = "cached";
+      syncPopupGoogleFontCss("");
+      googleFontLoad = {
+        family,
+        status: "error",
+        message: err?.message || String(err),
+      };
+      updateFontPreviewStatus();
+    });
+}
+
 const DESIGN_SHADOWS = [
   ["None", "none"],
   ["Soft", "0 4px 16px rgba(0,0,0,0.35)"],
@@ -8199,34 +8447,116 @@ function renderDesignSettings() {
   numRow("Input", "radiusInput", 0, 24, 1, "px", 8);
 
   heading("Typography");
+  const preview = document.createElement("div");
+  preview.className = "font-preview";
+  preview.innerHTML = `
+    <div class="fp-head"><span>Live font preview</span><span class="fp-status" id="fp-status"></span></div>
+    <div class="fp-title">Board title</div>
+    <div class="fp-tile-title">Today</div>
+    <p class="fp-body">The quick brown fox jumps over the lazy dog.</p>
+    <p class="fp-body fp-vi">Tiếng Việt: Trăm năm trong cõi người ta.</p>
+    <div class="fp-meta">15:42 · 24°C · 0123456789</div>`;
+  panel.appendChild(preview);
+
   const fontRow = document.createElement("div");
   fontRow.className = "item-row";
   const curFont = state.design.font || DESIGN_FONTS[0][1];
-  const known = DESIGN_FONTS.some(([, v]) => v === curFont);
+  const googleFamily = state.design.googleFont || "";
+  const curatedGoogle = DESIGN_GOOGLE_FONTS.find(([, family]) => family === googleFamily);
+  const googleValue = googleFamily
+    ? curatedGoogle
+      ? `google:${googleFamily}`
+      : "__google"
+    : "";
+  const knownLocal = DESIGN_FONTS.some(([, value]) => value === curFont);
+  const selectedFont = googleValue || (knownLocal ? curFont : "__custom");
+  const localOptions = DESIGN_FONTS.map(
+    ([label, value]) =>
+      `<option value="${escapeHtml(value)}" ${!googleFamily && value === curFont ? "selected" : ""}>${escapeHtml(label)}</option>`
+  ).join("");
+  const googleOptions = DESIGN_GOOGLE_FONTS.map(
+    ([label, family]) =>
+      `<option value="google:${escapeHtml(family)}" ${googleValue === `google:${family}` ? "selected" : ""}>${escapeHtml(label)}</option>`
+  ).join("");
   fontRow.innerHTML = `<label>Font</label>
-    <select class="d-font">${DESIGN_FONTS.map(([l, v]) => `<option value="${escapeHtml(v)}" ${v === curFont ? "selected" : ""}>${escapeHtml(l)}</option>`).join("")}<option value="__custom" ${known ? "" : "selected"}>Custom…</option></select>
+    <select class="d-font">
+      <optgroup label="System fonts">${localOptions}</optgroup>
+      <optgroup label="Google Fonts">${googleOptions}</optgroup>
+      <option value="__google" ${googleValue === "__google" ? "selected" : ""}>Other Google font…</option>
+      <option value="__custom" ${selectedFont === "__custom" ? "selected" : ""}>Custom CSS stack…</option>
+    </select>
     <button class="btn ghost d-reset" title="Reset">✕</button>`;
   panel.appendChild(fontRow);
+
+  const googleFontRow = document.createElement("div");
+  googleFontRow.className = "item-row";
+  googleFontRow.innerHTML = `<label>Google font</label><input type="text" class="d-google-font" placeholder="e.g. Fira Sans" value="${escapeHtml(curatedGoogle ? "" : googleFamily)}" /></div>`;
+  googleFontRow.hidden = googleValue !== "__google";
+  panel.appendChild(googleFontRow);
+
   const customFontRow = document.createElement("div");
   customFontRow.className = "item-row";
-  customFontRow.innerHTML = `<label>Custom font</label><input type="text" class="d-custom-font" placeholder='e.g. "Fira Sans", sans-serif' value="${escapeHtml(known ? "" : curFont)}" /></div>`;
-  customFontRow.hidden = known;
+  customFontRow.innerHTML = `<label>Custom CSS stack</label><input type="text" class="d-custom-font" placeholder='e.g. "Fira Sans", sans-serif' value="${escapeHtml(googleFamily || knownLocal ? "" : curFont)}" /></div>`;
+  customFontRow.hidden = selectedFont !== "__custom";
   panel.appendChild(customFontRow);
+  updateFontPreviewStatus();
+  if (googleFamily) ensureGoogleFontLoaded(googleFamily);
+
+  const useGoogleFont = (family, fallback) => {
+    const clean = cleanGoogleFontFamily(family);
+    if (!clean) return false;
+    state.design.googleFont = clean;
+    state.design.font = googleFontStack(clean, fallback);
+    applyNow();
+    renderDesignSettings();
+    return true;
+  };
+
   fontRow.querySelector(".d-font").addEventListener("change", (e) => {
-    if (e.target.value === "__custom") {
+    const value = e.target.value;
+    if (value === "__custom") {
+      delete state.design.googleFont;
       customFontRow.hidden = false;
+      googleFontRow.hidden = true;
+      applyNow();
       customFontRow.querySelector(".d-custom-font").focus();
       return;
     }
-    state.design.font = e.target.value;
+    if (value === "__google") {
+      googleFontRow.hidden = false;
+      customFontRow.hidden = true;
+      googleFontRow.querySelector(".d-google-font").focus();
+      return;
+    }
+    if (value.startsWith("google:")) {
+      const family = value.slice(7);
+      const entry = DESIGN_GOOGLE_FONTS.find(([, name]) => name === family);
+      useGoogleFont(family, entry ? entry[2] : '"Segoe UI", system-ui, sans-serif');
+      return;
+    }
+    delete state.design.googleFont;
+    state.design.font = value;
     applyNow();
     renderDesignSettings();
   });
+  googleFontRow.querySelector(".d-google-font").addEventListener("change", (e) => {
+    const value = e.target.value.trim();
+    if (value) useGoogleFont(value, '"Segoe UI", system-ui, sans-serif');
+  });
   customFontRow.querySelector(".d-custom-font").addEventListener("change", (e) => {
     const val = e.target.value.trim();
-    if (val) { state.design.font = val; applyNow(); }
+    if (val) {
+      delete state.design.googleFont;
+      state.design.font = val;
+      applyNow();
+    }
   });
-  fontRow.querySelector(".d-reset").addEventListener("click", () => { delete state.design.font; applyNow(); renderDesignSettings(); });
+  fontRow.querySelector(".d-reset").addEventListener("click", () => {
+    delete state.design.font;
+    delete state.design.googleFont;
+    applyNow();
+    renderDesignSettings();
+  });
   numRow("Base size", "fontBase", 11, 22, 1, "px", 16);
   numRow("Heading weight", "headingWeight", 400, 800, 50, "", 600);
 

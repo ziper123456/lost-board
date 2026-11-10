@@ -449,6 +449,153 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 
+const GOOGLE_FONT_DIR: &str = "google-fonts";
+const GOOGLE_FONT_CACHE_VERSION: &str = "v1";
+const GOOGLE_FONT_CACHE_MARKER: &str = "/* lost-board-google-font-cache */";
+const GOOGLE_FONT_MAX_BYTES: usize = 12 * 1024 * 1024;
+
+#[derive(Serialize)]
+struct GoogleFontCss {
+    css: String,
+    cached: bool,
+}
+
+fn google_font_family(family: &str) -> Result<String, String> {
+    let family = family.split_whitespace().collect::<Vec<_>>().join(" ");
+    if family.is_empty() || family.len() > 80 {
+        return Err("invalid Google font family".into());
+    }
+    if !family
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+    {
+        return Err("invalid Google font family".into());
+    }
+    Ok(family)
+}
+
+fn google_font_cache_path(app: &tauri::AppHandle, family: &str) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to locate app-data directory: {e}"))?
+        .join(GOOGLE_FONT_DIR);
+    let key = sha256_hex(family.to_ascii_lowercase().as_bytes());
+    Ok(dir.join(format!("{GOOGLE_FONT_CACHE_VERSION}-{key}.css")))
+}
+
+fn extract_css_urls(css: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut rest = css;
+    while let Some(start) = rest.find("url(") {
+        let after = &rest[start + 4..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        let raw = after[..end].trim().trim_matches('"').trim_matches('\'');
+        if raw.starts_with("https://fonts.gstatic.com/") && !urls.iter().any(|u| u == raw) {
+            urls.push(raw.to_string());
+        }
+        rest = &after[end + 1..];
+    }
+    urls
+}
+
+fn font_mime_for_url(url: &str) -> &'static str {
+    let path = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+    if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".woff") {
+        "font/woff"
+    } else if path.ends_with(".ttf") {
+        "font/ttf"
+    } else if path.ends_with(".otf") {
+        "font/otf"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// Download a Google font's CSS and all referenced woff2 files, inline the font
+/// bytes as data URIs, and cache the result under the app-data directory. The
+/// cached file is used on later launches, so a downloaded font works offline.
+#[tauri::command]
+async fn load_google_font(app: tauri::AppHandle, family: String) -> Result<GoogleFontCss, String> {
+    let family = google_font_family(&family)?;
+    let path = google_font_cache_path(&app, &family)?;
+    if let Ok(css) = fs::read_to_string(&path) {
+        if css.contains("@font-face")
+            && (css.contains(GOOGLE_FONT_CACHE_MARKER)
+                || css.contains("data:font/woff2;base64,"))
+        {
+            return Ok(GoogleFontCss { css, cached: true });
+        }
+    }
+
+    let query = family.replace(' ', "+");
+    let url = format!(
+        "https://fonts.googleapis.com/css2?family={query}:wght@400;700&display=swap"
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Google Fonts request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Google Fonts HTTP {}", resp.status()));
+    }
+    let css = resp
+        .text()
+        .await
+        .map_err(|e| format!("Google Fonts read failed: {e}"))?;
+    let urls = extract_css_urls(&css);
+    if urls.is_empty() {
+        return Err("Google Fonts returned no font files".into());
+    }
+
+    let mut inlined = css;
+    for font_url in urls {
+        let font_resp = client
+            .get(&font_url)
+            .header("User-Agent", "lost-board/0.1")
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| format!("font download failed: {e}"))?;
+        if !font_resp.status().is_success() {
+            return Err(format!("font download HTTP {}", font_resp.status()));
+        }
+        let bytes = font_resp
+            .bytes()
+            .await
+            .map_err(|e| format!("font read failed: {e}"))?;
+        if bytes.len() > GOOGLE_FONT_MAX_BYTES {
+            return Err("font file is too large".into());
+        }
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let mime = font_mime_for_url(&font_url);
+        let data_uri = format!("data:{mime};base64,{b64}");
+        inlined = inlined.replace(&font_url, &data_uri);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create font cache dir: {e}"))?;
+    }
+    let cached = format!("{GOOGLE_FONT_CACHE_MARKER}\n{inlined}");
+    fs::write(&path, &cached).map_err(|e| format!("Failed to cache Google font: {e}"))?;
+    Ok(GoogleFontCss {
+        css: cached,
+        cached: false,
+    })
+}
+
 /// MIME from a cached file extension (only types this command ever stores).
 fn image_mime_for(ext: &str) -> &'static str {
     match ext {
@@ -2022,9 +2169,10 @@ fn extract_json_object(text: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&text[start..=end]).ok()
 }
 
-/// Translate aligned lines with the opencode LLM (strict JSON). Returns None when
-/// the CLI is unavailable / fails / returns a mismatched line count.
-pub(crate) async fn llm_translate_lines(
+/// Translate one chunk of aligned lines with the opencode LLM (strict JSON).
+/// Returns None when the CLI is unavailable / fails / returns a mismatched
+/// line count.
+async fn llm_translate_chunk(
     lines: &[String],
     targets: &[String],
     source: &str,
@@ -2071,10 +2219,15 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
     let text = parse_opencode_text(&stdout);
     let obj = extract_json_object(&text)?;
     let tr = obj.get("translations")?.as_object()?;
+    // Models occasionally capitalise target keys (EN / DE); normalise them.
+    let by_lang: std::collections::HashMap<String, &serde_json::Value> = tr
+        .iter()
+        .map(|(k, v)| (k.to_ascii_lowercase(), v))
+        .collect();
     let mut out = std::collections::HashMap::new();
     for t in targets {
         let key = t.to_lowercase();
-        let arr = tr.get(&key)?.as_array()?;
+        let arr = by_lang.get(&key)?.as_array()?;
         let lines_out: Vec<String> = arr
             .iter()
             .map(|v| v.as_str().unwrap_or("").to_string())
@@ -2085,6 +2238,34 @@ in the same order. Keep lines short and natural; do not merge or split lines; us
         out.insert(key, lines_out);
     }
     Some(out)
+}
+
+/// Translate aligned lines with the opencode LLM in bounded chunks. Large
+/// requests can exceed the model's JSON response budget, which silently pushed
+/// the whole request to DeepL (and burned API quota); splitting keeps each
+/// request small and preserves line order.
+pub(crate) async fn llm_translate_lines(
+    lines: &[String],
+    targets: &[String],
+    source: &str,
+) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    const CHUNK_LINES: usize = 40;
+    let keys: Vec<String> = targets.iter().map(|t| t.to_lowercase()).collect();
+    let mut out: std::collections::HashMap<String, Vec<String>> = keys
+        .iter()
+        .map(|key| (key.clone(), Vec::with_capacity(lines.len())))
+        .collect();
+    for chunk in lines.chunks(CHUNK_LINES) {
+        let part = llm_translate_chunk(chunk, targets, source).await?;
+        for key in &keys {
+            out.get_mut(key)?.extend(part.get(key)?.iter().cloned());
+        }
+    }
+    if out.values().all(|v| v.len() == lines.len()) {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// Explicit per-line cleanup for captions. Sends the source, the draft
@@ -2210,13 +2391,14 @@ fn translation_key(lines: &[String], source: &str, targets: &[String]) -> String
     )
 }
 
-/// Translate lyric lines: disk cache → LLM (opencode) → DeepL fallback.
+/// Translate lyric lines: disk cache → LLM (opencode) → optional DeepL fallback.
 #[tauri::command]
 async fn lyrics_translate(
     app: tauri::AppHandle,
     lines: Vec<String>,
     source: String,
     targets: Vec<String>,
+    allow_deepl_fallback: bool,
 ) -> Result<LyricsTranslation, String> {
     if lines.is_empty() || targets.is_empty() {
         return Err("no lines or targets".into());
@@ -2230,7 +2412,7 @@ async fn lyrics_translate(
     let (provider, translations) =
         if let Some(translations) = llm_translate_lines(&lines, &targets, &source).await {
             ("opencode".to_string(), translations)
-        } else {
+        } else if allow_deepl_fallback {
             // DeepL only supports a subset of source languages; auto-detect otherwise.
             let dl_source = if ["en", "de", "es"].contains(&source.to_ascii_lowercase().as_str()) {
                 source.clone()
@@ -2244,6 +2426,11 @@ async fn lyrics_translate(
                 m.insert(target.to_ascii_lowercase(), out);
             }
             ("deepl".to_string(), m)
+        } else {
+            return Err(
+                "opencode translation failed; DeepL fallback is disabled in Lyrics settings"
+                    .into(),
+            );
         };
 
     {
@@ -2825,6 +3012,7 @@ pub fn run() {
             save_state,
             list_monitors,
             apply_window_display,
+            load_google_font,
             export_config,
             import_config,
             backup_export,
@@ -2848,6 +3036,7 @@ pub fn run() {
             vocab_card_detail,
             vocab_set_popup_expanded,
             set_popup_theme,
+            set_popup_font_css,
             get_popup_theme,
             vocab_popup_config,
             open_vocab_popup,
@@ -3032,6 +3221,10 @@ struct VocabPopupConfig {
     pos: Vec<String>,
     /// Show English + masked target context before answering.
     show_context: bool,
+    /// Compact drill height in logical pixels.
+    height: f64,
+    /// Monitor id for the drill window (empty = board/current monitor).
+    monitor: String,
 }
 
 #[derive(serde::Serialize)]
@@ -3053,6 +3246,8 @@ static VOCAB_POPUP: StdMutex<VocabPopupConfig> = StdMutex::new(VocabPopupConfig 
     position: String::new(),
     pos: Vec::new(),
     show_context: true,
+    height: 460.0,
+    monitor: String::new(),
 });
 static VOCAB_LAST_POPUP_AT: StdMutex<u64> = StdMutex::new(0);
 
@@ -3178,16 +3373,25 @@ async fn vocab_set_popup_expanded(app: tauri::AppHandle, expanded: bool) -> Resu
     let Some(w) = app.get_webview_window("drill") else {
         return Ok(());
     };
-    let (width, height) = if expanded {
-        (DRILL_W_EXPANDED, DRILL_H_EXPANDED)
+    let compact_h = VOCAB_POPUP
+        .lock()
+        .unwrap()
+        .height
+        .clamp(DRILL_H_MIN, DRILL_H_MAX);
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let max_h = work_area_bounds(&w)
+        .map(|(_, top, _, bottom)| ((bottom - top) as f64 / scale - 24.0).max(DRILL_H_MIN))
+        .unwrap_or(f64::INFINITY);
+    let (width, mut height) = if expanded {
+        (DRILL_W_EXPANDED, (compact_h + 240.0).max(DRILL_H_EXPANDED))
     } else {
-        (DRILL_W, DRILL_H)
+        (DRILL_W, compact_h)
     };
+    height = height.min(max_h);
 
     // Capture the geometry *before* resizing so we can keep the anchored corner
     // fixed (otherwise set_size pins the top-left, and a bottom-anchored popup
     // would jump up when it shrinks).
-    let scale = w.scale_factor().unwrap_or(1.0);
     let old_pos = w.outer_position().ok();
     let old_size = w.inner_size().ok();
     let preset = VOCAB_POPUP.lock().unwrap().position.clone();
@@ -4113,6 +4317,7 @@ fn vocab_category_stats(app: tauri::AppHandle, categories: Vec<String>, pos: Vec
 // here (a `:root{...}` string) and the popup pulls them on load, so the popup is
 // decorated like the rest of the board.
 static POPUP_THEME: StdMutex<String> = StdMutex::new(String::new());
+static POPUP_FONT_CSS: StdMutex<String> = StdMutex::new(String::new());
 
 #[tauri::command]
 fn set_popup_theme(css: String) {
@@ -4120,8 +4325,29 @@ fn set_popup_theme(css: String) {
 }
 
 #[tauri::command]
+fn set_popup_font_css(app: tauri::AppHandle, css: String) {
+    *POPUP_FONT_CSS.lock().unwrap() = css.clone();
+    // Keep an already-open drill in sync; the next launch also gets the CSS via
+    // get_popup_theme, so this is only for live updates.
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("drill") {
+        let payload = serde_json::to_string(&css).unwrap_or_else(|_| "\"\"".into());
+        let js = format!(
+            "(() => {{ const id = 'lost-board-font-css'; let s = document.getElementById(id); if (!s) {{ s = document.createElement('style'); s.id = id; document.head.appendChild(s); }} s.textContent = {payload}; }})();"
+        );
+        let _ = w.eval(&js);
+    }
+}
+
+#[tauri::command]
 fn get_popup_theme() -> String {
-    POPUP_THEME.lock().unwrap().clone()
+    let theme = POPUP_THEME.lock().unwrap().clone();
+    let font_css = POPUP_FONT_CSS.lock().unwrap().clone();
+    if font_css.is_empty() {
+        theme
+    } else {
+        format!("{theme}\n{font_css}")
+    }
 }
 
 /// Drill language + category filter, stored at open time so drill.html needs
@@ -4135,15 +4361,24 @@ fn vocab_popup_config() -> Result<VocabPopupConfig, String> {
 // bottom-anchored popup hangs off the bottom of the screen.
 const DRILL_W: f64 = 420.0;
 const DRILL_H: f64 = 460.0;
+const DRILL_H_MIN: f64 = 360.0;
+const DRILL_H_MAX: f64 = 900.0;
 const DRILL_W_EXPANDED: f64 = 680.0;
 const DRILL_H_EXPANDED: f64 = 700.0;
 
-/// Map a 3x3 placement preset to logical-pixel coordinates on the primary
-/// monitor. Accepts either word order ("center-right" / "right-center").
-/// Unknown values fall back to bottom-right (the spec default).
-fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) -> (f64, f64) {
+/// Map a 3x3 placement preset to logical-pixel coordinates on the target
+/// monitor, using the configured compact height. Unknown values fall back to
+/// bottom-right (the spec default).
+fn drill_position(
+    preset: &str,
+    mon_x: f64,
+    mon_y: f64,
+    mon_w: f64,
+    mon_h: f64,
+    height: f64,
+) -> (f64, f64) {
     const W: f64 = DRILL_W;
-    const H: f64 = DRILL_H;
+    let h = height;
     const M: f64 = 16.0;
     let hx = if preset.contains("left") {
         0
@@ -4170,44 +4405,27 @@ fn drill_position(preset: &str, mon_x: f64, mon_y: f64, mon_w: f64, mon_h: f64) 
     };
     let y = match vy {
         0 => mon_y + M,
-        2 => mon_y + mon_h - H - M,
-        _ => mon_y + (mon_h - H) / 2.0,
+        2 => mon_y + mon_h - h - M,
+        _ => mon_y + (mon_h - h) / 2.0,
     };
     (x, y)
 }
 
-/// Windows work area (excludes the taskbar), physical px: (left, top, right, bottom).
-/// None on other platforms — callers fall back to the monitor rect.
-#[cfg(target_os = "windows")]
-fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
-    let mut rect: RECT = unsafe { std::mem::zeroed() };
-    let ok = unsafe {
-        SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut core::ffi::c_void, 0)
-    };
-    (ok != 0).then_some((rect.left, rect.top, rect.right, rect.bottom))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn work_area_physical() -> Option<(i32, i32, i32, i32)> {
-    None
-}
-
-/// Current work-area bounds as physical `(left, top, right, bottom)`; falls back
-/// to the window's monitor when the OS work area is unavailable (non-Windows).
+/// Work-area bounds for the window's monitor in physical pixels:
+/// `(left, top, right, bottom)`.
 fn work_area_bounds(w: &tauri::WebviewWindow) -> Option<(i32, i32, i32, i32)> {
-    work_area_physical().or_else(|| {
-        w.current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| w.primary_monitor().ok().flatten())
-            .map(|mon| {
-                let p = mon.position();
-                let s = mon.size();
-                (p.x, p.y, p.x + s.width as i32, p.y + s.height as i32)
-            })
-    })
+    let mon = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten())?;
+    let area = mon.work_area();
+    Some((
+        area.position.x,
+        area.position.y,
+        area.position.x + area.size.width as i32,
+        area.position.y + area.size.height as i32,
+    ))
 }
 
 /// Clamp the window's top-left so its full `phys_w`×`phys_h` body stays inside
@@ -4253,7 +4471,16 @@ fn open_drill_window(
         .get("showContext")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let new_config = VocabPopupConfig {
+    let drill_height = cfg
+        .get("drillHeight")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(DRILL_H)
+        .clamp(DRILL_H_MIN, DRILL_H_MAX);
+    let popup_monitor = cfg
+        .get("popupMonitor")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let mut new_config = VocabPopupConfig {
         lang: lang.to_string(),
         cats: cats.to_vec(),
         session_size,
@@ -4263,7 +4490,38 @@ fn open_drill_window(
         position: position.to_string(),
         pos: pos_filter.to_vec(),
         show_context,
+        height: drill_height,
+        monitor: popup_monitor.to_string(),
     };
+    // Target the selected monitor, else the monitor the board is on, else the
+    // primary one.
+    let main_win = app.get_webview_window("main");
+    let mon = main_win
+        .as_ref()
+        .and_then(|w| {
+            if popup_monitor.is_empty() {
+                return None;
+            }
+            w.available_monitors()
+                .ok()
+                .and_then(|monitors| monitors.into_iter().find(|m| monitor_id(m) == popup_monitor))
+        })
+        .or_else(|| main_win.as_ref().and_then(|w| w.current_monitor().ok().flatten()))
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .ok_or("no monitor")?;
+    let scale = mon.scale_factor().max(1.0);
+    let area = mon.work_area();
+    let (bx, by, bw, bh) = (
+        area.position.x as f64 / scale,
+        area.position.y as f64 / scale,
+        area.size.width as f64 / scale,
+        area.size.height as f64 / scale,
+    );
+    let drill_height = drill_height.min((bh - 32.0).max(DRILL_H_MIN));
+    new_config.height = drill_height;
+    let (x, y) = drill_position(position, bx, by, bw, bh, drill_height);
+    let phys_x = (x * scale).round() as i32;
+    let phys_y = (y * scale).round() as i32;
     if let Some(w) = app.get_webview_window("drill") {
         // A different mode must be honoured: reload the popup so it re-reads the
         // config and rebuilds its queue. Same mode → just focus (never steal
@@ -4277,39 +4535,23 @@ fn open_drill_window(
         if !same_mode {
             *VOCAB_POPUP.lock().unwrap() = new_config;
             let _ = w.eval("location.reload()");
+        } else if focus_existing {
+            // Keep an explicitly requested Preview in sync with the settings.
+            *VOCAB_POPUP.lock().unwrap() = new_config;
         }
         if focus_existing {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_size(tauri::LogicalSize::new(DRILL_W, drill_height));
+            let _ = w.set_position(tauri::PhysicalPosition::new(phys_x, phys_y));
             let _ = w.set_focus();
         }
         return Ok("already-open");
     }
     *VOCAB_POPUP.lock().unwrap() = new_config;
-    // Placement preset on the primary monitor, converted to logical pixels.
-    let mon = app
-        .primary_monitor()
-        .map_err(|e| format!("monitor: {e}"))?
-        .ok_or("no primary monitor")?;
-    let scale = mon.scale_factor().max(1.0);
-    // Place inside the work area (excludes the Windows taskbar) so the bottom
-    // buttons aren't hidden under it; fall back to the full monitor elsewhere.
-    let (bx, by, bw, bh) = match work_area_physical() {
-        Some((l, t, r, b)) => (
-            l as f64 / scale,
-            t as f64 / scale,
-            (r - l) as f64 / scale,
-            (b - t) as f64 / scale,
-        ),
-        None => (
-            mon.position().x as f64 / scale,
-            mon.position().y as f64 / scale,
-            mon.size().width as f64 / scale,
-            mon.size().height as f64 / scale,
-        ),
-    };
-    let (x, y) = drill_position(position, bx, by, bw, bh);
     let win = WebviewWindowBuilder::new(app, "drill", WebviewUrl::App("drill.html".into()))
         .title("Vocab drill")
-        .inner_size(DRILL_W, DRILL_H)
+        .inner_size(DRILL_W, drill_height)
         .position(x, y)
         .decorations(false)
         .resizable(true)
@@ -4318,13 +4560,18 @@ fn open_drill_window(
         .focused(false)
         .build()
         .map_err(|e| format!("popup: {e}"))?;
+    let _ = win.show();
+    let _ = win.unminimize();
+    if focus_existing {
+        let _ = win.set_focus();
+    }
     // Safety net: whatever the placement math produced, never let the popup's
     // body extend past the work area (the taskbar).
     let win_scale = win.scale_factor().unwrap_or(scale);
     clamp_window_to_work_area(
         &win,
         (DRILL_W * win_scale).round() as i32,
-        (DRILL_H * win_scale).round() as i32,
+        (drill_height * win_scale).round() as i32,
     );
     Ok("opened")
 }
@@ -5287,5 +5534,64 @@ mod srs_tests {
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].en, "Hello there");
         assert_eq!(cards[0].es, "Hola");
+    }
+
+    #[test]
+    fn drill_position_uses_configured_height() {
+        let (x, y) = drill_position("bottom-right", 0.0, 0.0, 1000.0, 800.0, 560.0);
+        assert_eq!(x, 564.0);
+        assert_eq!(y, 224.0);
+
+        let (x, y) = drill_position("top-left", 0.0, 0.0, 1000.0, 800.0, 360.0);
+        assert_eq!(x, 16.0);
+        assert_eq!(y, 16.0);
+    }
+
+    #[test]
+    fn google_font_family_is_validated_and_normalized() {
+        assert_eq!(google_font_family("  Inter  ").unwrap(), "Inter");
+        assert_eq!(
+            google_font_family("Be   Vietnam Pro").unwrap(),
+            "Be Vietnam Pro"
+        );
+        assert!(google_font_family("").is_err());
+        assert!(google_font_family("Inter; drop table").is_err());
+    }
+
+    #[test]
+    fn google_font_css_urls_are_extracted_once() {
+        let css = r#"
+@font-face { src: url(https://fonts.gstatic.com/s/inter/a.woff2) format('woff2'); }
+@font-face { src: url("https://fonts.gstatic.com/s/inter/b.woff2") format('woff2'); }
+@font-face { src: url(https://example.com/c.woff2); }
+@font-face { src: url(https://fonts.gstatic.com/s/inter/a.woff2); }
+"#;
+        assert_eq!(
+            extract_css_urls(css),
+            vec![
+                "https://fonts.gstatic.com/s/inter/a.woff2".to_string(),
+                "https://fonts.gstatic.com/s/inter/b.woff2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn google_font_mime_matches_the_downloaded_file() {
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.woff2"),
+            "font/woff2"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.woff?v=1"),
+            "font/woff"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.ttf"),
+            "font/ttf"
+        );
+        assert_eq!(
+            font_mime_for_url("https://fonts.gstatic.com/s/inter/a.otf"),
+            "font/otf"
+        );
     }
 }
