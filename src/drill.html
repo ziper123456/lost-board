@@ -72,6 +72,16 @@
     border-radius: var(--radius, 8px); padding: 7px 0; font-size: 0.8rem; cursor: pointer;
   }
   .row button:hover { border-color: var(--accent, #4c4c5a); }
+  .row #btn-hide { flex: 0.72; color: var(--muted, #8b8b98); }
+  .hide-note {
+    display: flex; align-items: center; gap: 8px; margin-top: 6px;
+    font-size: 0.72rem; color: var(--muted, #8b8b98);
+  }
+  .hide-note[hidden] { display: none; }
+  .hide-note button {
+    color: var(--accent, #4c4c5a); background: transparent; border: none;
+    padding: 0; font: inherit; cursor: pointer; text-decoration: underline;
+  }
   .error { font-size: 0.78rem; color: var(--red, #d64949); margin-top: 6px; }
   .drill-progress { font-size: 0.68rem; color: var(--muted, #8b8b98); margin-top: 4px; }
 
@@ -198,8 +208,10 @@
   <div class="drill-progress" id="progress"></div>
   <div class="row">
     <button id="btn-reveal" title="Show answer immediately">Show answer</button>
+    <button id="btn-hide" title="Not useful — hide from future drills">Hide</button>
     <button id="btn-next" title="Next card (skips this one if not answered yet)">Next ›</button>
   </div>
+  <div class="hide-note" id="hide-note" hidden></div>
   <div class="error" id="error"></div>
 <script src="lyrics.js"></script>
 <script src="conjugate.js"></script>
@@ -227,7 +239,53 @@
   const learnEl = document.getElementById("learn");
   const detailEl = document.getElementById("detail");
   const answerWrap = document.querySelector(".answer");
+  const hideBtn = document.getElementById("btn-hide");
+  const hideNoteEl = document.getElementById("hide-note");
   const close = () => invoke("close_vocab_popup").catch(() => window.close());
+
+  function showHiddenUndo(card) {
+    clearTimeout(hideUndoTimer);
+    hideNoteEl.innerHTML = `<span>Hidden from future drills.</span><button id="btn-undo-hide">Undo</button>`;
+    hideNoteEl.hidden = false;
+    hideNoteEl.querySelector("#btn-undo-hide").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        await invoke("vocab_set_hidden", { card, hidden: false });
+        hideNoteEl.hidden = true;
+        hideNoteEl.innerHTML = "";
+      } catch (err) {
+        errorEl.textContent = `Couldn't restore card: ${err.message || err}`;
+      }
+    });
+    hideUndoTimer = setTimeout(() => {
+      hideNoteEl.hidden = true;
+      hideNoteEl.innerHTML = "";
+    }, 8000);
+  }
+
+  async function hideCurrent() {
+    if (hiding || !queue[idx]) return;
+    const item = queue[idx];
+    const card = item.card;
+    hiding = true;
+    hideBtn.disabled = true;
+    try {
+      await invoke("vocab_set_hidden", { card, hidden: true });
+      errorEl.textContent = "";
+      showHiddenUndo(card);
+      queue = queue.filter((x) => x.card.id !== card.id);
+      if (idx >= queue.length) {
+        close();
+        return;
+      }
+      renderCard();
+    } catch (err) {
+      errorEl.textContent = `Couldn't hide card: ${err.message || err}`;
+    } finally {
+      hiding = false;
+      hideBtn.disabled = false;
+    }
+  }
 
   let mode = "review";        // "review" (graded) | "practice" (never graded)
   let lang = "es";
@@ -249,6 +307,8 @@
   let cardId = "";
   let sessionDue = 0;         // snapshot fetched once per session (not per card)
   let sessionStats = null;
+  let hiding = false;
+  let hideUndoTimer = 0;
 
   // Keep the session aggregate in step with the current card after a review.
   function adjustSessionStats(before, next) {
@@ -795,6 +855,7 @@
   // Next always advances: if the answer is already correct this is the same as
   // Enter's next step; otherwise it skips the current (ungraded) card.
   document.getElementById("btn-next").addEventListener("click", advance);
+  hideBtn.addEventListener("click", hideCurrent);
 
   boot();
 </script>

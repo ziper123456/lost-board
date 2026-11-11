@@ -637,6 +637,16 @@ async openFolder(path) {
   async vocabSetSrs(enabled) {
     if (window.__TAURI__) return invoke("vocab_set_srs", { enabled });
   },
+  async vocabSetHidden(card, hidden) {
+    if (window.__TAURI__) return invoke("vocab_set_hidden", { card, hidden: hidden === true });
+  },
+  async vocabHiddenList() {
+    if (window.__TAURI__) return invoke("vocab_hidden_list");
+    return [];
+  },
+  async vocabClearHidden() {
+    if (window.__TAURI__) return invoke("vocab_clear_hidden");
+  },
   async vocabSrsEnabled() {
     if (window.__TAURI__) return invoke("vocab_srs_enabled");
     return false;
@@ -7151,6 +7161,92 @@ function renderVocabSettings() {
 
   const statusEl = actions.querySelector("#vocab-status");
 
+  const hiddenRow = document.createElement("div");
+  hiddenRow.className = "item-row";
+  hiddenRow.innerHTML = `<label>Hidden cards</label><span id="vocab-hidden-count" class="muted">loading…</span>
+    <button class="btn ghost" id="vocab-hidden-toggle">Show list</button>
+    <button class="btn ghost danger" id="vocab-hidden-clear" disabled>Restore all</button>`;
+  panel.appendChild(hiddenRow);
+  const hiddenBox = document.createElement("div");
+  hiddenBox.className = "vocab-hidden-list";
+  hiddenBox.hidden = true;
+  panel.appendChild(hiddenBox);
+  const hiddenCountEl = hiddenRow.querySelector("#vocab-hidden-count");
+  const hiddenToggle = hiddenRow.querySelector("#vocab-hidden-toggle");
+  const hiddenClear = hiddenRow.querySelector("#vocab-hidden-clear");
+  let hiddenCards = [];
+
+  const renderHiddenCards = () => {
+    hiddenCountEl.textContent = `${hiddenCards.length} hidden`;
+    hiddenClear.disabled = hiddenCards.length === 0;
+    hiddenToggle.textContent = hiddenBox.hidden ? "Show list" : "Hide list";
+    if (!hiddenCards.length) {
+      hiddenBox.innerHTML = `<span class="muted">No hidden cards.</span>`;
+      return;
+    }
+    hiddenBox.innerHTML = hiddenCards
+      .map((card) => {
+        const cats = (card.cats || []).map((c) => (c === LYRICS_CAT ? "Lyrics" : c)).join(", ");
+        const answers = [card.es, card.de].filter(Boolean).join(" · ");
+        return `<div class="vocab-hidden-row">
+          <span class="vocab-hidden-text" title="${escapeHtml(card.en)}"><b>${escapeHtml(card.en)}</b>${answers ? ` <span class="muted">→ ${escapeHtml(answers)}</span>` : ""}${cats ? ` <span class="muted">· ${escapeHtml(cats)}</span>` : ""}</span>
+          <button class="btn ghost" data-hidden-id="${escapeHtml(card.id)}">Restore</button>
+        </div>`;
+      })
+      .join("");
+    hiddenBox.querySelectorAll("[data-hidden-id]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const card = hiddenCards.find((x) => x.id === btn.dataset.hiddenId);
+        if (!card) return;
+        btn.disabled = true;
+        try {
+          await native.vocabSetHidden(card, false);
+          hiddenCards = hiddenCards.filter((x) => x.id !== card.id);
+          renderHiddenCards();
+          loadStats();
+          loadCategoryStats();
+          render();
+        } catch (err) {
+          btn.disabled = false;
+          hiddenCountEl.textContent = `restore failed: ${err.message || err}`;
+        }
+      });
+    });
+  };
+  const loadHiddenCards = async () => {
+    try {
+      hiddenCards = (await native.vocabHiddenList()) || [];
+    } catch {
+      hiddenCards = [];
+    }
+    renderHiddenCards();
+  };
+  hiddenToggle.addEventListener("click", () => {
+    hiddenBox.hidden = !hiddenBox.hidden;
+    renderHiddenCards();
+  });
+  hiddenClear.addEventListener("click", (e) => {
+    if (!hiddenCards.length) return;
+    showConfirmPopup(`Restore all ${hiddenCards.length} hidden cards?`, {
+      x: e.clientX,
+      y: e.clientY,
+      confirmLabel: "Restore all",
+      onConfirm: async () => {
+        try {
+          await native.vocabClearHidden();
+          hiddenCards = [];
+          renderHiddenCards();
+          loadStats();
+          loadCategoryStats();
+          render();
+        } catch (err) {
+          hiddenCountEl.textContent = `restore failed: ${err.message || err}`;
+        }
+      },
+    });
+  });
+  void loadHiddenCards();
+
   if (comp) {
     panel.querySelector("#vocab-select").addEventListener("change", (e) => {
       selectedVocabId = e.target.value;
@@ -7348,6 +7444,7 @@ function renderVocabSettings() {
     }
     loadStats();
     loadCategoryStats();
+    if (hiddenBox.hidden) void loadHiddenCards();
   }, 2000);
   const srsChk = srsRow.querySelector("#vocab-srs");
   const srsStatus = srsRow.querySelector("#vocab-srs-status");

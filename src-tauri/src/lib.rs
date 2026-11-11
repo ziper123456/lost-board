@@ -3026,6 +3026,9 @@ pub fn run() {
             vocab_practice_batch,
             vocab_lyrics_batch,
             lyrics_phrase_count,
+            vocab_set_hidden,
+            vocab_hidden_list,
+            vocab_clear_hidden,
             vocab_record_review,
             vocab_due_count,
             vocab_reset_srs,
@@ -3154,13 +3157,25 @@ fn autostart_enabled(app: tauri::AppHandle) -> Result<bool, String> {
 // the state file under `vocab.snoozeUntil` so restarts stay snoozed.
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct VocabCard {
     id: String,
     en: String,
     es: String,
     de: String,
     cats: Vec<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct HiddenCard {
+    id: String,
+    en: String,
+    es: String,
+    de: String,
+    #[serde(default)]
+    cats: Vec<String>,
+    #[serde(default)]
+    hidden_at: u64,
 }
 
 /// Optional per-card enrichment (usage examples, gender/article, plural, POS).
@@ -3454,9 +3469,12 @@ fn read_vocab_cards(
     }
     use rand::seq::SliceRandom;
     let mut rng = rand::thread_rng();
+    let hidden = hidden_ids(&app);
     let mut idx: Vec<usize> = (0..all.len())
         .filter(|&i| {
-            categories.is_empty() || all[i].cats.iter().any(|c| categories.contains(c))
+            !hidden.contains(&all[i].id)
+                && (categories.is_empty()
+                    || all[i].cats.iter().any(|c| categories.contains(c)))
         })
         .collect();
     if idx.is_empty() {
@@ -3476,8 +3494,9 @@ fn read_vocab_cards(
 #[tauri::command]
 fn vocab_categories(app: tauri::AppHandle) -> Result<Vec<VocabCategory>, String> {
     let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let hidden = hidden_ids(&app);
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for card in all.iter() {
+    for card in all.iter().filter(|c| !hidden.contains(&c.id)) {
         for c in card.cats.iter() {
             *counts.entry(c.clone()).or_insert(0) += 1;
         }
@@ -3494,29 +3513,24 @@ struct VocabPos {
     count: usize,
 }
 
-static VOCAB_POS_COUNTS: std::sync::OnceLock<Vec<VocabPos>> = std::sync::OnceLock::new();
-
 /// Per-part-of-speech card counts (from enrichment), in a fixed display order.
-/// Cached — the enrichment set is immutable at runtime.
 #[tauri::command]
 fn vocab_pos_counts(app: tauri::AppHandle) -> Result<Vec<VocabPos>, String> {
-    let counts = VOCAB_POS_COUNTS.get_or_init(|| {
-        const ORDER: [&str; 6] = ["noun", "verb", "adjective", "adverb", "phrase", "other"];
-        let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
-        let details = card_details(&app);
-        let mut counts = [0usize; 6];
-        for c in all.iter() {
-            let pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
-            let i = ORDER.iter().position(|p| *p == pos).unwrap_or(5);
-            counts[i] += 1;
-        }
-        ORDER
-            .iter()
-            .enumerate()
-            .map(|(i, p)| VocabPos { pos: (*p).to_string(), count: counts[i] })
-            .collect()
-    });
-    Ok(counts.clone())
+    const ORDER: [&str; 6] = ["noun", "verb", "adjective", "adverb", "phrase", "other"];
+    let all = VOCAB.get_or_init(|| load_vocab_cards(&app));
+    let details = card_details(&app);
+    let hidden = hidden_ids(&app);
+    let mut counts = [0usize; 6];
+    for c in all.iter().filter(|c| !hidden.contains(&c.id)) {
+        let pos = details.get(&c.id).map(|d| d.pos.as_str()).unwrap_or("other");
+        let i = ORDER.iter().position(|p| *p == pos).unwrap_or(5);
+        counts[i] += 1;
+    }
+    Ok(ORDER
+        .iter()
+        .enumerate()
+        .map(|(i, p)| VocabPos { pos: (*p).to_string(), count: counts[i] })
+        .collect())
 }
 
 fn read_vocab_section(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
@@ -3600,6 +3614,52 @@ fn srs_map(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value>
         .unwrap_or_default()
 }
 
+fn hidden_map(app: &tauri::AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    read_vocab_section(app)
+        .get("hidden")
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default()
+}
+
+fn hidden_ids(app: &tauri::AppHandle) -> std::collections::HashSet<String> {
+    hidden_map(app).keys().cloned().collect()
+}
+
+/// Hide or restore a card. Hidden cards are excluded from drills and stats but
+/// keep their SRS state, so restoring them resumes the previous schedule.
+#[tauri::command]
+fn vocab_set_hidden(app: tauri::AppHandle, mut card: HiddenCard, hidden: bool) -> Result<(), String> {
+    let mut map = hidden_map(&app);
+    if hidden {
+        card.hidden_at = now_secs();
+        map.insert(
+            card.id.clone(),
+            serde_json::to_value(card).map_err(|e| format!("serialize hidden card: {e}"))?,
+        );
+    } else {
+        map.remove(&card.id);
+    }
+    write_vocab_keys(&app, &[("hidden", serde_json::Value::Object(map))])
+}
+
+#[tauri::command]
+fn vocab_hidden_list(app: tauri::AppHandle) -> Result<Vec<HiddenCard>, String> {
+    let mut cards: Vec<HiddenCard> = hidden_map(&app)
+        .into_values()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    cards.sort_by(|a, b| b.hidden_at.cmp(&a.hidden_at));
+    Ok(cards)
+}
+
+#[tauri::command]
+fn vocab_clear_hidden(app: tauri::AppHandle) -> Result<(), String> {
+    write_vocab_keys(
+        &app,
+        &[("hidden", serde_json::Value::Object(serde_json::Map::new()))],
+    )
+}
+
 fn srs_enabled(app: &tauri::AppHandle) -> bool {
     read_vocab_section(app)
         .get("srsEnabled")
@@ -3677,7 +3737,7 @@ fn pos_passes(pos: &[String], card_pos: Option<&str>) -> bool {
             .unwrap_or(false)
 }
 
-/// Category filter AND part-of-speech filter (both empty = all). POS comes from
+/// Category, POS and hidden filters (empty category/POS = all). POS comes from
 /// the enrichment map, which is only loaded when a POS filter is active — so
 /// empty-filter calls (e.g. the tile's due count) stay cheap.
 fn vocab_filtered<'a>(
@@ -3686,7 +3746,11 @@ fn vocab_filtered<'a>(
     categories: &[String],
     pos: &[String],
 ) -> Vec<&'a VocabCard> {
-    let base = vocab_matching(all, categories);
+    let hidden = hidden_ids(app);
+    let base: Vec<&VocabCard> = vocab_matching(all, categories)
+        .into_iter()
+        .filter(|c| !hidden.contains(&c.id))
+        .collect();
     if pos.is_empty() {
         return base;
     }
@@ -4044,7 +4108,11 @@ fn lyrics_phrase_count(app: tauri::AppHandle, lang: String) -> Result<usize, Str
     backfill_translation_sources(&app);
     let source_sets = lyric_source_sets();
     let entries = translation_cache().lock().unwrap().clone();
-    Ok(collect_lyric_cards(&source_sets, &entries, &lang).len())
+    let hidden = hidden_ids(&app);
+    Ok(collect_lyric_cards(&source_sets, &entries, &lang)
+        .into_iter()
+        .filter(|c| !hidden.contains(&c.id))
+        .count())
 }
 
 /// Random, ungraded lyric phrase cards (session-sized by the caller).
@@ -4060,6 +4128,8 @@ fn vocab_lyrics_batch(
     let source_sets = lyric_source_sets();
     let entries = translation_cache().lock().unwrap().clone();
     let mut cards = collect_lyric_cards(&source_sets, &entries, &lang);
+    let hidden = hidden_ids(&app);
+    cards.retain(|c| !hidden.contains(&c.id));
     use rand::seq::SliceRandom;
     cards.shuffle(&mut rand::thread_rng());
     if limit > 0 && cards.len() > limit {
@@ -4851,7 +4921,7 @@ fn preserve_rust_vocab_keys(state_json: &str, existing: &str) -> String {
                 .entry("vocab")
                 .or_insert(serde_json::Value::Object(serde_json::Map::new()));
             if let Some(vobj) = vocab.as_object_mut() {
-                for k in ["srs", "srsEnabled", "snoozeUntil", "lastPopupAt"] {
+                for k in ["srs", "srsEnabled", "snoozeUntil", "lastPopupAt", "hidden"] {
                     if let Some(val) = old_vocab.get(k) {
                         vobj.insert(k.to_string(), val.clone());
                     }
@@ -5190,12 +5260,13 @@ mod srs_tests {
     fn preserves_rust_vocab_keys_on_save() {
         // Main-window payload lacks srs/srsEnabled; the on-disk file has them.
         let payload = r#"{"columns":12,"compartments":[],"vocab":{"enabled":true,"everyMin":30}}"#;
-        let existing = r#"{"columns":12,"compartments":[],"vocab":{"srs":{"a":{"due":5,"ivl":1,"ease":2.5,"reps":1,"lapses":0}},"srsEnabled":true,"snoozeUntil":99}}"#;
+        let existing = r#"{"columns":12,"compartments":[],"vocab":{"srs":{"a":{"due":5,"ivl":1,"ease":2.5,"reps":1,"lapses":0}},"srsEnabled":true,"snoozeUntil":99,"hidden":{"a":{"id":"a","en":"x","es":"","de":"","cats":[],"hidden_at":1}}}}"#;
         let merged = preserve_rust_vocab_keys(payload, existing);
         let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["vocab"]["srs"]["a"]["due"].as_u64(), Some(5));
         assert_eq!(v["vocab"]["srsEnabled"].as_bool(), Some(true));
         assert_eq!(v["vocab"]["snoozeUntil"].as_u64(), Some(99));
+        assert_eq!(v["vocab"]["hidden"]["a"]["id"].as_str(), Some("a"));
         assert_eq!(v["vocab"]["enabled"].as_bool(), Some(true)); // payload's own key kept
         assert_eq!(v["vocab"]["everyMin"].as_u64(), Some(30));
     }
