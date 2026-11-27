@@ -1064,8 +1064,9 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
 .sp-search-backdrop {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 55%, #000);
-  backdrop-filter: blur(4px);
+  /* Light enough to keep the now-playing screen visible behind the palette.
+     color-mix against #000 would be opaque and hide the whole app. */
+  background: color-mix(in srgb, var(--bg) 26%, transparent);
 }
 .sp-search-panel {
   position: relative;
