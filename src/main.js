@@ -188,9 +188,11 @@ function applyAppearance() {
     boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${from}, ${to})`;
   } else if (d.bgFrom && d.bgTo) {
     boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})`;
-  } else if (state.theme === "cozy") {
+  } else if (!d.bg && state.theme === "cozy") {
     // A soft paper wash instead of a flat fill. It stays a single gradient so
     // the drill popup can paint it as a background image layer unchanged.
+    // An explicit Board-colour override (d.bg) still wins and falls through to
+    // var(--bg), matching the "overrides take priority" theme hint.
     boardBg = "radial-gradient(1200px 900px at 50% -15%, #FFFAF2 0%, #F5EBDD 55%, #F1E4D3 100%)";
   } else {
     boardBg = "var(--bg)";
@@ -1643,17 +1645,22 @@ function showSlot(n) {
   const tabs = viewTabsConfig();
   const slot = tabs.slots[Number(n) - 1];
   if (!slot || !slot.app || !APPS[slot.app]) return false;
-  const previous = tabs.slots[tabs.active - 1];
-  if (previous && previous.app && previous.app !== "board") {
+  // Unmount the app that is actually mounted, not the one recorded in the
+  // active slot: Settings can rewrite slot.app before calling showSlot (e.g.
+  // clearing the active slot), which would otherwise skip unmount and leak the
+  // app's nested timers (lyrics polling, playback subscriptions).
+  const mounted = appViewEl.dataset.appId || "";
+  if (mounted && mounted !== "board" && APPS[mounted]) {
     try {
-      APPS[previous.app]?.unmount?.(appViewEl, appContext());
+      APPS[mounted].unmount?.(appViewEl, appContext());
     } catch (e) {
-      console.error(`Failed to unmount app "${previous.app}"`, e);
+      console.error(`Failed to unmount app "${mounted}"`, e);
     }
   }
   clearBodyTimers(appViewEl);
   tabs.active = slot.slot;
   if (slot.app === "board") {
+    delete appViewEl.dataset.appId;
     appViewEl.innerHTML = "";
     appViewEl.hidden = true;
     appBarEl.hidden = true;
@@ -1668,6 +1675,7 @@ function showSlot(n) {
     appViewEl.innerHTML = "";
     appBarEl.hidden = false;
     appBarHotspot.hidden = true;
+    appViewEl.dataset.appId = slot.app;
     document.documentElement.dataset.view = "app";
     try {
       APPS[slot.app].mount?.(appViewEl, appContext());
@@ -6801,37 +6809,45 @@ function renderSpotifyAppSettings(panel) {
   const lyricsFontVal = row.querySelector("#sp-lyrics-font-val");
   const lyricsHeightVal = row.querySelector("#sp-lyrics-h-val");
   const splitVal = row.querySelector("#sp-split-val");
+  // Apply live, but debounce the IPC save so dragging a slider doesn't write
+  // the whole state file on every pixel (matches the Design tab).
+  let saveT = 0;
+  const scheduleSave = () => {
+    clearTimeout(saveT);
+    saveT = setTimeout(saveState, 300);
+  };
   font.addEventListener("input", (e) => {
     s.fontBase = Number(e.target.value);
     fontVal.textContent = `${s.fontBase}px`;
     applySpotifyAppSettings();
-    saveState();
+    scheduleSave();
   });
   vinyl.addEventListener("input", (e) => {
     s.vinyl = Number(e.target.value);
     vinylVal.textContent = `${s.vinyl}px`;
     applySpotifyAppSettings();
-    saveState();
+    scheduleSave();
   });
   lyricsFont.addEventListener("input", (e) => {
     s.lyricsFont = Number(e.target.value);
     lyricsFontVal.textContent = `${s.lyricsFont}px`;
     applySpotifyAppSettings();
-    saveState();
+    scheduleSave();
   });
   lyricsHeight.addEventListener("input", (e) => {
     s.lyricsHeight = Number(e.target.value);
     lyricsHeightVal.textContent = `${s.lyricsHeight}px`;
     applySpotifyAppSettings();
-    saveState();
+    scheduleSave();
   });
   split.addEventListener("input", (e) => {
     s.split = Number(e.target.value);
     splitVal.textContent = `${s.split}%`;
     applySpotifyAppSettings();
-    saveState();
+    scheduleSave();
   });
   row.querySelector("#sp-reset").addEventListener("click", () => {
+    clearTimeout(saveT);
     s.fontBase = 16;
     s.vinyl = 320;
     s.lyricsFont = 16;

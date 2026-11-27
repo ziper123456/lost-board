@@ -355,20 +355,23 @@
     async function jumpQueueItem(item) {
       if (!item || !item.uri) return;
       try {
+        // A queue can contain autoplay/radio tracks that are not part of the
+        // current context, so a context jump may be refused. Fall back to
+        // playing the clicked URI directly instead of skipping once (which
+        // would advance to the next track rather than the chosen one).
         if (current && current.context_uri) {
-          await ctx.native.spotifyJump(current.context_uri, item.uri);
+          try {
+            await ctx.native.spotifyJump(current.context_uri, item.uri);
+          } catch {
+            await ctx.native.spotifyPlayUri(item.uri);
+          }
         } else {
-          await ctx.native.spotifySkip(true);
+          await ctx.native.spotifyPlayUri(item.uri);
         }
         await refreshNow();
         void loadQueue();
-      } catch {
-        try {
-          await ctx.native.spotifySkip(true);
-          await refreshNow();
-        } catch (e) {
-          showStatus(`Playback: ${e.message || e}`);
-        }
+      } catch (e) {
+        showStatus(`Playback: ${e.message || e}`);
       }
     }
 
