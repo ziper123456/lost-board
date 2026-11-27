@@ -1989,10 +1989,10 @@ LIMIT 40"#
             format!("https://www.youtube.com/channel/{youtube}"),
         );
     }
+    drop(push_link);
     if links.is_empty() && summary.is_empty() {
         return Ok(None);
     }
-    drop(push_link);
 
     Ok(Some(ArtistWebInfo {
         summary,
