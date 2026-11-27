@@ -1540,6 +1540,7 @@ input[type="color"]:hover { border-color: var(--accent); }
   z-index: 90;
   display: flex;
   align-items: center;
+  justify-content: center;
   padding: 0 12px;
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   border-bottom: 1px solid var(--border);
@@ -1552,6 +1553,8 @@ input[type="color"]:hover { border-color: var(--accent); }
   align-items: center;
   gap: 4px;
   min-width: 0;
+  max-width: 100%;
+  margin-inline: auto;
   overflow-x: auto;
   scrollbar-width: none;
 }
