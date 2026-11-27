@@ -224,21 +224,20 @@
 }
 .sp-link-btn:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
-.sp-device-row {
+.sp-volume-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
   color: var(--muted);
   font-size: 0.76em;
 }
-.sp-device-label { flex: 0 0 auto; }
-.sp-device {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 260px;
-  padding: 4px 8px;
-  font-size: 0.76em;
+.sp-volume-icon { flex: 0 0 auto; display: inline-flex; }
+.sp-vol { flex: 1 1 auto; min-width: 0; width: auto; accent-color: var(--accent); }
+.sp-vol-value {
+  flex: 0 0 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- progress / controls ---- */
@@ -289,6 +288,7 @@
 .sp-controls {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   flex: 0 0 auto;
   flex-wrap: wrap;
@@ -319,16 +319,6 @@
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 .sp-play-main:hover { background: color-mix(in srgb, var(--accent) 88%, #000); color: #fff; }
-.sp-volume {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-left: auto;
-  color: var(--muted);
-  min-width: 120px;
-}
-.sp-vol { width: 120px; accent-color: var(--accent); }
-
 .sp-status {
   min-height: 1.1em;
   color: var(--muted);

@@ -16,7 +16,6 @@
   const REPEAT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
   const VOLUME = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>`;
   const EXTERNAL = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="m21 3-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>`;
-  const REFRESH = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>`;
   const GEAR = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`;
 
   function fmtTime(ms) {
@@ -85,10 +84,10 @@
             <div class="sp-artist-line"></div>
             <div class="sp-album"></div>
           </div>
-          <div class="sp-device-row">
-            <span class="sp-device-label">Playing on</span>
-            <select class="sp-device" aria-label="Playback device"></select>
-            <button class="sp-link-btn sp-device-refresh" title="Refresh devices">${REFRESH}</button>
+          <div class="sp-volume-row">
+            <span class="sp-volume-icon" aria-hidden="true">${VOLUME}</span>
+            <input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" />
+            <span class="sp-vol-value">50%</span>
           </div>
           <div class="sp-progress-wrap">
             <span class="sp-time sp-cur">0:00</span>
@@ -101,7 +100,6 @@
             <button class="sp-ctl sp-play sp-play-main" title="Play/Pause">${PLAY}</button>
             <button class="sp-ctl sp-next" title="Next">${NEXT}</button>
             <button class="sp-ctl sp-repeat" title="Repeat">${REPEAT}</button>
-            <div class="sp-volume">${VOLUME}<input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" /></div>
           </div>
           <div class="sp-status" role="status"></div>
           <section class="sp-queue-panel">
@@ -150,7 +148,6 @@
     const playBtn = container.querySelector(".sp-play");
     const shuffleBtn = container.querySelector(".sp-shuffle");
     const repeatBtn = container.querySelector(".sp-repeat");
-    const deviceSelect = container.querySelector(".sp-device");
     const statusEl = container.querySelector(".sp-status");
     const curEl = container.querySelector(".sp-cur");
     const durEl = container.querySelector(".sp-dur");
@@ -169,6 +166,7 @@
     const aboutBio = container.querySelector(".sp-about-bio");
     const aboutLinks = container.querySelector(".sp-about-links");
     const volEl = container.querySelector(".sp-vol");
+    const volValue = container.querySelector(".sp-vol-value");
     const lyricsHost = container.querySelector(".sp-lyrics-host");
 
     const run = String(Date.now()) + Math.random();
@@ -296,33 +294,16 @@
       if (alive()) applyTrack(track);
     }
 
-    async function loadDevices() {
-      let devices = [];
+    async function syncVolume() {
       try {
-        devices = (await ctx.native.spotifyDevices()) || [];
-      } catch (e) {
-        if (alive()) showStatus(`Devices: ${e.message || e}`);
-      }
-      if (!alive()) return;
-      deviceSelect.innerHTML = "";
-      if (!devices.length) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "No active device";
-        deviceSelect.appendChild(opt);
-        deviceSelect.disabled = true;
-        return;
-      }
-      deviceSelect.disabled = false;
-      for (const device of devices) {
-        const opt = document.createElement("option");
-        opt.value = device.id || "";
-        opt.textContent = `${device.name || device.device_type || "Device"}${device.device_type ? ` · ${device.device_type}` : ""}`;
-        if (device.active) opt.selected = true;
-        deviceSelect.appendChild(opt);
-        if (device.active && device.volume_percent != null) {
-          volEl.value = String(device.volume_percent);
+        const devices = (await ctx.native.spotifyDevices()) || [];
+        const active = devices.find((device) => device.active) || devices[0];
+        if (active && active.volume_percent != null) {
+          volEl.value = String(active.volume_percent);
+          if (volValue) volValue.textContent = `${active.volume_percent}%`;
         }
+      } catch {
+        // Volume still works through the slider; no need to surface device errors.
       }
     }
 
@@ -600,27 +581,15 @@
         showStatus(`Repeat: ${e.message || e}`);
       }
     });
+    volEl.addEventListener("input", () => {
+      if (volValue) volValue.textContent = `${volEl.value}%`;
+    });
     volEl.addEventListener("change", async () => {
       try {
         await ctx.native.spotifyVolume(Number(volEl.value));
       } catch (e) {
         showStatus(`Volume: ${e.message || e}`);
       }
-    });
-    deviceSelect.addEventListener("change", async () => {
-      if (!deviceSelect.value) return;
-      try {
-        await ctx.native.spotifyTransfer(deviceSelect.value, true);
-        await new Promise((resolve) => setTimeout(resolve, 350));
-        await loadDevices();
-        await refreshNow();
-      } catch (e) {
-        showStatus(`Device: ${e.message || e}`);
-      }
-    });
-    container.querySelector(".sp-device-refresh").addEventListener("click", () => {
-      void loadDevices();
-      void refreshNow();
     });
     container.querySelector(".sp-lyrics-settings").addEventListener("click", () => ctx.openSettings("lyrics"));
     openContextBtn.addEventListener("click", () => openSpotify(current && current.context_uri));
@@ -712,7 +681,7 @@
     }, 250));
     ctx.addTimer(container, () => clearTimeout(statusTimer));
 
-    void loadDevices();
+    void syncVolume();
     void refreshNow();
   }
 
