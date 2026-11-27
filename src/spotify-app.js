@@ -468,15 +468,15 @@
           })
         );
       }
-      for (const item of queueItems.slice(0, 5)) {
-        coverRack.appendChild(
-          coverButton({
-            image: item.art || "",
-            title: `Play ${item.title || "next track"}`,
-            className: "sp-cover-next",
-            onClick: () => void jumpQueueItem(item),
-          })
-        );
+      for (const [index, item] of queueItems.slice(0, 5).entries()) {
+        const cover = coverButton({
+          image: item.art || "",
+          title: `Play ${item.title || "next track"}`,
+          className: `sp-cover-next${index === 0 ? " sp-cover-next-first" : ""}`,
+          onClick: () => void jumpQueueItem(item),
+        });
+        cover.style.setProperty("--sp-cover-z", String(6 - index));
+        coverRack.appendChild(cover);
       }
       coverRack.hidden = !coverRack.children.length;
     }
