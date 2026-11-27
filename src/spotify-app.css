@@ -524,7 +524,18 @@
   min-height: 0;
   overflow: hidden;
   padding: 8px 12px 10px;
-  font-size: var(--sp-lyrics-font, 1em);
+}
+/* Only actual lyric lines follow the lyrics font setting; the delay/retry/
+   Full/Focus controls and status messages keep the app font size. */
+.sp-lyrics-host .lyr-line {
+  font-size: var(--sp-lyrics-font, 0.82em);
+}
+.sp-lyrics-host .lyr-lines.focus .lyr-line.prev,
+.sp-lyrics-host .lyr-lines.focus .lyr-line.next {
+  font-size: calc(var(--sp-lyrics-font, 0.82em) * var(--lyr-context-scale, 0.85));
+}
+.sp-lyrics-host .lyr-tr {
+  font-size: calc(var(--sp-lyrics-font, 0.82em) * 0.85);
 }
 .sp-lyrics-host .lyr-wrap { height: 100%; }
 .sp-lyrics-host .lyr-track { display: none; }
