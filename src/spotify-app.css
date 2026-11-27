@@ -246,8 +246,8 @@
 .sp-sleeve {
   position: absolute;
   left: 1.25%;
-  top: 11%;
-  width: 56.9%;
+  top: 4.2%;
+  width: 66.9%;
   aspect-ratio: 1;
   border-radius: 10px;
   overflow: hidden;
@@ -581,10 +581,12 @@
 }
 .sp-play-main:hover { background: color-mix(in srgb, var(--accent) 88%, #000); color: #fff; }
 .sp-status {
-  min-height: 1.1em;
   color: var(--muted);
   font-size: 0.74em;
 }
+/* Collapse the transient status/error line when there is nothing to report so
+   it doesn't reserve an empty gap between the controls and the queue. */
+.sp-status:empty { display: none; }
 .sp-status.is-error { color: var(--red); }
 
 /* ---- about + top tracks ---- */
