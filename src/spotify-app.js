@@ -74,22 +74,26 @@
             </div>
             <div class="sp-tonearm"><span class="sp-tonearm-base"></span><span class="sp-tonearm-arm"></span></div>
           </div>
-          <div class="sp-meta">
-            <div class="sp-kicker">
-              <span class="sp-context-type"></span>
-              <button class="sp-link-btn sp-open-context" title="Open current playlist/album in Spotify" hidden>${EXTERNAL}</button>
+          <div class="sp-head">
+            <div class="sp-head-main">
+              <div class="sp-meta">
+                <div class="sp-kicker">
+                  <span class="sp-context-type"></span>
+                </div>
+                <div class="sp-title-row">
+                  <h1 class="sp-title">Nothing playing</h1>
+                  <button class="sp-link-btn sp-open-track" title="Open current track in Spotify" hidden>${EXTERNAL}</button>
+                </div>
+                <div class="sp-artist-line"></div>
+                <div class="sp-album"></div>
+              </div>
+              <div class="sp-volume-row">
+                <span class="sp-volume-icon" aria-hidden="true">${VOLUME}</span>
+                <input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" />
+                <span class="sp-vol-value">50%</span>
+              </div>
             </div>
-            <div class="sp-title-row">
-              <h1 class="sp-title">Nothing playing</h1>
-              <button class="sp-link-btn sp-open-track" title="Open current track in Spotify" hidden>${EXTERNAL}</button>
-            </div>
-            <div class="sp-artist-line"></div>
-            <div class="sp-album"></div>
-          </div>
-          <div class="sp-volume-row">
-            <span class="sp-volume-icon" aria-hidden="true">${VOLUME}</span>
-            <input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" />
-            <span class="sp-vol-value">50%</span>
+            <div class="sp-cover-rack" aria-label="Current playlist and next tracks" hidden></div>
           </div>
           <div class="sp-progress-wrap">
             <span class="sp-time sp-cur">0:00</span>
@@ -157,7 +161,6 @@
     const artistEl = container.querySelector(".sp-artist-line");
     const albumEl = container.querySelector(".sp-album");
     const contextEl = container.querySelector(".sp-context-type");
-    const openContextBtn = container.querySelector(".sp-open-context");
     const openTrackBtn = container.querySelector(".sp-open-track");
     const playBtn = container.querySelector(".sp-play");
     const shuffleBtn = container.querySelector(".sp-shuffle");
@@ -169,6 +172,7 @@
     const fillEl = container.querySelector(".sp-progress-fill");
     const queueList = container.querySelector(".sp-queue-list");
     const queueCount = container.querySelector(".sp-queue-count");
+    const coverRack = container.querySelector(".sp-cover-rack");
     const aboutPanel = container.querySelector(".sp-about-panel");
     const splitter = container.querySelector(".sp-splitter");
     const topTracksPanel = container.querySelector(".sp-top-tracks");
@@ -203,6 +207,10 @@
     let playlists = null;
     let playlistsLoading = false;
     let drawerHideTimer = 0;
+    let queueItems = [];
+    let contextKey = "";
+    let contextInfo = null;
+    const contextCache = new Map();
 
     function showStatus(message) {
       statusEl.textContent = message || "";
@@ -260,7 +268,6 @@
         artistEl.textContent = "";
         albumEl.textContent = "";
         contextEl.textContent = "";
-        openContextBtn.hidden = true;
         openTrackBtn.hidden = true;
         paintArt("");
         playing = false;
@@ -271,6 +278,10 @@
         aboutPanel.hidden = true;
         lastArtistId = "";
         lastQueueKey = "";
+        queueItems = [];
+        contextKey = "";
+        contextInfo = null;
+        renderCoverRack();
         queueList.innerHTML = `<div class="sp-empty-row">Queue is unavailable while nothing is playing.</div>`;
         queueCount.textContent = "";
         updateProgress();
@@ -287,7 +298,6 @@
       artistEl.textContent = track.artist || "";
       albumEl.textContent = track.album || "";
       contextEl.textContent = track.context_type ? track.context_type.toUpperCase() : "";
-      openContextBtn.hidden = !track.context_uri;
       openTrackBtn.hidden = !track.uri;
       paintArt(track.art);
       playBtn.innerHTML = playing ? PAUSE : PLAY;
@@ -297,6 +307,22 @@
       repeatBtn.classList.toggle("is-on", track.repeat && track.repeat !== "off");
       repeatBtn.title = track.repeat === "track" ? "Repeat one" : `Repeat: ${track.repeat || "off"}`;
       updateProgress();
+
+      if (track.context_uri && track.context_uri !== contextKey) {
+        contextKey = track.context_uri;
+        contextInfo = contextCache.get(contextKey) || null;
+        if (changed) queueItems = [];
+        renderCoverRack();
+        void loadContext(contextKey);
+      } else if (!track.context_uri) {
+        contextKey = "";
+        contextInfo = null;
+        if (changed) queueItems = [];
+        renderCoverRack();
+      } else if (changed) {
+        queueItems = [];
+        renderCoverRack();
+      }
 
       if (track.artist_id && track.artist_id !== lastArtistId) {
         lastArtistId = track.artist_id;
@@ -331,18 +357,42 @@
       }
     }
 
+    async function jumpQueueItem(item) {
+      if (!item || !item.uri) return;
+      try {
+        if (current && current.context_uri) {
+          await ctx.native.spotifyJump(current.context_uri, item.uri);
+        } else {
+          await ctx.native.spotifySkip(true);
+        }
+        await refreshNow();
+        void loadQueue();
+      } catch {
+        try {
+          await ctx.native.spotifySkip(true);
+          await refreshNow();
+        } catch (e) {
+          showStatus(`Playback: ${e.message || e}`);
+        }
+      }
+    }
+
     async function loadQueue() {
       let queue = [];
       try {
         queue = (await ctx.native.spotifyQueue()) || [];
       } catch (e) {
         if (alive()) {
+          queueItems = [];
+          renderCoverRack();
           queueList.innerHTML = `<div class="sp-empty-row">Queue unavailable.</div>`;
           showStatus(`Queue: ${e.message || e}`);
         }
         return;
       }
       if (!alive()) return;
+      queueItems = queue;
+      renderCoverRack();
       queueCount.textContent = queue.length ? String(queue.length) : "";
       if (!queue.length) {
         queueList.innerHTML = `<div class="sp-empty-row">Nothing queued.</div>`;
@@ -361,26 +411,74 @@
         artist.className = "sp-queue-artist";
         artist.textContent = item.artist || "";
         row.append(name, artist);
-        row.addEventListener("click", async () => {
-          try {
-            if (current && current.context_uri && item.uri) {
-              await ctx.native.spotifyJump(current.context_uri, item.uri);
-            } else {
-              await ctx.native.spotifySkip(true);
-            }
-            await refreshNow();
-            void loadQueue();
-          } catch {
-            try {
-              await ctx.native.spotifySkip(true);
-              await refreshNow();
-            } catch (e) {
-              showStatus(`Playback: ${e.message || e}`);
-            }
-          }
-        });
+        row.addEventListener("click", () => void jumpQueueItem(item));
         queueList.appendChild(row);
       }
+    }
+
+    async function loadContext(uri) {
+      if (!uri) {
+        contextInfo = null;
+        renderCoverRack();
+        return;
+      }
+      if (contextCache.has(uri)) {
+        contextInfo = contextCache.get(uri);
+        renderCoverRack();
+        return;
+      }
+      const info = await ctx.native.spotifyContext(uri).catch(() => null);
+      if (!alive() || contextKey !== uri) return;
+      contextInfo = info || null;
+      contextCache.set(uri, contextInfo);
+      renderCoverRack();
+    }
+
+    function coverButton({ image, title, className, onClick }) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `sp-cover ${className}`;
+      button.title = title;
+      if (image) {
+        const img = document.createElement("img");
+        img.src = image;
+        img.alt = "";
+        button.appendChild(img);
+      } else {
+        const fallback = document.createElement("span");
+        fallback.className = "sp-cover-fallback";
+        fallback.textContent = (title || "?").slice(0, 1).toUpperCase();
+        button.appendChild(fallback);
+      }
+      button.addEventListener("click", onClick);
+      return button;
+    }
+
+    function renderCoverRack() {
+      if (!coverRack) return;
+      coverRack.innerHTML = "";
+      if (contextKey) {
+        const contextName = (contextInfo && contextInfo.name) || (current && current.context_type ? `${current.context_type} context` : "Current playlist");
+        coverRack.appendChild(
+          coverButton({
+            image: (contextInfo && contextInfo.image) || "",
+            title: `Open ${contextName}`,
+            className: "sp-cover-current",
+            onClick: () => openSpotify(contextKey),
+          })
+        );
+      }
+      for (const item of queueItems.slice(0, 5)) {
+        coverRack.appendChild(
+          coverButton({
+            image: item.art || "",
+            title: `Play ${item.title || "next track"}`,
+            className: "sp-cover-next",
+            onClick: () => void jumpQueueItem(item),
+          })
+        );
+      }
+      coverRack.hidden = !coverRack.children.length;
     }
 
     function linkPill(label, url, onClick) {
@@ -754,7 +852,6 @@
       }
     });
     container.querySelector(".sp-lyrics-settings").addEventListener("click", () => ctx.openSettings("lyrics"));
-    openContextBtn.addEventListener("click", () => openSpotify(current && current.context_uri));
 
     const clampSplit = (value) => Math.max(35, Math.min(75, Number(value) || 58));
     const applySplit = (value) => {

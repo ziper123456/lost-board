@@ -1609,6 +1609,61 @@ async fn spotify_play_context(context_uri: String) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
+struct SpotifyContext {
+    name: String,
+    image: String,
+    kind: String,
+    uri: String,
+}
+
+/// Current playlist/album/artist context metadata (cover + name).
+#[tauri::command]
+async fn spotify_context(context_uri: String) -> Result<Option<SpotifyContext>, String> {
+    let parts: Vec<&str> = context_uri.split(':').collect();
+    if parts.len() < 3 || parts[0] != "spotify" {
+        return Ok(None);
+    }
+    let kind = parts[1];
+    let id = parts[2..].join(":");
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(None);
+    }
+    let url = match kind {
+        "playlist" => format!("https://api.spotify.com/v1/playlists/{id}"),
+        "album" => format!("https://api.spotify.com/v1/albums/{id}"),
+        "artist" => format!("https://api.spotify.com/v1/artists/{id}"),
+        _ => return Ok(None),
+    };
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("context request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("context read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("context parse: {e}, body: {body}"))?;
+    Ok(Some(SpotifyContext {
+        name: v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        image: v
+            .get("images")
+            .and_then(|i| i.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.get("url"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        kind: kind.to_string(),
+        uri: context_uri,
+    }))
+}
+
+#[derive(serde::Serialize)]
 struct SpotifyPlaylist {
     id: String,
     name: String,
@@ -3221,6 +3276,7 @@ struct SpotifyQueueItem {
     title: String,
     artist: String,
     uri: String,
+    art: String,
 }
 
 /// Fetch the current playback queue (the next-up tracks).
@@ -3251,6 +3307,15 @@ async fn spotify_queue() -> Result<Vec<SpotifyQueueItem>, String> {
                         .unwrap_or("")
                         .to_string(),
                     uri: it.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    art: it
+                        .get("album")
+                        .and_then(|a| a.get("images"))
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 })
                 .collect()
         })
@@ -3649,6 +3714,7 @@ pub fn run() {
             artist_web_info,
             spotify_playlists,
             spotify_play_context,
+            spotify_context,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,
