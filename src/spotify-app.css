@@ -612,6 +612,9 @@
   align-self: stretch;
   height: 100%;
   aspect-ratio: 1;
+  /* Keep a readable text column when a tall About card would otherwise let the
+     rail grow to the full panel width. At normal heights this doesn't bite. */
+  max-width: 60%;
   min-width: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--panel-2) 70%, var(--accent));

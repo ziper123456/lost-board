@@ -328,6 +328,7 @@
       if (on === focusOn) return;
       focusOn = on;
       root.classList.toggle("is-focus", on);
+      ctx.setImmersive?.(on);
       focusToggle.innerHTML = on ? COLLAPSE : EXPAND;
       focusToggle.title = on ? "Exit focus (Esc)" : "Focus mode (F)";
       focusToggle.setAttribute("aria-pressed", String(on));
@@ -555,6 +556,8 @@
     searchInput.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        // Keep the document-level Escape handler from also exiting focus mode.
+        e.stopPropagation();
         closeSearch();
         return;
       }

@@ -1574,6 +1574,16 @@ function appContext() {
       settingsEl.classList.remove("hidden");
       activateTab(tab || "grid");
     },
+    // Immersive app views (e.g. Spotify focus mode) can hide the shell tab bar
+    // and reclaim its reserved height. The shell restores both on slot change.
+    setImmersive: (on) => {
+      if (!appViewEl) return;
+      const immersive = !!on;
+      appViewEl.classList.toggle("app-view-immersive", immersive);
+      const tabs = viewTabsConfig();
+      if ((tabs.active || 1) === 1) return;
+      appBarEl.hidden = immersive;
+    },
     ICON,
     Colors,
   };
@@ -1658,6 +1668,9 @@ function showSlot(n) {
   const tabs = viewTabsConfig();
   const slot = tabs.slots[Number(n) - 1];
   if (!slot || !slot.app || !APPS[slot.app]) return false;
+  // Any app leaving an immersive view must give the shell chrome back; the
+  // focus layout also drops the reserved top-bar height.
+  appViewEl.classList.remove("app-view-immersive");
   // Unmount the app that is actually mounted, not the one recorded in the
   // active slot: Settings can rewrite slot.app before calling showSlot (e.g.
   // clearing the active slot), which would otherwise skip unmount and leak the
