@@ -1655,9 +1655,14 @@ async fn spotify_playlists() -> Result<Vec<SpotifyPlaylist>, String> {
                         .unwrap_or("")
                         .to_string(),
                     tracks: item
-                        .get("tracks")
+                        .get("items")
                         .and_then(|t| t.get("total"))
                         .and_then(|x| x.as_u64())
+                        .or_else(|| {
+                            item.get("tracks")
+                                .and_then(|t| t.get("total"))
+                                .and_then(|x| x.as_u64())
+                        })
                         .unwrap_or(0),
                     owner: item
                         .get("owner")
