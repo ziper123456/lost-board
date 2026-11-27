@@ -14,6 +14,7 @@
   const NEXT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M15.8 6H18v12h-2.2zM15 12 6 6v12z"/></svg>`;
   const SHUFFLE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="m4 4 5 5"/></svg>`;
   const REPEAT = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
+  const REPEAT_ONE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><text x="12" y="15.2" font-family="sans-serif" font-size="7.5" font-weight="700" fill="currentColor" stroke="none" text-anchor="middle">1</text></svg>`;
   const VOLUME = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>`;
   const EXTERNAL = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="m21 3-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>`;
   const GEAR = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`;
@@ -270,8 +271,9 @@
       playBtn.innerHTML = playing ? PAUSE : PLAY;
       shuffleBtn.classList.toggle("is-on", !!track.shuffle);
       shuffleBtn.title = track.smart_shuffle ? "Smart Shuffle is on" : "Shuffle";
+      repeatBtn.innerHTML = track.repeat === "track" ? REPEAT_ONE : REPEAT;
       repeatBtn.classList.toggle("is-on", track.repeat && track.repeat !== "off");
-      repeatBtn.title = `Repeat: ${track.repeat || "off"}`;
+      repeatBtn.title = track.repeat === "track" ? "Repeat one" : `Repeat: ${track.repeat || "off"}`;
       updateProgress();
 
       if (track.artist_id && track.artist_id !== lastArtistId) {

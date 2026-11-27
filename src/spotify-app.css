@@ -229,11 +229,12 @@
   align-items: center;
   gap: 9px;
   min-width: 0;
+  max-width: 300px;
   color: var(--muted);
   font-size: 0.76em;
 }
 .sp-volume-icon { flex: 0 0 auto; display: inline-flex; }
-.sp-vol { flex: 1 1 auto; min-width: 0; width: auto; accent-color: var(--accent); }
+.sp-vol { flex: 0 1 200px; min-width: 80px; width: auto; accent-color: var(--accent); }
 .sp-vol-value {
   flex: 0 0 38px;
   text-align: right;
