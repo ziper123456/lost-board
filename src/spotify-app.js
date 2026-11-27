@@ -455,11 +455,17 @@
     function renderCoverRack() {
       if (!coverRack) return;
       coverRack.innerHTML = "";
-      for (const [index, item] of queueItems.slice(0, 5).entries()) {
+      const upcoming = queueItems.slice(0, 5);
+      // Right-to-left order: the playlist cover sits at the far right, then the
+      // immediate next song, then the 2nd next, and so on. Appending in reverse
+      // gives that layout with a normal left-to-right flex row, while the
+      // z-index still keeps the next song above the later ones.
+      for (let index = upcoming.length - 1; index >= 0; index -= 1) {
+        const item = upcoming[index];
         const cover = coverButton({
           image: item.art || "",
           title: `Play ${item.title || "next track"}`,
-          className: `sp-cover-next${index === 0 ? " sp-cover-next-first" : ""}`,
+          className: `sp-cover-next sp-cover-rank-${index + 1}${index === 0 ? " sp-cover-next-first" : ""}`,
           onClick: () => void jumpQueueItem(item),
         });
         cover.style.setProperty("--sp-cover-z", String(6 - index));
