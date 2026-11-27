@@ -243,6 +243,9 @@
     let contextInfo = null;
     const contextCache = new Map();
     let focusOn = false;
+    let autoFocus = false;
+    let idleTimer = 0;
+    let lastActivityAt = 0;
     let paletteKey = "";
     const paletteCache = new Map();
     let searchItems = [];
@@ -321,8 +324,9 @@
     }
 
     // ---- focus mode ---------------------------------------------------------
-    function setFocus(next, persist = true) {
+    function setFocus(next, persist = true, auto = false) {
       const on = !!next;
+      autoFocus = auto && on;
       if (on === focusOn) return;
       focusOn = on;
       root.classList.toggle("is-focus", on);
@@ -340,6 +344,46 @@
         appSettings.focus = on;
         ctx.saveState();
       }
+    }
+
+    // ---- idle auto-focus ----------------------------------------------------
+    const activityEvents = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"];
+    const IDLE_FOCUS_MS = 60_000;
+
+    // Do not steal the view while the user is already in focus, searching, or
+    // using a global overlay.
+    function idleBlocked() {
+      if (!alive() || focusOn) return true;
+      if (!searchOverlay.hidden) return true;
+      const settings = document.getElementById("settings");
+      if (settings && !settings.classList.contains("hidden")) return true;
+      const palette = document.getElementById("quick-palette");
+      if (palette && !palette.classList.contains("hidden")) return true;
+      return false;
+    }
+
+    function scheduleIdle() {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (idleBlocked()) return;
+        setFocus(true, false, true);
+      }, IDLE_FOCUS_MS);
+    }
+
+    function onActivity(e) {
+      if (!alive()) return;
+      const now = Date.now();
+      if (now - lastActivityAt < 400) return;
+      lastActivityAt = now;
+      const key = e.type === "keydown" ? e.key : "";
+      const onFocusToggle = !!(e.target && e.target.closest && e.target.closest(".sp-focus-toggle"));
+      // Let the focus controls (button / F / Esc) handle their own toggle.
+      if (onFocusToggle || key === "f" || key === "F" || key === "Escape") {
+        scheduleIdle();
+        return;
+      }
+      if (autoFocus && focusOn) setFocus(false, false);
+      scheduleIdle();
     }
 
     // ---- search -------------------------------------------------------------
@@ -581,6 +625,14 @@
     }
     document.addEventListener("keydown", onAppKey);
     ctx.addTimer(container, () => document.removeEventListener("keydown", onAppKey));
+    for (const type of activityEvents) {
+      document.addEventListener(type, onActivity, type === "keydown" ? undefined : { passive: true });
+    }
+    ctx.addTimer(container, () => {
+      clearTimeout(idleTimer);
+      for (const type of activityEvents) document.removeEventListener(type, onActivity);
+    });
+    scheduleIdle();
 
     async function openSpotify(uri) {
       if (!uri) return;
