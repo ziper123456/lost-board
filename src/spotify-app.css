@@ -436,6 +436,7 @@
   overflow: hidden;
 }
 .sp-about-panel[hidden] { display: none; }
+.sp-side:has(.sp-about-panel[hidden]) .sp-lyrics-panel { flex: 1 1 100%; }
 .sp-side .sp-about-grid {
   grid-template-columns: 1fr;
   flex: 1 1 auto;
