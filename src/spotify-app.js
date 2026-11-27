@@ -18,6 +18,7 @@
   const VOLUME = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>`;
   const EXTERNAL = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="m21 3-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>`;
   const GEAR = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`;
+  const CLOSE = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
 
   function fmtTime(ms) {
     const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
@@ -135,6 +136,18 @@
             <div class="sp-lyrics-host"></div>
           </section>
         </aside>
+        <button class="sp-playlist-hotspot" title="Playlists" aria-label="Show playlists"><span aria-hidden="true"></span></button>
+        <section class="sp-playlist-drawer" aria-label="Playlists" aria-hidden="true">
+          <header class="sp-panel-head">
+            <h2>Playlists</h2>
+            <span class="sp-playlist-status"></span>
+            <button class="sp-link-btn sp-playlist-close" title="Close playlists">${CLOSE}</button>
+          </header>
+          <div class="sp-playlist-body">
+            <div class="sp-playlist-grid"></div>
+            <div class="sp-playlist-empty" hidden></div>
+          </div>
+        </section>
       </div>`;
 
     const root = container.querySelector(".sp-app");
@@ -169,6 +182,12 @@
     const volEl = container.querySelector(".sp-vol");
     const volValue = container.querySelector(".sp-vol-value");
     const lyricsHost = container.querySelector(".sp-lyrics-host");
+    const playlistHotspot = container.querySelector(".sp-playlist-hotspot");
+    const playlistDrawer = container.querySelector(".sp-playlist-drawer");
+    const playlistGrid = container.querySelector(".sp-playlist-grid");
+    const playlistEmpty = container.querySelector(".sp-playlist-empty");
+    const playlistStatus = container.querySelector(".sp-playlist-status");
+    const playlistClose = container.querySelector(".sp-playlist-close");
 
     const run = String(Date.now()) + Math.random();
     container.dataset.spRun = run;
@@ -181,6 +200,9 @@
     let lastQueueKey = "";
     let lastArtistId = "";
     let statusTimer = 0;
+    let playlists = null;
+    let playlistsLoading = false;
+    let drawerHideTimer = 0;
 
     function showStatus(message) {
       statusEl.textContent = message || "";
@@ -426,6 +448,144 @@
         topTracksList.appendChild(row);
       });
     }
+
+    function renderPlaylistEmpty(message, reconnect) {
+      playlistGrid.innerHTML = "";
+      playlistEmpty.hidden = false;
+      playlistEmpty.innerHTML = "";
+      const text = document.createElement("div");
+      text.className = "sp-playlist-empty-msg";
+      text.textContent = message;
+      playlistEmpty.appendChild(text);
+      if (reconnect) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn primary";
+        button.textContent = "Open Spotify settings";
+        button.addEventListener("click", () => {
+          closePlaylistDrawer();
+          ctx.openSettings("spotify");
+        });
+        playlistEmpty.appendChild(button);
+      }
+    }
+
+    function renderPlaylists() {
+      playlistGrid.innerHTML = "";
+      playlistEmpty.hidden = true;
+      if (!playlists || !playlists.length) {
+        playlistStatus.textContent = "";
+        renderPlaylistEmpty("No playlists found.", false);
+        return;
+      }
+      playlistStatus.textContent = `${playlists.length} playlists`;
+      for (const pl of playlists) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "sp-pl-disc";
+        button.title = `Play ${pl.name || "playlist"}`;
+        const vinyl = document.createElement("span");
+        vinyl.className = "sp-pl-vinyl";
+        const label = document.createElement("span");
+        label.className = "sp-pl-label";
+        if (pl.image) {
+          const img = document.createElement("img");
+          img.src = pl.image;
+          img.alt = "";
+          img.loading = "lazy";
+          label.appendChild(img);
+        } else {
+          label.textContent = (pl.name || "?").slice(0, 1).toUpperCase();
+        }
+        const hole = document.createElement("span");
+        hole.className = "sp-pl-hole";
+        vinyl.append(label, hole);
+        const name = document.createElement("span");
+        name.className = "sp-pl-name";
+        name.textContent = pl.name || "Untitled playlist";
+        const meta = document.createElement("span");
+        meta.className = "sp-pl-meta";
+        meta.textContent = `${pl.tracks || 0} tracks${pl.owner ? ` · ${pl.owner}` : ""}`;
+        button.append(vinyl, name, meta);
+        button.addEventListener("click", () => void playPlaylist(pl));
+        playlistGrid.appendChild(button);
+      }
+    }
+
+    async function playPlaylist(pl) {
+      if (!pl || !pl.uri) return;
+      playlistStatus.textContent = "starting…";
+      try {
+        await ctx.native.spotifyPlayContext(pl.uri);
+        closePlaylistDrawer();
+        await refreshNow();
+        void loadQueue();
+      } catch (e) {
+        playlistStatus.textContent = "playback error";
+        showStatus(`Playlist: ${e.message || e}`);
+      }
+    }
+
+    async function loadPlaylists(force) {
+      if (playlistsLoading) return;
+      if (playlists && !force) {
+        renderPlaylists();
+        return;
+      }
+      playlistsLoading = true;
+      playlistStatus.textContent = "loading…";
+      playlistGrid.innerHTML = "";
+      playlistEmpty.hidden = true;
+      try {
+        const list = await ctx.native.spotifyPlaylists();
+        if (!alive()) return;
+        playlists = Array.isArray(list) ? list : [];
+        renderPlaylists();
+      } catch (e) {
+        if (!alive()) return;
+        playlists = null;
+        const message = String(e && e.message ? e.message : e);
+        if (message.includes("403")) {
+          playlistStatus.textContent = "reconnect";
+          renderPlaylistEmpty("Reconnect Spotify to load your playlists.", true);
+        } else {
+          playlistStatus.textContent = "error";
+          renderPlaylistEmpty("Could not load playlists.", false);
+        }
+      } finally {
+        playlistsLoading = false;
+      }
+    }
+
+    function openPlaylistDrawer() {
+      clearTimeout(drawerHideTimer);
+      playlistDrawer.classList.add("open");
+      playlistDrawer.setAttribute("aria-hidden", "false");
+      void loadPlaylists();
+    }
+    function closePlaylistDrawer() {
+      clearTimeout(drawerHideTimer);
+      playlistDrawer.classList.remove("open");
+      playlistDrawer.setAttribute("aria-hidden", "true");
+    }
+    function scheduleClosePlaylistDrawer() {
+      clearTimeout(drawerHideTimer);
+      drawerHideTimer = setTimeout(() => {
+        if (playlistDrawer.matches(":hover") || playlistDrawer.contains(document.activeElement)) return;
+        closePlaylistDrawer();
+      }, 220);
+    }
+    playlistHotspot.addEventListener("mouseenter", openPlaylistDrawer);
+    playlistHotspot.addEventListener("focus", openPlaylistDrawer);
+    playlistHotspot.addEventListener("click", openPlaylistDrawer);
+    playlistDrawer.addEventListener("mouseenter", () => clearTimeout(drawerHideTimer));
+    playlistDrawer.addEventListener("mouseleave", scheduleClosePlaylistDrawer);
+    playlistDrawer.addEventListener("focusin", () => clearTimeout(drawerHideTimer));
+    playlistDrawer.addEventListener("focusout", scheduleClosePlaylistDrawer);
+    playlistDrawer.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closePlaylistDrawer();
+    });
+    playlistClose.addEventListener("click", closePlaylistDrawer);
 
     function applyArtist(entry) {
       if (!entry || !entry.id) {
@@ -682,6 +842,7 @@
       if (alive()) updateProgress();
     }, 250));
     ctx.addTimer(container, () => clearTimeout(statusTimer));
+    ctx.addTimer(container, () => clearTimeout(drawerHideTimer));
 
     void syncVolume();
     void refreshNow();

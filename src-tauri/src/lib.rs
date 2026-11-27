@@ -1332,7 +1332,7 @@ async fn spotify_begin() -> Result<String, String> {
     *SPOTIFY_VERIFIER.lock().unwrap() = Some(verifier.clone());
     let challenge = pkce_challenge(&verifier);
     let redirect = "http://127.0.0.1:3937/callback";
-    let scope = "user-read-playback-state user-modify-playback-state user-read-currently-playing";
+    let scope = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative";
     let url = format!(
         "https://accounts.spotify.com/authorize?client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256",
         client_id, redirect, scope, challenge
@@ -1583,6 +1583,92 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         device_type,
         device_active,
     }))
+}
+
+/// Start a playlist/album context on the active device.
+#[tauri::command]
+async fn spotify_play_context(context_uri: String) -> Result<(), String> {
+    if !context_uri.starts_with("spotify:") {
+        return Err("expected a spotify: context URI".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({ "context_uri": context_uri });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player/play")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("play context request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyPlaylist {
+    id: String,
+    name: String,
+    uri: String,
+    image: String,
+    tracks: u64,
+    owner: String,
+}
+
+/// The user's playlists for the bottom drawer. Requires playlist-read scopes;
+/// a missing scope surfaces as HTTP 403 and the app offers a reconnect.
+#[tauri::command]
+async fn spotify_playlists() -> Result<Vec<SpotifyPlaylist>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/playlists?limit=50")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("playlists request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("playlists read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("playlists parse: {e}, body: {body}"))?;
+    Ok(v.get("items")
+        .and_then(|items| items.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| !item.is_null())
+                .map(|item| SpotifyPlaylist {
+                    id: item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    uri: item.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    image: item
+                        .get("images")
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    tracks: item
+                        .get("tracks")
+                        .and_then(|t| t.get("total"))
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0),
+                    owner: item
+                        .get("owner")
+                        .and_then(|o| o.get("display_name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 #[derive(serde::Serialize)]
@@ -3556,6 +3642,8 @@ pub fn run() {
             spotify_artist_top_tracks,
             spotify_play_uri,
             artist_web_info,
+            spotify_playlists,
+            spotify_play_context,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,

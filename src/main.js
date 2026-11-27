@@ -597,6 +597,13 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("spotify_queue");
     return [];
   },
+  async spotifyPlaylists() {
+    if (window.__TAURI__) return invoke("spotify_playlists");
+    return [];
+  },
+  async spotifyPlayContext(contextUri) {
+    if (window.__TAURI__) return invoke("spotify_play_context", { contextUri });
+  },
   async spotifyArtist(id) {
     if (window.__TAURI__) return invoke("spotify_artist", { id });
     return null;
