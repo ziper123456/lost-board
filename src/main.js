@@ -627,10 +627,6 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("vocab_lyrics_batch", { lang: lang || "es", limit: limit || 0 });
     return [];
   },
-  async vocabDueCount(categories, pos) {
-    if (window.__TAURI__) return invoke("vocab_due_count", { categories: categories || [], pos: pos || [] });
-    return 0;
-  },
   async vocabResetSrs() {
     if (window.__TAURI__) return invoke("vocab_reset_srs");
   },
@@ -2238,10 +2234,20 @@ async function renderVocabBody(c, body) {
     cards = [];
   }
   let due = 0;
+  let mature = 0;
+  let srsOn = false;
   try {
-    due = await native.vocabDueCount([], []);
+    const v = vocabConfig();
+    srsOn = await native.vocabSrsEnabled();
+    if (srsOn) {
+      const stats = await native.vocabSrsStats(v.drillCats || [], v.drillPos || []);
+      due = Number(stats?.due) || 0;
+      mature = Number(stats?.mature) || 0;
+    }
   } catch {
+    srsOn = false;
     due = 0;
+    mature = 0;
   }
   if (!body.isConnected) return;
   if (speakOn) vocabSpeakingBodies.add(body);
@@ -2252,7 +2258,7 @@ async function renderVocabBody(c, body) {
   }
   body.innerHTML = `
     <div class="vocab-top">
-      ${due > 0 ? `<span class="vocab-due muted" title="Cards due for review">Due today: ${due}</span>` : `<span></span>`}
+      ${srsOn ? `<span class="vocab-due muted" title="Due today and mature cards in the selected drill filters">Due today: ${due} · Mature: ${mature}</span>` : `<span></span>`}
       <button class="btn ghost vocab-practice-btn" title="Extra practice on hard words (not graded)">Practice</button>
     </div>
     <div class="vocab-card">
