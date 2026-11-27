@@ -32,6 +32,13 @@ const ICON = {
   panel: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12"/></svg>`,
 };
 
+// Full-screen app tabs. Each entry is a bespoke view; `mount`/`unmount` own all
+// DOM and timers for that screen. Only the board exists today; new apps are
+// registered here and automatically appear in Settings > Grid > App tabs.
+const APPS = {
+  board: { label: "Board", icon: ICON.panel },
+};
+
 // ---------------------------------------------------------------------------
 // State (persisted to localStorage). Each compartment has a `kind` and `data`.
 // ---------------------------------------------------------------------------
@@ -44,6 +51,23 @@ const DEFAULT_STATE = {
   wall: false,
   backgroundMode: false,
   windowDefaults: { fullscreen: false, monitor: "" },
+  // Fixed app-tab slots. Slot 1 is always the tile wall; 2-9 can point at any
+  // registered app (see APPS). `active` is session state and resets to Board on
+  // every launch.
+  viewTabs: {
+    active: 1,
+    slots: [
+      { slot: 1, app: "board" },
+      { slot: 2, app: null },
+      { slot: 3, app: null },
+      { slot: 4, app: null },
+      { slot: 5, app: null },
+      { slot: 6, app: null },
+      { slot: 7, app: null },
+      { slot: 8, app: null },
+      { slot: 9, app: null },
+    ],
+  },
   lyricsOffsets: {},
   lyricsTranslate: false,
   lyricsDeeplFallback: false,
@@ -394,6 +418,30 @@ function saveState() {
   } catch (e) {
     console.error("Failed to persist state", e);
   }
+}
+
+// Rebuild the fixed 1-9 app slots from persisted state. Slot 1 is always the
+// board; unknown app ids are dropped. Always starts on Board so a launch never
+// opens directly into an app screen.
+function normalizeViewTabs() {
+  const saved = state.viewTabs && Array.isArray(state.viewTabs.slots) ? state.viewTabs.slots : [];
+  const slots = Array.from({ length: 9 }, (_, i) => ({ slot: i + 1, app: null }));
+  slots[0].app = "board";
+  for (const entry of saved) {
+    const slot = Number(entry?.slot);
+    if (!Number.isInteger(slot) || slot < 2 || slot > 9) continue;
+    const app = typeof entry.app === "string" ? entry.app : "";
+    if (app && app !== "board" && APPS[app]) slots[slot - 1].app = app;
+  }
+  state.viewTabs = { active: 1, slots };
+  return state.viewTabs;
+}
+
+// Runtime accessor: repairs missing/old state without resetting the active tab.
+function viewTabsConfig() {
+  const tabs = state.viewTabs;
+  if (!tabs || !Array.isArray(tabs.slots) || tabs.slots.length !== 9) return normalizeViewTabs();
+  return tabs;
 }
 
 // ---------------------------------------------------------------------------
@@ -773,6 +821,10 @@ async openFolder(path) {
 const dashboard = document.getElementById("dashboard");
 const gridEl = document.getElementById("grid");
 const scalerEl = document.getElementById("grid-scaler");
+const appBarEl = document.getElementById("app-bar");
+const appBarTabsEl = document.getElementById("app-bar-tabs");
+const appBarHotspot = document.getElementById("app-bar-hotspot");
+const appViewEl = document.getElementById("app-view");
 
 // Registry of interval timers owned by compartment bodies, keyed by the body
 // element they render into. Tracked at module scope so they are cleared even
@@ -1276,6 +1328,9 @@ function cozyTileBackground(comp, index) {
 }
 
 function render() {
+  // The board measures dashboard.clientWidth. While an app tab is active the
+  // dashboard is hidden, so measuring would collapse every tile to 0px.
+  if ((viewTabsConfig().active || 1) !== 1) return;
   closeCtxMenu(); // a re-render invalidates any open context menu
   // Unscaled grid size; a CSS transform scales it visually, and the scaler is
   // sized to the scaled dimensions so the dashboard scrolls correctly. Zooming
@@ -1435,6 +1490,133 @@ function renderOverlays() {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// App tabs (top bar) and full-screen app views
+// ---------------------------------------------------------------------------
+
+// Stop every board body and invalidate its signature so returning to the board
+// always restarts polling/rendering (hidden tiles must not keep polling).
+function pauseBoardBodies() {
+  for (const rec of tileEls.values()) {
+    if (!rec.bodyEl) continue;
+    clearBodyTimers(rec.bodyEl);
+    rec.bodySig = null;
+  }
+  for (const rec of overlayEls.values()) {
+    if (!rec.bodyEl) continue;
+    clearBodyTimers(rec.bodyEl);
+    rec.bodySig = null;
+  }
+}
+
+function appContext() {
+  return {
+    native,
+    get state() {
+      return state;
+    },
+    saveState,
+    escapeHtml,
+    addTimer,
+    clearBodyTimers,
+    ICON,
+  };
+}
+
+function renderAppBar() {
+  const tabs = viewTabsConfig();
+  appBarTabsEl.innerHTML = "";
+  for (const slot of tabs.slots) {
+    const app = slot.app && APPS[slot.app] ? APPS[slot.app] : null;
+    if (!app) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "app-tab" + (slot.slot === tabs.active ? " active" : "");
+    button.dataset.slot = String(slot.slot);
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", slot.slot === tabs.active ? "true" : "false");
+    button.title = `${app.label} — Ctrl+${slot.slot}`;
+    const key = document.createElement("span");
+    key.className = "app-tab-key";
+    key.textContent = String(slot.slot);
+    const label = document.createElement("span");
+    label.className = "app-tab-label";
+    label.textContent = app.label;
+    button.append(key, label);
+    button.addEventListener("click", () => showSlot(slot.slot));
+    appBarTabsEl.appendChild(button);
+  }
+}
+
+// Switch to a fixed slot. Board restores the tile wall; any other registered app
+// is mounted full-screen below the top bar and the board is paused.
+function showSlot(n) {
+  const tabs = viewTabsConfig();
+  const slot = tabs.slots[Number(n) - 1];
+  if (!slot || !slot.app || !APPS[slot.app]) return false;
+  const previous = tabs.slots[tabs.active - 1];
+  if (previous && previous.app && previous.app !== "board") {
+    try {
+      APPS[previous.app]?.unmount?.(appViewEl);
+    } catch (e) {
+      console.error(`Failed to unmount app "${previous.app}"`, e);
+    }
+  }
+  tabs.active = slot.slot;
+  if (slot.app === "board") {
+    appViewEl.innerHTML = "";
+    appViewEl.hidden = true;
+    appBarEl.hidden = true;
+    appBarHotspot.hidden = false;
+    dashboard.hidden = false;
+    document.documentElement.dataset.view = "board";
+    render();
+  } else {
+    pauseBoardBodies();
+    dashboard.hidden = true;
+    appViewEl.hidden = false;
+    appViewEl.innerHTML = "";
+    appBarEl.hidden = false;
+    appBarHotspot.hidden = true;
+    document.documentElement.dataset.view = "app";
+    try {
+      APPS[slot.app].mount?.(appViewEl, appContext());
+    } catch (e) {
+      console.error(`Failed to mount app "${slot.app}"`, e);
+      appViewEl.innerHTML = `<div class="app-view-empty">This app could not start.</div>`;
+    }
+  }
+  saveState();
+  renderAppBar();
+  document.title = slot.app === "board" ? "lost-board" : `lost-board — ${APPS[slot.app].label}`;
+  return true;
+}
+
+// On the board the bar is hidden until the top edge is hovered, so the tile
+// wall keeps its full height. On app tabs it stays visible permanently.
+let appBarHideTimer = 0;
+function revealAppBar() {
+  if ((viewTabsConfig().active || 1) !== 1) return;
+  clearTimeout(appBarHideTimer);
+  appBarEl.hidden = false;
+}
+function scheduleHideAppBar() {
+  if ((viewTabsConfig().active || 1) !== 1) return;
+  clearTimeout(appBarHideTimer);
+  appBarHideTimer = setTimeout(() => {
+    if ((viewTabsConfig().active || 1) !== 1) return;
+    if (appBarEl.matches(":hover") || appBarEl.contains(document.activeElement)) return;
+    appBarEl.hidden = true;
+  }, 260);
+}
+appBarHotspot.addEventListener("mouseenter", revealAppBar);
+appBarHotspot.addEventListener("focus", revealAppBar);
+appBarHotspot.addEventListener("click", revealAppBar);
+appBarEl.addEventListener("mouseenter", () => clearTimeout(appBarHideTimer));
+appBarEl.addEventListener("mouseleave", scheduleHideAppBar);
+appBarEl.addEventListener("focusin", () => clearTimeout(appBarHideTimer));
+appBarEl.addEventListener("focusout", scheduleHideAppBar);
 
 async function renderCompartmentBody(c, body) {
   if (!body) {
@@ -3719,6 +3901,22 @@ qpResults.addEventListener("click", (e) => {
 document.querySelector("#quick-palette .qp-backdrop")?.addEventListener("click", closePalette);
 
 document.addEventListener("keydown", (e) => {
+  // Fixed app-tab shortcuts: Ctrl/Cmd + 1..9. Never steal keys from inputs or
+  // from an open Settings / Quick Palette overlay.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    const match = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || "");
+    if (match) {
+      if (isTypingTarget(e.target)) return;
+      if (!settingsEl.classList.contains("hidden")) return;
+      if (!quickPaletteEl.classList.contains("hidden")) return;
+      const slot = Number(match[1]);
+      if (viewTabsConfig().slots[slot - 1]?.app) {
+        e.preventDefault();
+        showSlot(slot);
+      }
+      return;
+    }
+  }
   if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === "Space") {
     if (!quickPaletteEl.classList.contains("hidden")) {
       e.preventDefault();
@@ -3731,6 +3929,10 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     if (!quickPaletteEl.classList.contains("hidden")) closePalette();
     else if (!tilePreviewEl.classList.contains("hidden")) closePreview();
+    else if (!appBarEl.hidden && (viewTabsConfig().active || 1) === 1) {
+      clearTimeout(appBarHideTimer);
+      appBarEl.hidden = true;
+    }
   }
 });
 
@@ -3855,6 +4057,7 @@ document.addEventListener("mouseup", () => {
 function activateTab(tabName) {
   document.querySelectorAll(".settings-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === tabName));
+  if (tabName === "grid") renderTabsSettings();
   if (tabName === "folders") renderFoldersSettings();
   if (tabName === "bookmarks") renderBookmarksSettings();
   if (tabName === "azure") renderAzureSettings();
@@ -4967,6 +5170,7 @@ function renderConfigSettings() {
         return;
       }
       state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(json) };
+      normalizeViewTabs();
       saveState(); // backend already wrote the file; this syncs the browser fallback
       zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
       updateZoomUI();
@@ -4975,8 +5179,9 @@ function renderConfigSettings() {
       document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
       document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
       document.getElementById("set-wall").checked = state.wall === true;
-      render();
+      showSlot(1);
       renderConfigSettings();
+      renderTabsSettings();
       panel.querySelector("#config-status").textContent = "imported — previous setup kept as .bak";
     } catch (e) {
       statusEl.textContent = `import failed: ${e}`;
@@ -8523,6 +8728,50 @@ const DESIGN_PRESETS = {
   Terminal: { bg: "#050505", panel: "#0b0f0b", panel2: "#101510", borderColor: "#1c2a1c", text: "#c6ffc6", muted: "#5f7f5f", accent: "#33ff66", font: 'Consolas, "Courier New", monospace', radiusGlobal: 2, radiusTile: 2, radiusButton: 2, tileBorderColor: "#33ff66" },
 };
 
+function renderTabsSettings() {
+  const panel = document.getElementById("tabs-list");
+  if (!panel) return;
+  const tabs = viewTabsConfig();
+  panel.innerHTML = "";
+  for (const slot of tabs.slots) {
+    const row = document.createElement("div");
+    row.className = "item-row tab-slot-row";
+    if (slot.slot === 1) {
+      row.innerHTML = `<span class="tab-slot-num">1</span><span class="tab-slot-fixed">Board</span><span class="muted">fixed</span>`;
+    } else {
+      const options = Object.entries(APPS)
+        .filter(([id]) => id !== "board")
+        .map(
+          ([id, app]) =>
+            `<option value="${escapeHtml(id)}" ${slot.app === id ? "selected" : ""}>${escapeHtml(app.label)}</option>`
+        )
+        .join("");
+      row.innerHTML = `
+        <span class="tab-slot-num">${slot.slot}</span>
+        <select data-slot="${slot.slot}"><option value="">None</option>${options}</select>
+        <button class="btn ghost tab-slot-clear" data-slot="${slot.slot}" title="Clear slot" ${slot.app ? "" : "hidden"}>✕</button>`;
+    }
+    panel.appendChild(row);
+  }
+  panel.querySelectorAll(".tab-slot-row select").forEach((sel) => {
+    sel.addEventListener("change", () => setSlotApp(Number(sel.dataset.slot), sel.value));
+  });
+  panel.querySelectorAll(".tab-slot-clear").forEach((btn) => {
+    btn.addEventListener("click", () => setSlotApp(Number(btn.dataset.slot), ""));
+  });
+}
+
+function setSlotApp(slotNumber, appId) {
+  const tabs = viewTabsConfig();
+  const slot = tabs.slots[slotNumber - 1];
+  if (!slot || slot.slot === 1) return;
+  slot.app = appId && appId !== "board" && APPS[appId] ? appId : null;
+  saveState();
+  if (tabs.active === slot.slot) showSlot(slot.app ? slot.slot : 1);
+  else renderAppBar();
+  renderTabsSettings();
+}
+
 function renderDesignSettings() {
   const panel = document.getElementById("design-list");
   if (!panel) return;
@@ -9063,6 +9312,12 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  normalizeViewTabs();
+  appBarEl.hidden = true;
+  appViewEl.hidden = true;
+  appBarHotspot.hidden = false;
+  dashboard.hidden = false;
+  document.documentElement.dataset.view = "board";
   buildMemeFocusShell();
   zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
   updateZoomUI();
@@ -9097,6 +9352,8 @@ async function initialize() {
   // dashboard before the window reaches its final size, leaving tiles sized for
   // the wrong width until the next interaction.
   requestAnimationFrame(() => render());
+  renderAppBar();
+  renderTabsSettings();
   startBackupScheduler();
   updateBackupTabBadge();
 }

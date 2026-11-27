@@ -9,6 +9,7 @@
   --green: #22c55e;
   --red: #ef4444;
   --amber: #f59e0b;
+  --app-bar-h: 54px;
 }
 
 * { box-sizing: border-box; }
@@ -1515,6 +1516,113 @@ input[type="color"]:hover { border-color: var(--accent); }
 
 .caption-translations[hidden] { display: none; }
 
+/* App tabs: hidden on the board, permanent on app tabs. A thin top hotspot
+   reveals the bar on hover without reserving any board height. */
+.app-bar-hotspot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  z-index: 89;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.app-bar-hotspot[hidden] { display: none; }
+.app-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--app-bar-h);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(12px) saturate(1.05);
+}
+.app-bar[hidden] { display: none; }
+.app-bar-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.app-bar-tabs::-webkit-scrollbar { display: none; }
+.app-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--btn-radius, 8px);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--transition, 0.12s) ease,
+    border-color var(--transition, 0.12s) ease,
+    color var(--transition, 0.12s) ease;
+}
+.app-tab:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.app-tab.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+.app-tab-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.app-tab.active .app-tab-key { background: var(--accent); color: #fff; }
+.app-view {
+  position: fixed;
+  inset: 0;
+  padding-top: var(--app-bar-h);
+  overflow: auto;
+  background: var(--board-bg, var(--bg));
+  color: var(--text);
+}
+.app-view[hidden] { display: none; }
+.app-view-empty { padding: 32px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) {
+  .app-tab { transition: none; }
+}
+
+/* Settings > Grid > App tabs */
+.tabs-settings {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tabs-settings h3 { margin: 0 0 4px; font-size: 0.95rem; }
+.tabs-settings p { margin: 0 0 8px; }
+.tab-slot-row { gap: 10px; }
+.tab-slot-num {
+  flex: 0 0 1.2em;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.tab-slot-fixed { flex: 1; font-weight: 600; }
+.tab-slot-row select { flex: 0 1 260px; min-width: 150px; }
+.tab-slot-row .tab-slot-clear { flex: 0 0 auto; padding: 2px 7px; }
+.tab-slot-row .tab-slot-clear[hidden] { display: none; }
+
 /* Inline settings hint (e.g. theme hidden by Design overrides). */
 .setting-hint {
   display: flex;
@@ -1562,6 +1670,18 @@ html[data-theme="cozy"] .settings-fab:focus-visible { outline-color: var(--accen
 html[data-theme="cozy"] .zoom-controls {
   border-radius: 999px;
   background: color-mix(in srgb, var(--chrome) 32%, var(--panel));
+}
+
+/* App tabs bar: sage chrome when an app tab is active */
+html[data-theme="cozy"] .app-bar {
+  background: color-mix(in srgb, var(--chrome) 74%, var(--panel));
+  border-bottom-color: color-mix(in srgb, var(--chrome) 58%, var(--border));
+  box-shadow: 0 4px 18px rgba(96, 71, 46, 0.12);
+}
+html[data-theme="cozy"] .app-tab:hover { background: color-mix(in srgb, var(--chrome) 45%, transparent); }
+html[data-theme="cozy"] .app-tab.active {
+  background: var(--panel);
+  border-color: color-mix(in srgb, var(--chrome) 55%, var(--border));
 }
 
 /* Warm scrims instead of pure-black overlays */
