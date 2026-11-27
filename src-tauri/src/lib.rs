@@ -1332,7 +1332,7 @@ async fn spotify_begin() -> Result<String, String> {
     *SPOTIFY_VERIFIER.lock().unwrap() = Some(verifier.clone());
     let challenge = pkce_challenge(&verifier);
     let redirect = "http://127.0.0.1:3937/callback";
-    let scope = "user-read-playback-state user-modify-playback-state user-read-currently-playing";
+    let scope = "user-read-playback-state user-modify-playback-state user-read-currently-playing playlist-read-private playlist-read-collaborative";
     let url = format!(
         "https://accounts.spotify.com/authorize?client_id={}&response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256",
         client_id, redirect, scope, challenge
@@ -1455,8 +1455,11 @@ async fn spotify_access_token() -> Result<String, String> {
 
 #[derive(serde::Serialize)]
 struct SpotifyTrack {
+    id: String,
+    uri: String,
     title: String,
     artist: String,
+    artist_id: String,
     album: String,
     art: String,
     playing: bool,
@@ -1467,6 +1470,9 @@ struct SpotifyTrack {
     repeat: String,
     context_uri: String,
     context_type: String,
+    device_name: String,
+    device_type: String,
+    device_active: bool,
 }
 
 /// Fetch the current playback state (track + shuffle/repeat flags).
@@ -1491,12 +1497,22 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         Some(it) if !it.is_null() => it,
         _ => return Ok(None),
     };
+    let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let uri = item.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let artist = item
         .get("artists")
         .and_then(|a| a.as_array())
         .and_then(|a| a.first())
         .and_then(|x| x.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let artist_id = item
+        .get("artists")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("id"))
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
@@ -1532,9 +1548,27 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
+    let device = v.get("device");
+    let device_name = device
+        .and_then(|d| d.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_type = device
+        .and_then(|d| d.get("type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_active = device
+        .and_then(|d| d.get("is_active"))
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     Ok(Some(SpotifyTrack {
+        id,
+        uri,
         title,
         artist,
+        artist_id,
         album,
         art,
         playing,
@@ -1545,6 +1579,573 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         repeat,
         context_uri,
         context_type,
+        device_name,
+        device_type,
+        device_active,
+    }))
+}
+
+/// Start a playlist/album context on the active device.
+#[tauri::command]
+async fn spotify_play_context(context_uri: String) -> Result<(), String> {
+    if !context_uri.starts_with("spotify:") {
+        return Err("expected a spotify: context URI".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({ "context_uri": context_uri });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player/play")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("play context request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyContext {
+    name: String,
+    image: String,
+    kind: String,
+    uri: String,
+}
+
+/// Current playlist/album/artist context metadata (cover + name).
+#[tauri::command]
+async fn spotify_context(context_uri: String) -> Result<Option<SpotifyContext>, String> {
+    let parts: Vec<&str> = context_uri.split(':').collect();
+    if parts.len() < 3 || parts[0] != "spotify" {
+        return Ok(None);
+    }
+    let kind = parts[1];
+    let id = parts[2..].join(":");
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(None);
+    }
+    let url = match kind {
+        "playlist" => format!("https://api.spotify.com/v1/playlists/{id}"),
+        "album" => format!("https://api.spotify.com/v1/albums/{id}"),
+        "artist" => format!("https://api.spotify.com/v1/artists/{id}"),
+        _ => return Ok(None),
+    };
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("context request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("context read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("context parse: {e}, body: {body}"))?;
+    Ok(Some(SpotifyContext {
+        name: v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        image: v
+            .get("images")
+            .and_then(|i| i.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.get("url"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        kind: kind.to_string(),
+        uri: context_uri,
+    }))
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyPlaylist {
+    id: String,
+    name: String,
+    uri: String,
+    image: String,
+    tracks: u64,
+    owner: String,
+}
+
+/// The user's playlists for the bottom drawer. Requires playlist-read scopes;
+/// a missing scope surfaces as HTTP 403 and the app offers a reconnect.
+#[tauri::command]
+async fn spotify_playlists() -> Result<Vec<SpotifyPlaylist>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/playlists?limit=50")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("playlists request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("playlists read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("playlists parse: {e}, body: {body}"))?;
+    Ok(v.get("items")
+        .and_then(|items| items.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| !item.is_null())
+                .map(|item| SpotifyPlaylist {
+                    id: item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    uri: item.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    image: item
+                        .get("images")
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    tracks: item
+                        .get("items")
+                        .and_then(|t| t.get("total"))
+                        .and_then(|x| x.as_u64())
+                        .or_else(|| {
+                            item.get("tracks")
+                                .and_then(|t| t.get("total"))
+                                .and_then(|x| x.as_u64())
+                        })
+                        .unwrap_or(0),
+                    owner: item
+                        .get("owner")
+                        .and_then(|o| o.get("display_name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyArtist {
+    id: String,
+    name: String,
+    image: String,
+    genres: Vec<String>,
+    followers: u64,
+    popularity: u8,
+}
+
+/// Artist metadata for the Spotify app's artist card. Spotify has no biography
+/// endpoint, so this returns image/genres/followers/popularity.
+#[tauri::command]
+async fn spotify_artist(id: String) -> Result<SpotifyArtist, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("invalid artist id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("https://api.spotify.com/v1/artists/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("artist request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("artist read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("artist parse: {e}, body: {body}"))?;
+    Ok(SpotifyArtist {
+        id: v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        name: v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        image: v
+            .get("images")
+            .and_then(|x| x.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.get("url"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        genres: v
+            .get("genres")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|g| g.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        followers: v
+            .get("followers")
+            .and_then(|f| f.get("total"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0),
+        popularity: v
+            .get("popularity")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+            .min(100) as u8,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyDevice {
+    id: String,
+    name: String,
+    device_type: String,
+    active: bool,
+    volume_percent: Option<u64>,
+}
+
+/// Available playback devices for the "Playing on" picker.
+#[tauri::command]
+async fn spotify_devices() -> Result<Vec<SpotifyDevice>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/player/devices")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("devices request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("devices read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("devices parse: {e}, body: {body}"))?;
+    Ok(v.get("devices")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|d| SpotifyDevice {
+                    id: d.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: d.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    device_type: d.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    active: d.get("is_active").and_then(|x| x.as_bool()).unwrap_or(false),
+                    volume_percent: d.get("volume_percent").and_then(|x| x.as_u64()),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Move playback to a device. `play` starts the current context on it.
+#[tauri::command]
+async fn spotify_transfer(device_id: String, play: bool) -> Result<(), String> {
+    if device_id.is_empty() {
+        return Err("missing device id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({
+        "device_ids": [device_id],
+        "play": play,
+    });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("transfer request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyTopTrack {
+    id: String,
+    uri: String,
+    name: String,
+    artists: String,
+    album: String,
+    art: String,
+    duration_ms: u64,
+}
+
+/// Artist top tracks for the About card. Uses the user's market implicitly
+/// (valid user token takes priority over the optional market parameter).
+/// The endpoint is marked deprecated by Spotify; callers treat errors as
+/// "no top tracks" and keep the rest of the card.
+#[tauri::command]
+async fn spotify_artist_top_tracks(id: String) -> Result<Vec<SpotifyTopTrack>, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("invalid artist id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("https://api.spotify.com/v1/artists/{id}/top-tracks"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("top tracks request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("top tracks read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("top tracks parse: {e}, body: {body}"))?;
+    Ok(v.get("tracks")
+        .and_then(|t| t.as_array())
+        .map(|tracks| {
+            tracks
+                .iter()
+                .take(5)
+                .map(|t| SpotifyTopTrack {
+                    id: t.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    uri: t.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: t.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    artists: t
+                        .get("artists")
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default(),
+                    album: t
+                        .get("album")
+                        .and_then(|a| a.get("name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    art: t
+                        .get("album")
+                        .and_then(|a| a.get("images"))
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    duration_ms: t.get("duration_ms").and_then(|x| x.as_u64()).unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Start one specific track (used by the artist top-tracks list).
+#[tauri::command]
+async fn spotify_play_uri(track_uri: String) -> Result<(), String> {
+    if !track_uri.starts_with("spotify:track:") {
+        return Err("expected a spotify:track: URI".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({ "uris": [track_uri] });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player/play")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("play track request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ArtistLink {
+    label: String,
+    url: String,
+}
+
+#[derive(serde::Serialize)]
+struct ArtistWebInfo {
+    summary: String,
+    wikipedia_url: String,
+    links: Vec<ArtistLink>,
+}
+
+const ARTIST_UA: &str =
+    "lost-board/0.1 (personal dashboard; https://github.com/ziper123456/lost-board)";
+
+fn wd_value(row: &serde_json::Value, key: &str) -> Option<String> {
+    row.get(key)
+        .and_then(|v| v.get("value"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Wikipedia summary + social links for an artist, resolved by the exact
+/// Spotify artist id through Wikidata property P1902. Returns None when the
+/// artist has no Wikidata match; callers then show the Spotify-only card.
+#[tauri::command]
+async fn artist_web_info(spotify_id: String) -> Result<Option<ArtistWebInfo>, String> {
+    if spotify_id.is_empty() || !spotify_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(None);
+    }
+    let query = format!(
+        r#"SELECT ?item ?articleEn ?articleDe ?articleEs ?website ?instagram ?facebook ?tiktok ?youtube WHERE {{
+  ?item wdt:P1902 "{spotify_id}".
+  OPTIONAL {{ ?articleEn schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }}
+  OPTIONAL {{ ?articleDe schema:about ?item; schema:isPartOf <https://de.wikipedia.org/>. }}
+  OPTIONAL {{ ?articleEs schema:about ?item; schema:isPartOf <https://es.wikipedia.org/>. }}
+  OPTIONAL {{ ?item wdt:P856 ?website. }}
+  OPTIONAL {{ ?item wdt:P2003 ?instagram. }}
+  OPTIONAL {{ ?item wdt:P2013 ?facebook. }}
+  OPTIONAL {{ ?item wdt:P7085 ?tiktok. }}
+  OPTIONAL {{ ?item wdt:P2397 ?youtube. }}
+}}
+LIMIT 40"#
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://query.wikidata.org/sparql")
+        .header("User-Agent", ARTIST_UA)
+        .query(&[("format", "json"), ("query", query.as_str())])
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("wikidata request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("wikidata read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Wikidata HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("wikidata parse: {e}, body: {body}"))?;
+    let rows = v
+        .pointer("/results/bindings")
+        .and_then(|b| b.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut article = String::new();
+    let mut website = String::new();
+    let mut instagram = String::new();
+    let mut facebook = String::new();
+    let mut tiktok = String::new();
+    let mut youtube = String::new();
+    for row in &rows {
+        if article.is_empty() {
+            article = wd_value(row, "articleEn")
+                .or_else(|| wd_value(row, "articleDe"))
+                .or_else(|| wd_value(row, "articleEs"))
+                .unwrap_or_default();
+        }
+        if website.is_empty() {
+            website = wd_value(row, "website").unwrap_or_default();
+        }
+        if instagram.is_empty() {
+            instagram = wd_value(row, "instagram").unwrap_or_default();
+        }
+        if facebook.is_empty() {
+            facebook = wd_value(row, "facebook").unwrap_or_default();
+        }
+        if tiktok.is_empty() {
+            tiktok = wd_value(row, "tiktok").unwrap_or_default();
+        }
+        if youtube.is_empty() {
+            youtube = wd_value(row, "youtube").unwrap_or_default();
+        }
+    }
+
+    let mut summary = String::new();
+    let mut wikipedia_url = article.clone();
+    if !article.is_empty() {
+        if let Ok(parsed) = url::Url::parse(&article) {
+            let host = parsed.host_str().unwrap_or("en.wikipedia.org").to_string();
+            if let Some(title) = parsed.path().strip_prefix("/wiki/") {
+                let endpoint = format!("https://{host}/api/rest_v1/page/summary/{title}");
+                if let Ok(resp) = client
+                    .get(&endpoint)
+                    .header("User-Agent", ARTIST_UA)
+                    .timeout(std::time::Duration::from_secs(10))
+                    .send()
+                    .await
+                {
+                    if resp.status().is_success() {
+                        if let Ok(text) = resp.text().await {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                summary = json
+                                    .get("extract")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if let Some(url) = json
+                                    .pointer("/content_urls/desktop/page")
+                                    .and_then(|x| x.as_str())
+                                {
+                                    wikipedia_url = url.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut links: Vec<ArtistLink> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push_link = |label: &str, url: String| {
+        if url.is_empty() || !seen.insert(url.clone()) {
+            return;
+        }
+        links.push(ArtistLink {
+            label: label.to_string(),
+            url,
+        });
+    };
+    push_link("Wikipedia", wikipedia_url.clone());
+    if website.starts_with("http") {
+        push_link("Website", website);
+    }
+    if !instagram.is_empty() {
+        push_link(
+            "Instagram",
+            format!("https://www.instagram.com/{}/", instagram.trim_start_matches('@')),
+        );
+    }
+    if !facebook.is_empty() {
+        push_link(
+            "Facebook",
+            format!("https://www.facebook.com/{}/", facebook.trim_start_matches('@')),
+        );
+    }
+    if !tiktok.is_empty() {
+        push_link(
+            "TikTok",
+            format!("https://www.tiktok.com/@{}/", tiktok.trim_start_matches('@')),
+        );
+    }
+    if !youtube.is_empty() {
+        push_link(
+            "YouTube",
+            format!("https://www.youtube.com/channel/{youtube}"),
+        );
+    }
+    drop(push_link);
+    if links.is_empty() && summary.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(ArtistWebInfo {
+        summary,
+        wikipedia_url,
+        links,
     }))
 }
 
@@ -2675,6 +3276,7 @@ struct SpotifyQueueItem {
     title: String,
     artist: String,
     uri: String,
+    art: String,
 }
 
 /// Fetch the current playback queue (the next-up tracks).
@@ -2705,6 +3307,15 @@ async fn spotify_queue() -> Result<Vec<SpotifyQueueItem>, String> {
                         .unwrap_or("")
                         .to_string(),
                     uri: it.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    art: it
+                        .get("album")
+                        .and_then(|a| a.get("images"))
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                 })
                 .collect()
         })
@@ -3095,6 +3706,15 @@ pub fn run() {
             spotify_capture,
             spotify_now_playing,
             spotify_cover_palette,
+            spotify_artist,
+            spotify_devices,
+            spotify_transfer,
+            spotify_artist_top_tracks,
+            spotify_play_uri,
+            artist_web_info,
+            spotify_playlists,
+            spotify_play_context,
+            spotify_context,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,

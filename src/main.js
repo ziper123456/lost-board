@@ -32,6 +32,15 @@ const ICON = {
   panel: `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12"/></svg>`,
 };
 
+// Full-screen app tabs. Each entry is a bespoke view; `mount`/`unmount` own all
+// DOM and timers for that screen. Only the board exists today; new apps are
+// registered here and automatically appear in Settings > Grid > App tabs.
+const APPS = {
+  board: { label: "Board", icon: ICON.panel },
+};
+// App screens ship in their own files (loaded before main.js) and register here.
+Object.assign(APPS, window.LostBoardApps || {});
+
 // ---------------------------------------------------------------------------
 // State (persisted to localStorage). Each compartment has a `kind` and `data`.
 // ---------------------------------------------------------------------------
@@ -44,6 +53,25 @@ const DEFAULT_STATE = {
   wall: false,
   backgroundMode: false,
   windowDefaults: { fullscreen: false, monitor: "" },
+  // Fixed app-tab slots. Slot 1 is always the tile wall; 2-9 can point at any
+  // registered app (see APPS). `active` is session state and resets to Board on
+  // every launch.
+  viewTabs: {
+    active: 1,
+    slots: [
+      { slot: 1, app: "board" },
+      { slot: 2, app: null },
+      { slot: 3, app: null },
+      { slot: 4, app: null },
+      { slot: 5, app: null },
+      { slot: 6, app: null },
+      { slot: 7, app: null },
+      { slot: 8, app: null },
+      { slot: 9, app: null },
+    ],
+  },
+  // Per-app persisted state (e.g. the Spotify app's lyrics layout).
+  apps: {},
   lyricsOffsets: {},
   lyricsTranslate: false,
   lyricsDeeplFallback: false,
@@ -106,6 +134,19 @@ function lyricsTargetsConfig() {
 const THEMES = {
   dark: { bg: "#101014", panel: "#1a1a20", panel2: "#23232b", border: "#2c2c36", text: "#e6e6ea", muted: "#9a9aa6", accent: "#7c3aed" },
   light: { bg: "#f4f4f7", panel: "#ffffff", panel2: "#eceef2", border: "#d7d9e0", text: "#1c1c22", muted: "#6b6b76", accent: "#7c3aed" },
+  // Warm, low-contrast palette. Extra keys (chrome, tints, font) are optional
+  // and only consumed by applyAppearance; other themes leave them undefined.
+  cozy: {
+    bg: "#F5EBDD", panel: "#FBF5EC", panel2: "#F3E8D8", border: "#E4D8C7",
+    text: "#2F2A24", muted: "#6B6255", accent: "#9E4E30",
+    green: "#5E8C61", red: "#B4544E", amber: "#B9853F",
+    chrome: "#B7C9B4",
+    tintPeach: "#F6D6C9", tintButter: "#F5E4B8", tintBlue: "#D8E5EF", tintSage: "#DDE7D8",
+    accentSoft: "#E8C0AC",
+    tileShadow: "0 6px 20px rgba(122, 94, 66, 0.08)",
+    font: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+    googleFont: "DM Sans",
+  },
   midnight: { bg: "#0a0e14", panel: "#111722", panel2: "#18202e", border: "#243044", text: "#dbe4f0", muted: "#7d8ca3", accent: "#38bdf8" },
   emerald: { bg: "#0b1512", panel: "#0f1c18", panel2: "#15251f", border: "#1f3a30", text: "#e0f0e8", muted: "#7fa593", accent: "#10b981" },
   amber: { bg: "#16120a", panel: "#1f180d", panel2: "#2a2113", border: "#3a2f1c", text: "#f2ead9", muted: "#a89570", accent: "#f59e0b" },
@@ -145,8 +186,16 @@ function applyAppearance() {
     const from = Colors.mixHex(baseBg, dynamicPalette.accent, amt);
     const to = Colors.mixHex(baseBg, dynamicPalette.secondary || dynamicPalette.accent, amt * 0.6);
     boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${from}, ${to})`;
+  } else if (d.bgFrom && d.bgTo) {
+    boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})`;
+  } else if (!d.bg && state.theme === "cozy") {
+    // A soft paper wash instead of a flat fill. It stays a single gradient so
+    // the drill popup can paint it as a background image layer unchanged.
+    // An explicit Board-colour override (d.bg) still wins and falls through to
+    // var(--bg), matching the "overrides take priority" theme hint.
+    boardBg = "radial-gradient(1200px 900px at 50% -15%, #FFFAF2 0%, #F5EBDD 55%, #F1E4D3 100%)";
   } else {
-    boardBg = d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)";
+    boardBg = "var(--bg)";
   }
   // Dynamic tiles: tint the border with the cover accent and give tiles a soft
   // cover-coloured glow (both scale with the accent blend).
@@ -155,7 +204,7 @@ function applyAppearance() {
   const effectiveTileBorder = dynOn
     ? Colors.mixHex(tileBorderBase, effectiveAccent, dynAmt)
     : v("tileBorderColor", "var(--border)");
-  let effectiveTileShadow = v("tileShadow", "none");
+  let effectiveTileShadow = v("tileShadow", t.tileShadow || "none");
   if (dynOn) {
     const c = Colors.hexToRgb(dynamicPalette.accent);
     const alpha = (0.12 + dynAmt * 0.22).toFixed(2);
@@ -180,6 +229,11 @@ function applyAppearance() {
   const effectiveInputBg = mixSurf("inputBg", t.panel2, 0.25, "var(--panel-2)");
   const effectiveScroll = mixSurf("scrollThumb", t.panel2, 0.4, "var(--panel-2)");
   const effectiveBtnHover = mixSurf("btnHoverBg", t.border, 0.4, "var(--border)");
+  // Theme-provided typography is a fallback below explicit design overrides.
+  const effectiveFont = v("font", t.font || '"Segoe UI", system-ui, sans-serif');
+  const effectiveGreen = v("green", t.green || "#22c55e");
+  const effectiveRed = v("red", t.red || "#ef4444");
+  const effectiveAmber = v("amber", t.amber || "#f59e0b");
   root.setProperty("--bg", v("bg", t.bg));
   root.setProperty("--panel", effectivePanel);
   root.setProperty("--panel-2", effectivePanel2);
@@ -188,9 +242,27 @@ function applyAppearance() {
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
   root.setProperty("--accent", effectiveAccent);
-  root.setProperty("--green", v("green", "#22c55e"));
-  root.setProperty("--red", v("red", "#ef4444"));
-  root.setProperty("--amber", v("amber", "#f59e0b"));
+  root.setProperty("--green", effectiveGreen);
+  root.setProperty("--red", effectiveRed);
+  root.setProperty("--amber", effectiveAmber);
+  // Extra theme surfaces. Existing themes leave these unset, so the CSS
+  // fallbacks collapse them back to the normal panel colours.
+  root.setProperty("--chrome", t.chrome || effectivePanel2);
+  root.setProperty("--accent-soft", t.accentSoft || `color-mix(in srgb, ${effectiveAccent} 20%, ${effectivePanel})`);
+  root.setProperty("--tint-peach", t.tintPeach || effectivePanel2);
+  root.setProperty("--tint-butter", t.tintButter || effectivePanel2);
+  root.setProperty("--tint-blue", t.tintBlue || effectivePanel2);
+  root.setProperty("--tint-sage", t.tintSage || effectivePanel2);
+  // Scoped CSS (cozy-only chrome, tiles, scrims) keys off this attribute.
+  document.documentElement.dataset.theme = THEMES[state.theme] ? state.theme : "dark";
+  if (state.theme === "cozy") {
+    root.setProperty(
+      "color-scheme",
+      typeof Colors !== "undefined" && Colors.luminance(v("bg", t.bg)) > 0.5 ? "light" : "dark"
+    );
+  } else {
+    root.removeProperty("color-scheme");
+  }
   const radiusGlobal = v("radiusGlobal", state.cornerRadius != null ? state.cornerRadius : 10);
   root.setProperty("--radius", `${radiusGlobal}px`);
   root.setProperty("--btn-radius", px("radiusButton", 6));
@@ -206,9 +278,9 @@ function applyAppearance() {
   root.setProperty("--tile-border", effectiveTileBorder);
   root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
   root.setProperty("--tile-shadow", effectiveTileShadow);
-  root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
+  root.setProperty("--font", effectiveFont);
   root.setProperty("--font-size", px("fontBase", 16));
-  void ensureGoogleFontLoaded(d.googleFont);
+  void ensureGoogleFontLoaded(d.googleFont || t.googleFont);
   root.setProperty("--scroll-thumb", effectiveScroll);
   // Heading weight / transition are only set when overridden, so their per-element
   // CSS fallbacks preserve the current look until the user changes them.
@@ -240,15 +312,40 @@ function applyAppearance() {
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
       `--accent:${effectiveAccent};` +
-      `--green:${v("green", "#22c55e")};` +
-      `--red:${v("red", "#ef4444")};` +
-      `--amber:${v("amber", "#f59e0b")};` +
+      `--green:${effectiveGreen};` +
+      `--red:${effectiveRed};` +
+      `--amber:${effectiveAmber};` +
       `--radius:${radiusGlobal}px;` +
-      `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
+      `--font:${effectiveFont};` +
       `--font-size:${v("fontBase", 16)}px;` +
       `--board-bg:${popupBoardBg};` +
       "}";
     void native.setPopupTheme(popupCss).catch(() => {});
+  }
+  updateThemeHint();
+}
+
+// The theme palette is layered *under* Design overrides. Tell the user when
+// their saved design tokens are hiding the selected theme (common after
+// switching an existing customized board to Cozy).
+function updateThemeHint() {
+  const el = document.getElementById("theme-hint");
+  if (!el) return;
+  const cozy = DESIGN_PRESETS.Cozy;
+  const keys = Object.keys(state.design || {});
+  const isCozyPreset =
+    keys.length === Object.keys(cozy).length &&
+    Object.entries(cozy).every(([k, val]) => state.design[k] === val);
+  if (state.theme !== "cozy" || isCozyPreset) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const text = el.querySelector("#theme-hint-text");
+  if (text) {
+    text.textContent = keys.length
+      ? "Design overrides are active and take priority over the theme. Apply the Cozy preset for the full warm look."
+      : "For the full cozy look, apply the Cozy preset: rounded tiles, soft shadows and DM Sans.";
   }
 }
 
@@ -327,6 +424,30 @@ function saveState() {
   } catch (e) {
     console.error("Failed to persist state", e);
   }
+}
+
+// Rebuild the fixed 1-9 app slots from persisted state. Slot 1 is always the
+// board; unknown app ids are dropped. Always starts on Board so a launch never
+// opens directly into an app screen.
+function normalizeViewTabs() {
+  const saved = state.viewTabs && Array.isArray(state.viewTabs.slots) ? state.viewTabs.slots : [];
+  const slots = Array.from({ length: 9 }, (_, i) => ({ slot: i + 1, app: null }));
+  slots[0].app = "board";
+  for (const entry of saved) {
+    const slot = Number(entry?.slot);
+    if (!Number.isInteger(slot) || slot < 2 || slot > 9) continue;
+    const app = typeof entry.app === "string" ? entry.app : "";
+    if (app && app !== "board" && APPS[app]) slots[slot - 1].app = app;
+  }
+  state.viewTabs = { active: 1, slots };
+  return state.viewTabs;
+}
+
+// Runtime accessor: repairs missing/old state without resetting the active tab.
+function viewTabsConfig() {
+  const tabs = state.viewTabs;
+  if (!tabs || !Array.isArray(tabs.slots) || tabs.slots.length !== 9) return normalizeViewTabs();
+  return tabs;
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +598,39 @@ async openFolder(path) {
   async spotifyQueue() {
     if (window.__TAURI__) return invoke("spotify_queue");
     return [];
+  },
+  async spotifyPlaylists() {
+    if (window.__TAURI__) return invoke("spotify_playlists");
+    return [];
+  },
+  async spotifyPlayContext(contextUri) {
+    if (window.__TAURI__) return invoke("spotify_play_context", { contextUri });
+  },
+  async spotifyContext(contextUri) {
+    if (window.__TAURI__) return invoke("spotify_context", { contextUri });
+    return null;
+  },
+  async spotifyArtist(id) {
+    if (window.__TAURI__) return invoke("spotify_artist", { id });
+    return null;
+  },
+  async spotifyDevices() {
+    if (window.__TAURI__) return invoke("spotify_devices");
+    return [];
+  },
+  async spotifyTransfer(deviceId, play) {
+    if (window.__TAURI__) return invoke("spotify_transfer", { deviceId, play });
+  },
+  async spotifyArtistTopTracks(id) {
+    if (window.__TAURI__) return invoke("spotify_artist_top_tracks", { id });
+    return [];
+  },
+  async spotifyPlayUri(trackUri) {
+    if (window.__TAURI__) return invoke("spotify_play_uri", { trackUri });
+  },
+  async artistWebInfo(spotifyId) {
+    if (window.__TAURI__) return invoke("artist_web_info", { spotifyId });
+    return null;
   },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
@@ -706,6 +860,10 @@ async openFolder(path) {
 const dashboard = document.getElementById("dashboard");
 const gridEl = document.getElementById("grid");
 const scalerEl = document.getElementById("grid-scaler");
+const appBarEl = document.getElementById("app-bar");
+const appBarTabsEl = document.getElementById("app-bar-tabs");
+const appBarHotspot = document.getElementById("app-bar-hotspot");
+const appViewEl = document.getElementById("app-view");
 
 // Registry of interval timers owned by compartment bodies, keyed by the body
 // element they render into. Tracked at module scope so they are cleared even
@@ -1199,7 +1357,19 @@ document.addEventListener("keydown", (e) => {
 const tileEls = new Map();
 const overlayEls = new Map();
 
+// Cozy-only pastel tile surfaces, rotated by stable tile order. Custom tile
+// backgrounds and a global tile-background design token always win.
+const COZY_TINTS = ["peach", "butter", "blue", "sage"];
+function cozyTileBackground(comp, index) {
+  if (state.theme !== "cozy") return "";
+  if ((comp.bgFrom && comp.bgTo) || comp.tileBg || state.design?.tileBg) return "";
+  return `color-mix(in srgb, var(--tint-${COZY_TINTS[index % COZY_TINTS.length]}) 68%, var(--panel))`;
+}
+
 function render() {
+  // The board measures dashboard.clientWidth. While an app tab is active the
+  // dashboard is hidden, so measuring would collapse every tile to 0px.
+  if ((viewTabsConfig().active || 1) !== 1) return;
   closeCtxMenu(); // a re-render invalidates any open context menu
   // Unscaled grid size; a CSS transform scales it visually, and the scaler is
   // sized to the scaled dimensions so the dashboard scrolls correctly. Zooming
@@ -1228,7 +1398,9 @@ function render() {
     }
   }
 
+  let tileIndex = -1;
   for (const c of state.compartments) {
+    tileIndex += 1;
     const collapsed = c.collapsed === true;
     let rec = tileEls.get(c.id);
     if (!rec) {
@@ -1277,7 +1449,7 @@ function render() {
       "--tile-bg",
       c.bgFrom && c.bgTo
         ? `linear-gradient(${c.bgAngle != null ? c.bgAngle : 135}deg, ${c.bgFrom}, ${c.bgTo})`
-        : c.tileBg || ""
+        : c.tileBg || cozyTileBackground(c, tileIndex)
     );
 
     // Header — rebuild only when title / collapse / collapsible changed.
@@ -1344,6 +1516,10 @@ function renderOverlays() {
     rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`;
     rec.el.style.width = `${c.w * cw - GUTTER}px`;
     rec.el.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
+    // Match the parent tile's cozy tint so an open collapsed tile blends in.
+    const overlayTint = cozyTileBackground(c, state.compartments.indexOf(c));
+    if (overlayTint) rec.el.style.setProperty("--tile-bg", overlayTint);
+    else rec.el.style.removeProperty("--tile-bg");
 
     const bs = tileBodySig(c);
     if (rec.bodySig !== bs) {
@@ -1353,6 +1529,191 @@ function renderOverlays() {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// App tabs (top bar) and full-screen app views
+// ---------------------------------------------------------------------------
+
+// Stop every board body and invalidate its signature so returning to the board
+// always restarts polling/rendering (hidden tiles must not keep polling).
+function pauseBoardBodies() {
+  for (const rec of tileEls.values()) {
+    if (!rec.bodyEl) continue;
+    clearBodyTimers(rec.bodyEl);
+    rec.bodySig = null;
+  }
+  for (const rec of overlayEls.values()) {
+    if (!rec.bodyEl) continue;
+    clearBodyTimers(rec.bodyEl);
+    rec.bodySig = null;
+  }
+}
+
+function appContext() {
+  return {
+    native,
+    get state() {
+      return state;
+    },
+    saveState,
+    escapeHtml,
+    addTimer,
+    clearBodyTimers,
+    subscribePlayback,
+    renderLyrics: (container, comp) => renderLyricsBody(comp, container),
+    spotifyLyricsComp,
+    spotifyAppSettings,
+    openSettings: (tab) => {
+      settingsEl.classList.remove("hidden");
+      activateTab(tab || "grid");
+    },
+    ICON,
+  };
+}
+
+// The Spotify app owns its lyrics layout, seeded once from the first Lyrics
+// tile (or defaults when no tile exists). After that it is independent.
+function spotifyAppLyricsData() {
+  if (!state.apps || typeof state.apps !== "object") state.apps = {};
+  if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
+  const app = state.apps.spotify;
+  if (!app.lyrics || typeof app.lyrics !== "object") {
+    const tile = state.compartments.find((c) => c.kind === "lyrics");
+    app.lyrics = tile && tile.data ? { ...tile.data } : {};
+    saveState();
+  }
+  return app.lyrics;
+}
+
+function spotifyLyricsComp() {
+  return { id: "spotify-app-lyrics", kind: "lyrics", data: spotifyAppLyricsData() };
+}
+
+// Full-screen Spotify app layout settings (independent of the tile).
+function spotifyAppSettings() {
+  if (!state.apps || typeof state.apps !== "object") state.apps = {};
+  if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
+  const app = state.apps.spotify;
+  if (!app.settings || typeof app.settings !== "object") app.settings = {};
+  const s = app.settings;
+  if (!Number.isFinite(Number(s.fontBase)) || s.fontBase < 11 || s.fontBase > 24) s.fontBase = 16;
+  if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 900) s.vinyl = 320;
+  if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 56) s.lyricsFont = 16;
+  if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 1100) s.lyricsHeight = 520;
+  if (!Number.isFinite(Number(s.split)) || s.split < 35 || s.split > 75) s.split = 58;
+  return s;
+}
+
+function applySpotifyAppSettings() {
+  const s = spotifyAppSettings();
+  if (!appViewEl) return;
+  appViewEl.style.setProperty("--sp-font-size", `${s.fontBase}px`);
+  appViewEl.style.setProperty("--sp-vinyl-w", `${s.vinyl}px`);
+  appViewEl.style.setProperty("--sp-lyrics-font", `${s.lyricsFont}px`);
+  appViewEl.style.setProperty("--sp-lyrics-h", `${s.lyricsHeight}px`);
+  appViewEl.style.setProperty("--sp-split", String(s.split));
+}
+
+function renderAppBar() {
+  const tabs = viewTabsConfig();
+  appBarTabsEl.innerHTML = "";
+  for (const slot of tabs.slots) {
+    const app = slot.app && APPS[slot.app] ? APPS[slot.app] : null;
+    if (!app) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "app-tab" + (slot.slot === tabs.active ? " active" : "");
+    button.dataset.slot = String(slot.slot);
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", slot.slot === tabs.active ? "true" : "false");
+    button.title = `${app.label} — Ctrl+${slot.slot}`;
+    const key = document.createElement("span");
+    key.className = "app-tab-key";
+    key.textContent = String(slot.slot);
+    const label = document.createElement("span");
+    label.className = "app-tab-label";
+    label.textContent = app.label;
+    button.append(key, label);
+    button.addEventListener("click", () => showSlot(slot.slot));
+    appBarTabsEl.appendChild(button);
+  }
+}
+
+// Switch to a fixed slot. Board restores the tile wall; any other registered app
+// is mounted full-screen below the top bar and the board is paused.
+function showSlot(n) {
+  const tabs = viewTabsConfig();
+  const slot = tabs.slots[Number(n) - 1];
+  if (!slot || !slot.app || !APPS[slot.app]) return false;
+  // Unmount the app that is actually mounted, not the one recorded in the
+  // active slot: Settings can rewrite slot.app before calling showSlot (e.g.
+  // clearing the active slot), which would otherwise skip unmount and leak the
+  // app's nested timers (lyrics polling, playback subscriptions).
+  const mounted = appViewEl.dataset.appId || "";
+  if (mounted && mounted !== "board" && APPS[mounted]) {
+    try {
+      APPS[mounted].unmount?.(appViewEl, appContext());
+    } catch (e) {
+      console.error(`Failed to unmount app "${mounted}"`, e);
+    }
+  }
+  clearBodyTimers(appViewEl);
+  tabs.active = slot.slot;
+  if (slot.app === "board") {
+    delete appViewEl.dataset.appId;
+    appViewEl.innerHTML = "";
+    appViewEl.hidden = true;
+    appBarEl.hidden = true;
+    appBarHotspot.hidden = false;
+    dashboard.hidden = false;
+    document.documentElement.dataset.view = "board";
+    render();
+  } else {
+    pauseBoardBodies();
+    dashboard.hidden = true;
+    appViewEl.hidden = false;
+    appViewEl.innerHTML = "";
+    appBarEl.hidden = false;
+    appBarHotspot.hidden = true;
+    appViewEl.dataset.appId = slot.app;
+    document.documentElement.dataset.view = "app";
+    try {
+      APPS[slot.app].mount?.(appViewEl, appContext());
+    } catch (e) {
+      console.error(`Failed to mount app "${slot.app}"`, e);
+      appViewEl.innerHTML = `<div class="app-view-empty">This app could not start.</div>`;
+    }
+  }
+  saveState();
+  renderAppBar();
+  document.title = slot.app === "board" ? "lost-board" : `lost-board — ${APPS[slot.app].label}`;
+  return true;
+}
+
+// On the board the bar is hidden until the top edge is hovered, so the tile
+// wall keeps its full height. On app tabs it stays visible permanently.
+let appBarHideTimer = 0;
+function revealAppBar() {
+  if ((viewTabsConfig().active || 1) !== 1) return;
+  clearTimeout(appBarHideTimer);
+  appBarEl.hidden = false;
+}
+function scheduleHideAppBar() {
+  if ((viewTabsConfig().active || 1) !== 1) return;
+  clearTimeout(appBarHideTimer);
+  appBarHideTimer = setTimeout(() => {
+    if ((viewTabsConfig().active || 1) !== 1) return;
+    if (appBarEl.matches(":hover") || appBarEl.contains(document.activeElement)) return;
+    appBarEl.hidden = true;
+  }, 260);
+}
+appBarHotspot.addEventListener("mouseenter", revealAppBar);
+appBarHotspot.addEventListener("focus", revealAppBar);
+appBarHotspot.addEventListener("click", revealAppBar);
+appBarEl.addEventListener("mouseenter", () => clearTimeout(appBarHideTimer));
+appBarEl.addEventListener("mouseleave", scheduleHideAppBar);
+appBarEl.addEventListener("focusin", () => clearTimeout(appBarHideTimer));
+appBarEl.addEventListener("focusout", scheduleHideAppBar);
 
 async function renderCompartmentBody(c, body) {
   if (!body) {
@@ -3637,6 +3998,22 @@ qpResults.addEventListener("click", (e) => {
 document.querySelector("#quick-palette .qp-backdrop")?.addEventListener("click", closePalette);
 
 document.addEventListener("keydown", (e) => {
+  // Fixed app-tab shortcuts: Ctrl/Cmd + 1..9. Never steal keys from inputs or
+  // from an open Settings / Quick Palette overlay.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    const match = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || "");
+    if (match) {
+      if (isTypingTarget(e.target)) return;
+      if (!settingsEl.classList.contains("hidden")) return;
+      if (!quickPaletteEl.classList.contains("hidden")) return;
+      const slot = Number(match[1]);
+      if (viewTabsConfig().slots[slot - 1]?.app) {
+        e.preventDefault();
+        showSlot(slot);
+      }
+      return;
+    }
+  }
   if (e.ctrlKey && !e.altKey && !e.metaKey && e.code === "Space") {
     if (!quickPaletteEl.classList.contains("hidden")) {
       e.preventDefault();
@@ -3649,6 +4026,10 @@ document.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     if (!quickPaletteEl.classList.contains("hidden")) closePalette();
     else if (!tilePreviewEl.classList.contains("hidden")) closePreview();
+    else if (!appBarEl.hidden && (viewTabsConfig().active || 1) === 1) {
+      clearTimeout(appBarHideTimer);
+      appBarEl.hidden = true;
+    }
   }
 });
 
@@ -3773,6 +4154,7 @@ document.addEventListener("mouseup", () => {
 function activateTab(tabName) {
   document.querySelectorAll(".settings-tabs .tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tabName));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === tabName));
+  if (tabName === "grid") renderTabsSettings();
   if (tabName === "folders") renderFoldersSettings();
   if (tabName === "bookmarks") renderBookmarksSettings();
   if (tabName === "azure") renderAzureSettings();
@@ -3882,6 +4264,7 @@ function appendCollapsibleRow(panel, comp) {
 // (text character or image file), and header/content background colors.
 function appendAppearanceRow(panel, comp) {
   comp.icon = comp.icon || { type: "", value: "" };
+  const theme = THEMES[state.theme] || THEMES.dark;
 
   const iconRow = document.createElement("div");
   iconRow.className = "item-row";
@@ -3895,7 +4278,7 @@ function appendAppearanceRow(panel, comp) {
     <input class="icon-text" type="text" maxlength="3" placeholder="e.g. ★" value="${escapeHtml(comp.icon.type === "text" ? comp.icon.value : "")}" ${comp.icon.type === "text" ? "" : "hidden"} />
     <button class="btn ghost icon-browse" ${comp.icon.type === "file" ? "" : "hidden"}>Browse…</button>
     <label class="icon-color-label" ${comp.icon.type === "file" ? "" : "hidden"}>SVG color
-      <input class="icon-color" type="color" value="${comp.iconColor || "#e6e6ea"}" />
+      <input class="icon-color" type="color" value="${comp.iconColor || theme.text}" />
     </label>
     <button class="btn ghost icon-color-reset" ${comp.iconColor ? "" : "hidden"} title="Reset color">✕</button>
     <span class="icon-preview">${
@@ -3913,10 +4296,10 @@ function appendAppearanceRow(panel, comp) {
   colorRow.className = "item-row";
   colorRow.innerHTML = `
     <label>Header color</label>
-    <input class="col-header" type="color" value="${comp.headerColor || "#23232b"}" />
+    <input class="col-header" type="color" value="${comp.headerColor || theme.panel2}" />
     <button class="btn ghost col-header-reset" title="Reset">✕</button>
     <label>Content color</label>
-    <input class="col-content" type="color" value="${comp.contentColor || "#1a1a20"}" />
+    <input class="col-content" type="color" value="${comp.contentColor || theme.panel}" />
     <button class="btn ghost col-content-reset" title="Reset">✕</button>`;
   panel.appendChild(colorRow);
 
@@ -4012,12 +4395,13 @@ function appendAppearanceRow(panel, comp) {
 // render() pushes the values as per-tile CSS variables.
 function appendDecorationRow(panel, comp) {
   const commit = () => { saveState(); render(); };
+  const theme = THEMES[state.theme] || THEMES.dark;
 
   const bRow = document.createElement("div");
   bRow.className = "item-row";
   bRow.innerHTML = `
     <label>Tile border</label>
-    <input type="color" class="td-border" value="${comp.borderColor || "#2c2c36"}" />
+    <input type="color" class="td-border" value="${comp.borderColor || theme.border}" />
     <button class="btn ghost td-reset" data-k="borderColor" title="Reset">✕</button>
     <label>Width <input type="number" class="td-bw" min="0" max="6" step="1" placeholder="1" value="${comp.borderWidth != null ? comp.borderWidth : ""}" /></label>
     <button class="btn ghost td-reset" data-k="borderWidth" title="Reset">✕</button>`;
@@ -4057,8 +4441,8 @@ function appendDecorationRow(panel, comp) {
   gRow.innerHTML = `
     <label>Tile gradient <input type="checkbox" class="td-grad-on switch" ${gradOn ? "checked" : ""} /></label>
     <span class="td-grad-fields" ${gradOn ? "" : "hidden"}>
-      <input type="color" class="td-grad-from" value="${comp.bgFrom || "#1a1a20"}" />
-      <input type="color" class="td-grad-to" value="${comp.bgTo || "#2a1a4a"}" />
+      <input type="color" class="td-grad-from" value="${comp.bgFrom || theme.bg}" />
+      <input type="color" class="td-grad-to" value="${comp.bgTo || theme.panel2}" />
       <input type="number" class="td-grad-angle" min="0" max="360" step="5" value="${comp.bgAngle != null ? comp.bgAngle : 135}" />
     </span>
     <button class="btn ghost td-reset" data-k="grad" title="Reset">✕</button>`;
@@ -4091,8 +4475,8 @@ function appendDecorationRow(panel, comp) {
   const gradFields = gRow.querySelector(".td-grad-fields");
   gRow.querySelector(".td-grad-on").addEventListener("change", (e) => {
     if (e.target.checked) {
-      comp.bgFrom = comp.bgFrom || "#1a1a20";
-      comp.bgTo = comp.bgTo || "#2a1a4a";
+      comp.bgFrom = comp.bgFrom || theme.bg;
+      comp.bgTo = comp.bgTo || theme.panel2;
       gradFields.hidden = false;
     } else {
       delete comp.bgFrom;
@@ -4883,6 +5267,7 @@ function renderConfigSettings() {
         return;
       }
       state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(json) };
+      normalizeViewTabs();
       saveState(); // backend already wrote the file; this syncs the browser fallback
       zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
       updateZoomUI();
@@ -4891,8 +5276,9 @@ function renderConfigSettings() {
       document.getElementById("set-theme").value = THEMES[state.theme] ? state.theme : "dark";
       document.getElementById("set-radius").value = state.cornerRadius != null ? state.cornerRadius : 10;
       document.getElementById("set-wall").checked = state.wall === true;
-      render();
+      showSlot(1);
       renderConfigSettings();
+      renderTabsSettings();
       panel.querySelector("#config-status").textContent = "imported — previous setup kept as .bak";
     } catch (e) {
       statusEl.textContent = `import failed: ${e}`;
@@ -6391,6 +6777,88 @@ function ensureSpotifyComp() {
   if (!comps.some((c) => c.id === selectedSpotifyId)) selectedSpotifyId = comps[0].id;
   return state.compartments.find((c) => c.id === selectedSpotifyId);
 }
+function renderSpotifyAppSettings(panel) {
+  const s = spotifyAppSettings();
+  const heading = document.createElement("h3");
+  heading.textContent = "Spotify app";
+  panel.appendChild(heading);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">Full-screen app layout. The Spotify tile below keeps its own settings.</span>`;
+  panel.appendChild(note);
+
+  const row = document.createElement("div");
+  row.className = "item-row sp-app-settings-row";
+  row.innerHTML = `
+    <label>Font size <input type="range" id="sp-font" min="11" max="24" step="1" value="${s.fontBase}" /> <span class="muted" id="sp-font-val">${s.fontBase}px</span></label>
+    <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="900" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
+    <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="56" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
+    <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="1100" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
+    <label>Column split <input type="range" id="sp-split" min="35" max="75" step="1" value="${s.split}" /> <span class="muted" id="sp-split-val">${s.split}%</span></label>
+    <button class="btn ghost" id="sp-reset">Reset</button>`;
+  panel.appendChild(row);
+
+  const font = row.querySelector("#sp-font");
+  const vinyl = row.querySelector("#sp-vinyl");
+  const lyricsFont = row.querySelector("#sp-lyrics-font");
+  const lyricsHeight = row.querySelector("#sp-lyrics-h");
+  const split = row.querySelector("#sp-split");
+  const fontVal = row.querySelector("#sp-font-val");
+  const vinylVal = row.querySelector("#sp-vinyl-val");
+  const lyricsFontVal = row.querySelector("#sp-lyrics-font-val");
+  const lyricsHeightVal = row.querySelector("#sp-lyrics-h-val");
+  const splitVal = row.querySelector("#sp-split-val");
+  // Apply live, but debounce the IPC save so dragging a slider doesn't write
+  // the whole state file on every pixel (matches the Design tab).
+  let saveT = 0;
+  const scheduleSave = () => {
+    clearTimeout(saveT);
+    saveT = setTimeout(saveState, 300);
+  };
+  font.addEventListener("input", (e) => {
+    s.fontBase = Number(e.target.value);
+    fontVal.textContent = `${s.fontBase}px`;
+    applySpotifyAppSettings();
+    scheduleSave();
+  });
+  vinyl.addEventListener("input", (e) => {
+    s.vinyl = Number(e.target.value);
+    vinylVal.textContent = `${s.vinyl}px`;
+    applySpotifyAppSettings();
+    scheduleSave();
+  });
+  lyricsFont.addEventListener("input", (e) => {
+    s.lyricsFont = Number(e.target.value);
+    lyricsFontVal.textContent = `${s.lyricsFont}px`;
+    applySpotifyAppSettings();
+    scheduleSave();
+  });
+  lyricsHeight.addEventListener("input", (e) => {
+    s.lyricsHeight = Number(e.target.value);
+    lyricsHeightVal.textContent = `${s.lyricsHeight}px`;
+    applySpotifyAppSettings();
+    scheduleSave();
+  });
+  split.addEventListener("input", (e) => {
+    s.split = Number(e.target.value);
+    splitVal.textContent = `${s.split}%`;
+    applySpotifyAppSettings();
+    scheduleSave();
+  });
+  row.querySelector("#sp-reset").addEventListener("click", () => {
+    clearTimeout(saveT);
+    s.fontBase = 16;
+    s.vinyl = 320;
+    s.lyricsFont = 16;
+    s.lyricsHeight = 520;
+    s.split = 58;
+    saveState();
+    applySpotifyAppSettings();
+    renderSpotifySettings();
+  });
+}
+
 function renderSpotifySettings() {
   const panel = document.getElementById("spotify-list");
   if (!panel) return;
@@ -6398,6 +6866,7 @@ function renderSpotifySettings() {
   const comps = state.compartments.filter((c) => c.kind === "spotify");
 
   panel.innerHTML = "";
+  renderSpotifyAppSettings(panel);
   const selectorRow = document.createElement("div");
   selectorRow.className = "item-row";
   selectorRow.innerHTML = `
@@ -6539,13 +7008,112 @@ function commitProject(comp) {
     console.error("Failed to render grid:", e);
   }
 }
+function renderSpotifyAppLyricsSettings(panel) {
+  const data = spotifyAppLyricsData();
+  const clampN = (v, d) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
+  };
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
+  const commit = () => {
+    saveState();
+    const tabs = viewTabsConfig();
+    if (tabs.slots[tabs.active - 1]?.app === "spotify") showSlot(tabs.active);
+    renderLyricsSettings();
+  };
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Spotify app";
+  panel.appendChild(heading);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">Used by the full-screen Spotify app. Seeded once from the first Lyrics tile; translation options below are shared with the tiles.</span>`;
+  panel.appendChild(note);
+
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `
+    <label>Previous lines <input id="spl-prev" type="number" min="0" max="10" value="${clampN(data.prevLines, 3)}" /></label>
+    <label>Next lines <input id="spl-next" type="number" min="0" max="10" value="${clampN(data.nextLines, 3)}" /></label>
+    <label>Sync offset <input id="spl-offset" type="number" min="-5000" max="5000" step="100" value="${Number(data.offsetMs) || 0}" /> ms</label>
+    <label>Align <select id="spl-align">${["left", "center", "right"]
+      .map((v) => `<option value="${v}" ${(data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
+      .join("")}</select></label>`;
+  panel.appendChild(row);
+
+  const row2 = document.createElement("div");
+  row2.className = "item-row";
+  row2.innerHTML = `
+    <label>Context dim <input id="spl-opacity" type="number" min="0" max="100" value="${clampPct(data.contextOpacity, 55, 0, 100)}" />%</label>
+    <label>Context size <input id="spl-scale" type="number" min="50" max="130" value="${clampPct(data.contextScale, 85, 50, 130)}" />%</label>
+    <label>Default full view <input id="spl-full" type="checkbox" class="switch" ${data.full === true ? "checked" : ""} /></label>`;
+  panel.appendChild(row2);
+
+  const row3 = document.createElement("div");
+  row3.className = "item-row";
+  row3.innerHTML = `<button class="btn ghost" id="spl-copy-tile">Copy from Lyrics tile</button>
+    <button class="btn ghost" id="spl-reset">Reset to defaults</button>
+    <span class="muted" id="spl-status"></span>`;
+  panel.appendChild(row3);
+
+  row.querySelector("#spl-prev").addEventListener("change", (e) => {
+    data.prevLines = clampN(e.target.value, 3);
+    commit();
+  });
+  row.querySelector("#spl-next").addEventListener("change", (e) => {
+    data.nextLines = clampN(e.target.value, 3);
+    commit();
+  });
+  row.querySelector("#spl-offset").addEventListener("change", (e) => {
+    data.offsetMs = Math.max(-5000, Math.min(5000, Number(e.target.value) || 0));
+    commit();
+  });
+  row.querySelector("#spl-align").addEventListener("change", (e) => {
+    data.align = e.target.value;
+    commit();
+  });
+  row2.querySelector("#spl-opacity").addEventListener("change", (e) => {
+    data.contextOpacity = clampPct(e.target.value, 55, 0, 100);
+    commit();
+  });
+  row2.querySelector("#spl-scale").addEventListener("change", (e) => {
+    data.contextScale = clampPct(e.target.value, 85, 50, 130);
+    commit();
+  });
+  row2.querySelector("#spl-full").addEventListener("change", (e) => {
+    data.full = e.target.checked;
+    commit();
+  });
+  row3.querySelector("#spl-copy-tile").addEventListener("click", () => {
+    const tile = state.compartments.find((c) => c.kind === "lyrics");
+    if (!tile || !tile.data) {
+      row3.querySelector("#spl-status").textContent = "no Lyrics tile found";
+      return;
+    }
+    state.apps.spotify.lyrics = { ...tile.data };
+    commit();
+  });
+  row3.querySelector("#spl-reset").addEventListener("click", () => {
+    state.apps.spotify.lyrics = {};
+    commit();
+  });
+}
+
 function renderLyricsSettings() {
   const panel = document.getElementById("lyrics-list");
   if (!panel) return;
   const comps = state.compartments.filter((c) => c.kind === "lyrics");
   panel.innerHTML = "";
+  renderSpotifyAppLyricsSettings(panel);
   if (!comps.length) {
-    panel.innerHTML = `<div class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile.</div>`;
+    const note = document.createElement("div");
+    note.className = "item-row";
+    note.innerHTML = `<span class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile. The Spotify app still uses its own lyrics settings above.</span>`;
+    panel.appendChild(note);
     return;
   }
   const comp = comps.find((c) => c.id === selectedLyricsId) || comps[0];
@@ -8331,7 +8899,8 @@ function cleanGoogleFontFamily(value) {
 function updateFontPreviewStatus() {
   const el = document.getElementById("fp-status");
   if (!el) return;
-  const family = state.design && state.design.googleFont;
+  const themeFont = (THEMES[state.theme] || {}).googleFont;
+  const family = (state.design && state.design.googleFont) || themeFont;
   if (!family) {
     el.textContent = "System / custom stack";
     el.classList.remove("error");
@@ -8413,6 +8982,7 @@ function ensureGoogleFontLoaded(family) {
 
 const DESIGN_SHADOWS = [
   ["None", "none"],
+  ["Warm", "0 8px 24px rgba(122, 94, 66, 0.12)"],
   ["Soft", "0 4px 16px rgba(0,0,0,0.35)"],
   ["Medium", "0 10px 30px rgba(0,0,0,0.5)"],
   ["Hard", "0 14px 40px rgba(0,0,0,0.65)"],
@@ -8420,16 +8990,75 @@ const DESIGN_SHADOWS = [
 ];
 const DESIGN_PRESETS = {
   Default: null,
+  Cozy: {
+    radiusGlobal: 18,
+    radiusTile: 20,
+    radiusButton: 12,
+    radiusInput: 12,
+    tileBorderWidth: 1,
+    tileShadow: "0 8px 24px rgba(122, 94, 66, 0.12)",
+    font: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+    googleFont: "DM Sans",
+    transitionMs: 170,
+  },
   Glass: { panel: "rgba(34,34,46,0.55)", panel2: "rgba(48,48,64,0.5)", borderColor: "rgba(255,255,255,0.14)", tileBg: "rgba(34,34,46,0.45)", tileBorderColor: "rgba(255,255,255,0.16)", radiusTile: 18, radiusButton: 12, tileShadow: "0 8px 30px rgba(0,0,0,0.45)", rowBg: "rgba(255,255,255,0.03)" },
   Neon: { bg: "#06090c", panel: "#0a1014", panel2: "#0e161c", borderColor: "#123a3a", accent: "#00ffc8", tileBorderColor: "#00ffc8", tileBorderWidth: 1, tileShadow: "0 0 14px rgba(0,255,200,0.30)", btnBg: "transparent", radiusButton: 4 },
   Soft: { radiusGlobal: 18, radiusTile: 20, radiusButton: 12, radiusInput: 12, panel: "#22222c", panel2: "#2c2c38", tileShadow: "0 6px 20px rgba(0,0,0,0.35)" },
   Terminal: { bg: "#050505", panel: "#0b0f0b", panel2: "#101510", borderColor: "#1c2a1c", text: "#c6ffc6", muted: "#5f7f5f", accent: "#33ff66", font: 'Consolas, "Courier New", monospace', radiusGlobal: 2, radiusTile: 2, radiusButton: 2, tileBorderColor: "#33ff66" },
 };
 
+function renderTabsSettings() {
+  const panel = document.getElementById("tabs-list");
+  if (!panel) return;
+  const tabs = viewTabsConfig();
+  panel.innerHTML = "";
+  for (const slot of tabs.slots) {
+    const row = document.createElement("div");
+    row.className = "item-row tab-slot-row";
+    if (slot.slot === 1) {
+      row.innerHTML = `<span class="tab-slot-num">1</span><span class="tab-slot-fixed">Board</span><span class="muted">fixed</span>`;
+    } else {
+      const options = Object.entries(APPS)
+        .filter(([id]) => id !== "board")
+        .map(
+          ([id, app]) =>
+            `<option value="${escapeHtml(id)}" ${slot.app === id ? "selected" : ""}>${escapeHtml(app.label)}</option>`
+        )
+        .join("");
+      row.innerHTML = `
+        <span class="tab-slot-num">${slot.slot}</span>
+        <select data-slot="${slot.slot}"><option value="">None</option>${options}</select>
+        <button class="btn ghost tab-slot-clear" data-slot="${slot.slot}" title="Clear slot" ${slot.app ? "" : "hidden"}>✕</button>`;
+    }
+    panel.appendChild(row);
+  }
+  panel.querySelectorAll(".tab-slot-row select").forEach((sel) => {
+    sel.addEventListener("change", () => setSlotApp(Number(sel.dataset.slot), sel.value));
+  });
+  panel.querySelectorAll(".tab-slot-clear").forEach((btn) => {
+    btn.addEventListener("click", () => setSlotApp(Number(btn.dataset.slot), ""));
+  });
+}
+
+function setSlotApp(slotNumber, appId) {
+  const tabs = viewTabsConfig();
+  const slot = tabs.slots[slotNumber - 1];
+  if (!slot || slot.slot === 1) return;
+  slot.app = appId && appId !== "board" && APPS[appId] ? appId : null;
+  saveState();
+  if (tabs.active === slot.slot) showSlot(slot.app ? slot.slot : 1);
+  else renderAppBar();
+  renderTabsSettings();
+}
+
 function renderDesignSettings() {
   const panel = document.getElementById("design-list");
   if (!panel) return;
   state.design = state.design || {};
+  const theme = THEMES[state.theme] || THEMES.dark;
+  // Colour pickers start from the active theme when no override exists, so the
+  // swatch matches what is actually painted (important for light/cozy themes).
+  const themeColor = (key, fallback) => theme[key] || fallback;
   panel.innerHTML = "";
   // Live apply on every input, but debounce the (IPC) save so dragging a slider
   // doesn't spam save_state. Discrete changes save immediately.
@@ -8513,7 +9142,7 @@ function renderDesignSettings() {
   );
 
   heading("Background");
-  colorRow("Board color", "bg", "#101014");
+  colorRow("Board color", "bg", themeColor("bg", "#101014"));
   const gradOn = !!(state.design.bgFrom && state.design.bgTo);
   const gradRow = document.createElement("div");
   gradRow.className = "item-row";
@@ -8521,8 +9150,8 @@ function renderDesignSettings() {
   panel.appendChild(gradRow);
   gradRow.querySelector(".d-input").addEventListener("change", (e) => {
     if (e.target.checked) {
-      state.design.bgFrom = state.design.bgFrom || "#101014";
-      state.design.bgTo = state.design.bgTo || "#2a1a4a";
+      state.design.bgFrom = state.design.bgFrom || theme.bg;
+      state.design.bgTo = state.design.bgTo || theme.panel2;
     } else {
       delete state.design.bgFrom;
       delete state.design.bgTo;
@@ -8531,16 +9160,16 @@ function renderDesignSettings() {
     renderDesignSettings();
   });
   if (gradOn) {
-    colorRow("Gradient from", "bgFrom", "#101014");
-    colorRow("Gradient to", "bgTo", "#2a1a4a");
+    colorRow("Gradient from", "bgFrom", themeColor("bg", "#101014"));
+    colorRow("Gradient to", "bgTo", themeColor("panel2", "#2a1a4a"));
     numRow("Gradient angle", "bgAngle", 0, 360, 5, "°", 135);
   }
 
   heading("Surfaces & borders");
-  colorRow("Panel", "panel", "#1a1a20");
-  colorRow("Panel 2", "panel2", "#23232b");
-  colorRow("Border color", "borderColor", "#2c2c36");
-  colorRow("Tile border", "tileBorderColor", "#2c2c36");
+  colorRow("Panel", "panel", themeColor("panel", "#1a1a20"));
+  colorRow("Panel 2", "panel2", themeColor("panel2", "#23232b"));
+  colorRow("Border color", "borderColor", themeColor("border", "#2c2c36"));
+  colorRow("Tile border", "tileBorderColor", themeColor("border", "#2c2c36"));
   numRow("Tile border width", "tileBorderWidth", 0, 6, 1, "px", 1);
 
   heading("Radius");
@@ -8563,8 +9192,8 @@ function renderDesignSettings() {
 
   const fontRow = document.createElement("div");
   fontRow.className = "item-row";
-  const curFont = state.design.font || DESIGN_FONTS[0][1];
-  const googleFamily = state.design.googleFont || "";
+  const curFont = state.design.font || theme.font || DESIGN_FONTS[0][1];
+  const googleFamily = state.design.googleFont || (!state.design.font ? theme.googleFont || "" : "");
   const curatedGoogle = DESIGN_GOOGLE_FONTS.find(([, family]) => family === googleFamily);
   const googleValue = googleFamily
     ? curatedGoogle
@@ -8664,20 +9293,20 @@ function renderDesignSettings() {
   numRow("Heading weight", "headingWeight", 400, 800, 50, "", 600);
 
   heading("Buttons");
-  colorRow("Background", "btnBg", "#23232b");
-  colorRow("Text", "btnText", "#e6e6ea");
-  colorRow("Border", "btnBorder", "#2c2c36");
-  colorRow("Hover background", "btnHoverBg", "#2c2c36");
+  colorRow("Background", "btnBg", themeColor("panel2", "#23232b"));
+  colorRow("Text", "btnText", themeColor("text", "#e6e6ea"));
+  colorRow("Border", "btnBorder", themeColor("border", "#2c2c36"));
+  colorRow("Hover background", "btnHoverBg", themeColor("border", "#2c2c36"));
 
   heading("Rows, inputs & tiles");
-  colorRow("Row background", "rowBg", "#1a1a20");
-  colorRow("Input background", "inputBg", "#23232b");
-  colorRow("Tile background", "tileBg", "#1a1a20");
+  colorRow("Row background", "rowBg", themeColor("panel", "#1a1a20"));
+  colorRow("Input background", "inputBg", themeColor("panel2", "#23232b"));
+  colorRow("Tile background", "tileBg", themeColor("panel", "#1a1a20"));
   selectRow("Tile shadow", "tileShadow", DESIGN_SHADOWS, "none");
 
   heading("Accents & effects");
-  colorRow("Accent", "accent", "#7c3aed");
-  colorRow("Scrollbar thumb", "scrollThumb", "#23232b");
+  colorRow("Accent", "accent", themeColor("accent", "#7c3aed"));
+  colorRow("Scrollbar thumb", "scrollThumb", themeColor("panel2", "#23232b"));
   numRow("Transition speed", "transitionMs", 0, 600, 10, "ms", 150);
 }
 
@@ -8740,6 +9369,17 @@ document.getElementById("set-theme").addEventListener("change", (e) => {
   state.theme = THEMES[e.target.value] ? e.target.value : "dark";
   saveState();
   applyAppearance();
+  // Tile surfaces (cozy tints) and Design-tab swatch defaults depend on the
+  // theme, so refresh both after a theme switch.
+  render();
+  renderDesignSettings();
+});
+document.getElementById("theme-hint-apply").addEventListener("click", () => {
+  state.design = { ...DESIGN_PRESETS.Cozy };
+  saveState();
+  applyAppearance();
+  render();
+  renderDesignSettings();
 });
 document.getElementById("set-radius").addEventListener("change", (e) => {
   state.cornerRadius = Math.min(24, Math.max(0, Number(e.target.value) || 0));
@@ -8951,6 +9591,12 @@ async function initialize() {
     }
     setupDragDrop();
   }
+  normalizeViewTabs();
+  appBarEl.hidden = true;
+  appViewEl.hidden = true;
+  appBarHotspot.hidden = false;
+  dashboard.hidden = false;
+  document.documentElement.dataset.view = "board";
   buildMemeFocusShell();
   zoom = clamp(state.zoom || 1, ZOOM_MIN, ZOOM_MAX);
   updateZoomUI();
@@ -8985,6 +9631,8 @@ async function initialize() {
   // dashboard before the window reaches its final size, leaving tiles sized for
   // the wrong width until the next interaction.
   requestAnimationFrame(() => render());
+  renderAppBar();
+  renderTabsSettings();
   startBackupScheduler();
   updateBackupTabBadge();
 }
