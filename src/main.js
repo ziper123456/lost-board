@@ -610,6 +610,13 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("spotify_context", { contextUri });
     return null;
   },
+  async spotifySearch(query) {
+    if (window.__TAURI__) return invoke("spotify_search", { query });
+    return [];
+  },
+  async spotifyAddToQueue(uri) {
+    if (window.__TAURI__) return invoke("spotify_add_to_queue", { uri });
+  },
   async spotifyArtist(id) {
     if (window.__TAURI__) return invoke("spotify_artist", { id });
     return null;
@@ -1568,6 +1575,7 @@ function appContext() {
       activateTab(tab || "grid");
     },
     ICON,
+    Colors,
   };
 }
 
@@ -1601,6 +1609,8 @@ function spotifyAppSettings() {
   if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 56) s.lyricsFont = 16;
   if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 1100) s.lyricsHeight = 520;
   if (!Number.isFinite(Number(s.split)) || s.split < 35 || s.split > 75) s.split = 58;
+  if (typeof s.adaptiveColors !== "boolean") s.adaptiveColors = true;
+  if (typeof s.focus !== "boolean") s.focus = false;
   return s;
 }
 
@@ -6799,6 +6809,23 @@ function renderSpotifyAppSettings(panel) {
     <button class="btn ghost" id="sp-reset">Reset</button>`;
   panel.appendChild(row);
 
+  const toggles = document.createElement("div");
+  toggles.className = "item-row sp-app-settings-row";
+  toggles.innerHTML = `
+    <label><input type="checkbox" id="sp-adaptive" class="switch" ${s.adaptiveColors ? "checked" : ""} /> Cover colours</label>
+    <span class="muted">Ctrl+K / Ctrl+S search · F focus</span>`;
+  panel.appendChild(toggles);
+
+  const refreshMountedApp = () => {
+    const tabs = viewTabsConfig();
+    if (tabs.slots[tabs.active - 1]?.app === "spotify") showSlot(tabs.active);
+  };
+  toggles.querySelector("#sp-adaptive").addEventListener("change", (e) => {
+    s.adaptiveColors = e.target.checked;
+    saveState();
+    refreshMountedApp();
+  });
+
   const font = row.querySelector("#sp-font");
   const vinyl = row.querySelector("#sp-vinyl");
   const lyricsFont = row.querySelector("#sp-lyrics-font");
@@ -6853,8 +6880,11 @@ function renderSpotifyAppSettings(panel) {
     s.lyricsFont = 16;
     s.lyricsHeight = 520;
     s.split = 58;
+    s.adaptiveColors = true;
+    s.focus = false;
     saveState();
     applySpotifyAppSettings();
+    refreshMountedApp();
     renderSpotifySettings();
   });
 }
