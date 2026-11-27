@@ -398,13 +398,20 @@
   outline: none;
   z-index: 20;
 }
-.sp-cover-current { width: 108px; height: 108px; z-index: 1; }
+.sp-cover-current {
+  width: 108px;
+  height: 108px;
+  margin-left: -10px;
+  z-index: 7;
+}
+.sp-cover-current:first-child { margin-left: 0; }
 .sp-cover-next {
   width: 68px;
   height: 68px;
   margin-left: -8px;
   border-radius: 11px;
 }
+.sp-cover-next:first-child { margin-left: 0; }
 .sp-cover-next-first { width: 76px; height: 76px; }
 .sp-cover-fallback {
   display: flex;
@@ -424,7 +431,8 @@
 }
 @container (max-width: 600px) {
   .sp-cover-next:nth-of-type(n + 4) { display: none; }
-  .sp-cover-current { width: 92px; height: 92px; }
+  .sp-cover-current { width: 92px; height: 92px; margin-left: -8px; }
+  .sp-cover-current:first-child { margin-left: 0; }
   .sp-cover-next { width: 60px; height: 60px; margin-left: -8px; }
   .sp-cover-next-first { width: 66px; height: 66px; }
 }

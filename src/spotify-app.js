@@ -457,6 +457,16 @@
     function renderCoverRack() {
       if (!coverRack) return;
       coverRack.innerHTML = "";
+      for (const [index, item] of queueItems.slice(0, 5).entries()) {
+        const cover = coverButton({
+          image: item.art || "",
+          title: `Play ${item.title || "next track"}`,
+          className: `sp-cover-next${index === 0 ? " sp-cover-next-first" : ""}`,
+          onClick: () => void jumpQueueItem(item),
+        });
+        cover.style.setProperty("--sp-cover-z", String(6 - index));
+        coverRack.appendChild(cover);
+      }
       if (contextKey) {
         const contextName = (contextInfo && contextInfo.name) || (current && current.context_type ? `${current.context_type} context` : "Current playlist");
         coverRack.appendChild(
@@ -467,16 +477,6 @@
             onClick: () => openSpotify(contextKey),
           })
         );
-      }
-      for (const [index, item] of queueItems.slice(0, 5).entries()) {
-        const cover = coverButton({
-          image: item.art || "",
-          title: `Play ${item.title || "next track"}`,
-          className: `sp-cover-next${index === 0 ? " sp-cover-next-first" : ""}`,
-          onClick: () => void jumpQueueItem(item),
-        });
-        cover.style.setProperty("--sp-cover-z", String(6 - index));
-        coverRack.appendChild(cover);
       }
       coverRack.hidden = !coverRack.children.length;
     }
