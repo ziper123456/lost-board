@@ -38,6 +38,8 @@ const ICON = {
 const APPS = {
   board: { label: "Board", icon: ICON.panel },
 };
+// App screens ship in their own files (loaded before main.js) and register here.
+Object.assign(APPS, window.LostBoardApps || {});
 
 // ---------------------------------------------------------------------------
 // State (persisted to localStorage). Each compartment has a `kind` and `data`.
@@ -68,6 +70,8 @@ const DEFAULT_STATE = {
       { slot: 9, app: null },
     ],
   },
+  // Per-app persisted state (e.g. the Spotify app's lyrics layout).
+  apps: {},
   lyricsOffsets: {},
   lyricsTranslate: false,
   lyricsDeeplFallback: false,
@@ -592,6 +596,17 @@ async openFolder(path) {
   async spotifyQueue() {
     if (window.__TAURI__) return invoke("spotify_queue");
     return [];
+  },
+  async spotifyArtist(id) {
+    if (window.__TAURI__) return invoke("spotify_artist", { id });
+    return null;
+  },
+  async spotifyDevices() {
+    if (window.__TAURI__) return invoke("spotify_devices");
+    return [];
+  },
+  async spotifyTransfer(deviceId, play) {
+    if (window.__TAURI__) return invoke("spotify_transfer", { deviceId, play });
   },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
@@ -1520,8 +1535,33 @@ function appContext() {
     escapeHtml,
     addTimer,
     clearBodyTimers,
+    subscribePlayback,
+    renderLyrics: (container, comp) => renderLyricsBody(comp, container),
+    spotifyLyricsComp,
+    openSettings: (tab) => {
+      settingsEl.classList.remove("hidden");
+      activateTab(tab || "grid");
+    },
     ICON,
   };
+}
+
+// The Spotify app owns its lyrics layout, seeded once from the first Lyrics
+// tile (or defaults when no tile exists). After that it is independent.
+function spotifyAppLyricsData() {
+  if (!state.apps || typeof state.apps !== "object") state.apps = {};
+  if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
+  const app = state.apps.spotify;
+  if (!app.lyrics || typeof app.lyrics !== "object") {
+    const tile = state.compartments.find((c) => c.kind === "lyrics");
+    app.lyrics = tile && tile.data ? { ...tile.data } : {};
+    saveState();
+  }
+  return app.lyrics;
+}
+
+function spotifyLyricsComp() {
+  return { id: "spotify-app-lyrics", kind: "lyrics", data: spotifyAppLyricsData() };
 }
 
 function renderAppBar() {
@@ -1558,11 +1598,12 @@ function showSlot(n) {
   const previous = tabs.slots[tabs.active - 1];
   if (previous && previous.app && previous.app !== "board") {
     try {
-      APPS[previous.app]?.unmount?.(appViewEl);
+      APPS[previous.app]?.unmount?.(appViewEl, appContext());
     } catch (e) {
       console.error(`Failed to unmount app "${previous.app}"`, e);
     }
   }
+  clearBodyTimers(appViewEl);
   tabs.active = slot.slot;
   if (slot.app === "board") {
     appViewEl.innerHTML = "";
@@ -6828,13 +6869,112 @@ function commitProject(comp) {
     console.error("Failed to render grid:", e);
   }
 }
+function renderSpotifyAppLyricsSettings(panel) {
+  const data = spotifyAppLyricsData();
+  const clampN = (v, d) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(10, Math.max(0, x)) : d;
+  };
+  const clampPct = (v, d, min, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d;
+  };
+  const commit = () => {
+    saveState();
+    const tabs = viewTabsConfig();
+    if (tabs.slots[tabs.active - 1]?.app === "spotify") showSlot(tabs.active);
+    renderLyricsSettings();
+  };
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Spotify app";
+  panel.appendChild(heading);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">Used by the full-screen Spotify app. Seeded once from the first Lyrics tile; translation options below are shared with the tiles.</span>`;
+  panel.appendChild(note);
+
+  const row = document.createElement("div");
+  row.className = "item-row";
+  row.innerHTML = `
+    <label>Previous lines <input id="spl-prev" type="number" min="0" max="10" value="${clampN(data.prevLines, 3)}" /></label>
+    <label>Next lines <input id="spl-next" type="number" min="0" max="10" value="${clampN(data.nextLines, 3)}" /></label>
+    <label>Sync offset <input id="spl-offset" type="number" min="-5000" max="5000" step="100" value="${Number(data.offsetMs) || 0}" /> ms</label>
+    <label>Align <select id="spl-align">${["left", "center", "right"]
+      .map((v) => `<option value="${v}" ${(data.align || "left") === v ? "selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`)
+      .join("")}</select></label>`;
+  panel.appendChild(row);
+
+  const row2 = document.createElement("div");
+  row2.className = "item-row";
+  row2.innerHTML = `
+    <label>Context dim <input id="spl-opacity" type="number" min="0" max="100" value="${clampPct(data.contextOpacity, 55, 0, 100)}" />%</label>
+    <label>Context size <input id="spl-scale" type="number" min="50" max="130" value="${clampPct(data.contextScale, 85, 50, 130)}" />%</label>
+    <label>Default full view <input id="spl-full" type="checkbox" class="switch" ${data.full === true ? "checked" : ""} /></label>`;
+  panel.appendChild(row2);
+
+  const row3 = document.createElement("div");
+  row3.className = "item-row";
+  row3.innerHTML = `<button class="btn ghost" id="spl-copy-tile">Copy from Lyrics tile</button>
+    <button class="btn ghost" id="spl-reset">Reset to defaults</button>
+    <span class="muted" id="spl-status"></span>`;
+  panel.appendChild(row3);
+
+  row.querySelector("#spl-prev").addEventListener("change", (e) => {
+    data.prevLines = clampN(e.target.value, 3);
+    commit();
+  });
+  row.querySelector("#spl-next").addEventListener("change", (e) => {
+    data.nextLines = clampN(e.target.value, 3);
+    commit();
+  });
+  row.querySelector("#spl-offset").addEventListener("change", (e) => {
+    data.offsetMs = Math.max(-5000, Math.min(5000, Number(e.target.value) || 0));
+    commit();
+  });
+  row.querySelector("#spl-align").addEventListener("change", (e) => {
+    data.align = e.target.value;
+    commit();
+  });
+  row2.querySelector("#spl-opacity").addEventListener("change", (e) => {
+    data.contextOpacity = clampPct(e.target.value, 55, 0, 100);
+    commit();
+  });
+  row2.querySelector("#spl-scale").addEventListener("change", (e) => {
+    data.contextScale = clampPct(e.target.value, 85, 50, 130);
+    commit();
+  });
+  row2.querySelector("#spl-full").addEventListener("change", (e) => {
+    data.full = e.target.checked;
+    commit();
+  });
+  row3.querySelector("#spl-copy-tile").addEventListener("click", () => {
+    const tile = state.compartments.find((c) => c.kind === "lyrics");
+    if (!tile || !tile.data) {
+      row3.querySelector("#spl-status").textContent = "no Lyrics tile found";
+      return;
+    }
+    state.apps.spotify.lyrics = { ...tile.data };
+    commit();
+  });
+  row3.querySelector("#spl-reset").addEventListener("click", () => {
+    state.apps.spotify.lyrics = {};
+    commit();
+  });
+}
+
 function renderLyricsSettings() {
   const panel = document.getElementById("lyrics-list");
   if (!panel) return;
   const comps = state.compartments.filter((c) => c.kind === "lyrics");
   panel.innerHTML = "";
+  renderSpotifyAppLyricsSettings(panel);
   if (!comps.length) {
-    panel.innerHTML = `<div class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile.</div>`;
+    const note = document.createElement("div");
+    note.className = "item-row";
+    note.innerHTML = `<span class="muted">No Lyrics tile yet — add one from Grid &gt; Add a tile. The Spotify app still uses its own lyrics settings above.</span>`;
+    panel.appendChild(note);
     return;
   }
   const comp = comps.find((c) => c.id === selectedLyricsId) || comps[0];

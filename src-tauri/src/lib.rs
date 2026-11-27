@@ -1455,8 +1455,11 @@ async fn spotify_access_token() -> Result<String, String> {
 
 #[derive(serde::Serialize)]
 struct SpotifyTrack {
+    id: String,
+    uri: String,
     title: String,
     artist: String,
+    artist_id: String,
     album: String,
     art: String,
     playing: bool,
@@ -1467,6 +1470,9 @@ struct SpotifyTrack {
     repeat: String,
     context_uri: String,
     context_type: String,
+    device_name: String,
+    device_type: String,
+    device_active: bool,
 }
 
 /// Fetch the current playback state (track + shuffle/repeat flags).
@@ -1491,12 +1497,22 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         Some(it) if !it.is_null() => it,
         _ => return Ok(None),
     };
+    let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let uri = item.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let artist = item
         .get("artists")
         .and_then(|a| a.as_array())
         .and_then(|a| a.first())
         .and_then(|x| x.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let artist_id = item
+        .get("artists")
+        .and_then(|a| a.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("id"))
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
@@ -1532,9 +1548,27 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
+    let device = v.get("device");
+    let device_name = device
+        .and_then(|d| d.get("name"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_type = device
+        .and_then(|d| d.get("type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_active = device
+        .and_then(|d| d.get("is_active"))
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     Ok(Some(SpotifyTrack {
+        id,
+        uri,
         title,
         artist,
+        artist_id,
         album,
         art,
         playing,
@@ -1545,7 +1579,142 @@ async fn spotify_now_playing() -> Result<Option<SpotifyTrack>, String> {
         repeat,
         context_uri,
         context_type,
+        device_name,
+        device_type,
+        device_active,
     }))
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyArtist {
+    id: String,
+    name: String,
+    image: String,
+    genres: Vec<String>,
+    followers: u64,
+    popularity: u8,
+}
+
+/// Artist metadata for the Spotify app's artist card. Spotify has no biography
+/// endpoint, so this returns image/genres/followers/popularity.
+#[tauri::command]
+async fn spotify_artist(id: String) -> Result<SpotifyArtist, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("invalid artist id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("https://api.spotify.com/v1/artists/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("artist request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("artist read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("artist parse: {e}, body: {body}"))?;
+    Ok(SpotifyArtist {
+        id: v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        name: v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        image: v
+            .get("images")
+            .and_then(|x| x.as_array())
+            .and_then(|a| a.first())
+            .and_then(|x| x.get("url"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        genres: v
+            .get("genres")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|g| g.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        followers: v
+            .get("followers")
+            .and_then(|f| f.get("total"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0),
+        popularity: v
+            .get("popularity")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+            .min(100) as u8,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SpotifyDevice {
+    id: String,
+    name: String,
+    device_type: String,
+    active: bool,
+    volume_percent: Option<u64>,
+}
+
+/// Available playback devices for the "Playing on" picker.
+#[tauri::command]
+async fn spotify_devices() -> Result<Vec<SpotifyDevice>, String> {
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/me/player/devices")
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("devices request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("devices read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("devices parse: {e}, body: {body}"))?;
+    Ok(v.get("devices")
+        .and_then(|d| d.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|d| SpotifyDevice {
+                    id: d.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: d.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    device_type: d.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    active: d.get("is_active").and_then(|x| x.as_bool()).unwrap_or(false),
+                    volume_percent: d.get("volume_percent").and_then(|x| x.as_u64()),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Move playback to a device. `play` starts the current context on it.
+#[tauri::command]
+async fn spotify_transfer(device_id: String, play: bool) -> Result<(), String> {
+    if device_id.is_empty() {
+        return Err("missing device id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({
+        "device_ids": [device_id],
+        "play": play,
+    });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("transfer request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
@@ -3095,6 +3264,9 @@ pub fn run() {
             spotify_capture,
             spotify_now_playing,
             spotify_cover_palette,
+            spotify_artist,
+            spotify_devices,
+            spotify_transfer,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,
