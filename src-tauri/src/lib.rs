@@ -1866,6 +1866,7 @@ LIMIT 40"#
         .get("https://query.wikidata.org/sparql")
         .header("User-Agent", ARTIST_UA)
         .query(&[("format", "json"), ("query", query.as_str())])
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|e| format!("wikidata request: {e}"))?;
@@ -1925,6 +1926,7 @@ LIMIT 40"#
                 if let Ok(resp) = client
                     .get(&endpoint)
                     .header("User-Agent", ARTIST_UA)
+                    .timeout(std::time::Duration::from_secs(10))
                     .send()
                     .await
                 {

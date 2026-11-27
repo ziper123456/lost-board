@@ -515,9 +515,10 @@
       aboutPanel.hidden = true;
       const [artist, topTracks] = await Promise.all([
         ctx.native.spotifyArtist(id).catch(() => null),
-        ctx.native.spotifyArtistTopTracks(id).catch(() => []),
+        ctx.native.spotifyArtistTopTracks(id).catch(() => null),
       ]);
       if (!alive() || lastArtistId !== id) return;
+      const topTracksFailed = topTracks === null;
       const entry = {
         id,
         name: (artist && artist.name) || (current && current.artist) || "Artist",
@@ -533,13 +534,20 @@
       applyArtist(entry);
 
       // Enrich with Wikipedia/social links without delaying the basic card.
-      const web = await ctx.native.artistWebInfo(id).catch(() => null);
+      let web = null;
+      let webFailed = false;
+      try {
+        web = await ctx.native.artistWebInfo(id);
+      } catch {
+        webFailed = true;
+      }
       if (!alive() || lastArtistId !== id) return;
       entry.web = web || null;
       entry.at = Date.now();
       applyArtist(entry);
 
-      if (artist) {
+      // Do not cache transient failures for 24h; refetch on the next track.
+      if (artist && !topTracksFailed && !webFailed) {
         cache[id] = entry;
         const keys = Object.keys(cache);
         if (keys.length > 30) {
