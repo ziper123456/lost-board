@@ -2,14 +2,49 @@
 
 .sp-app {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, calc(var(--sp-split, 58) * 1%)) 18px minmax(0, 1fr);
+  gap: 0;
   height: 100%;
   min-height: 0;
   padding: 20px 22px 22px;
   box-sizing: border-box;
   font-size: var(--sp-font-size, 1rem);
 }
+
+/* Draggable divider between the hero and the side panel. */
+.sp-splitter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  color: var(--muted);
+}
+.sp-splitter::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--border);
+}
+.sp-splitter-grip {
+  position: relative;
+  z-index: 1;
+  width: 6px;
+  height: 34px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 82%, var(--text));
+}
+.sp-splitter:hover .sp-splitter-grip,
+.sp-splitter:focus-visible .sp-splitter-grip,
+.sp-splitter.is-dragging .sp-splitter-grip { background: var(--accent); }
+.sp-splitter:focus-visible { outline: none; }
+.sp-splitter:focus-visible::before { background: var(--accent); }
 
 /* ---- hero ---- */
 .sp-hero {
@@ -301,33 +336,49 @@
 .sp-status.is-error { color: var(--red); }
 
 /* ---- about + top tracks ---- */
-.sp-about-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: 14px;
-  flex: 0 0 auto;
-  margin-top: 14px;
+.sp-about-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--tile-shadow, none);
 }
-.sp-about-grid:not(.is-solo) { margin-top: auto; }
-.sp-about-grid[hidden] { display: none; }
-.sp-about-grid.is-solo { grid-template-columns: 1fr; }
-.sp-about-card,
-.sp-top-tracks {
+.sp-about-panel[hidden] { display: none; }
+.sp-about-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sp-about-scroll {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+}
+.sp-top-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 .sp-top-tracks[hidden] { display: none; }
-.sp-about-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .sp-artist-img {
   flex: 0 0 auto;
-  width: 60px;
-  height: 60px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--panel);
@@ -428,23 +479,10 @@
 /* ---- side panels ---- */
 .sp-side { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .sp-about-panel {
-  display: flex;
-  flex-direction: column;
   flex: 1 1 auto;
-  min-height: 56px;
-  min-width: 0;
-  overflow: hidden;
+  min-height: 110px;
 }
-.sp-about-panel[hidden] { display: none; }
 .sp-side:has(.sp-about-panel[hidden]) .sp-lyrics-panel { flex: 1 1 100%; max-height: none; }
-.sp-side .sp-about-grid {
-  grid-template-columns: 1fr;
-  flex: 1 1 auto;
-  min-height: 0;
-  margin-top: 0;
-  overflow-y: auto;
-  padding-right: 2px;
-}
 .sp-queue-panel,
 .sp-lyrics-panel {
   display: flex;
@@ -460,7 +498,7 @@
 .sp-lyrics-panel {
   flex: 0 0 var(--sp-lyrics-h, 520px);
   min-height: 220px;
-  max-height: calc(100% - 70px);
+  max-height: calc(100% - 124px);
 }
 .sp-panel-head {
   display: flex;
@@ -592,8 +630,7 @@
 html[data-theme="cozy"] .sp-hero {
   background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, #fff), var(--panel));
 }
-html[data-theme="cozy"] .sp-about-card,
-html[data-theme="cozy"] .sp-top-tracks {
+html[data-theme="cozy"] .sp-about-panel {
   background: color-mix(in srgb, var(--tint-peach) 30%, var(--panel));
   border-color: color-mix(in srgb, var(--border) 78%, var(--tint-peach));
 }
@@ -614,7 +651,7 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
   .sp-side { min-height: 520px; }
   .sp-queue-panel { flex: 0 0 190px; }
   .sp-about-panel { min-height: 180px; }
-  .sp-about-grid { grid-template-columns: 1fr; }
+  .sp-splitter { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -61,6 +61,7 @@
     container.style.setProperty("--sp-vinyl-w", `${appSettings.vinyl}px`);
     container.style.setProperty("--sp-lyrics-font", `${appSettings.lyricsFont}px`);
     container.style.setProperty("--sp-lyrics-h", `${appSettings.lyricsHeight}px`);
+    container.style.setProperty("--sp-split", String(appSettings.split));
     container.innerHTML = `
       <div class="sp-app">
         <section class="sp-hero">
@@ -108,21 +109,22 @@
             <div class="sp-queue-list"></div>
           </section>
         </section>
+        <div class="sp-splitter" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize columns">
+          <span class="sp-splitter-grip" aria-hidden="true"></span>
+        </div>
         <aside class="sp-side">
-          <section class="sp-about-panel">
-            <div class="sp-about-grid" hidden>
-              <section class="sp-about-card">
-                <header class="sp-about-head">
-                  <img class="sp-artist-img" alt="" />
-                  <div class="sp-about-id">
-                    <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
-                    <div class="sp-about-stats"></div>
-                    <div class="sp-artist-genres"></div>
-                  </div>
-                </header>
-                <p class="sp-about-bio" hidden></p>
-                <div class="sp-about-links"></div>
-              </section>
+          <section class="sp-about-panel" hidden>
+            <header class="sp-about-head">
+              <img class="sp-artist-img" alt="" />
+              <div class="sp-about-id">
+                <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
+                <div class="sp-about-stats"></div>
+                <div class="sp-artist-genres"></div>
+              </div>
+            </header>
+            <div class="sp-about-scroll">
+              <p class="sp-about-bio" hidden></p>
+              <div class="sp-about-links"></div>
               <section class="sp-top-tracks">
                 <header class="sp-about-heading">Top tracks</header>
                 <div class="sp-top-list"></div>
@@ -156,8 +158,8 @@
     const fillEl = container.querySelector(".sp-progress-fill");
     const queueList = container.querySelector(".sp-queue-list");
     const queueCount = container.querySelector(".sp-queue-count");
-    const aboutGrid = container.querySelector(".sp-about-grid");
     const aboutPanel = container.querySelector(".sp-about-panel");
+    const splitter = container.querySelector(".sp-splitter");
     const topTracksPanel = container.querySelector(".sp-top-tracks");
     const topTracksList = container.querySelector(".sp-top-list");
     const artistImg = container.querySelector(".sp-artist-img");
@@ -245,7 +247,6 @@
         anchorProgress = 0;
         root.classList.remove("is-playing");
         playBtn.innerHTML = PLAY;
-        aboutGrid.hidden = true;
         aboutPanel.hidden = true;
         lastArtistId = "";
         lastQueueKey = "";
@@ -280,7 +281,6 @@
         void loadArtist(track.artist_id);
       } else if (!track.artist_id) {
         lastArtistId = "";
-        aboutGrid.hidden = true;
         aboutPanel.hidden = true;
       }
 
@@ -396,11 +396,9 @@
       topTracksList.innerHTML = "";
       if (!tracks || !tracks.length) {
         topTracksPanel.hidden = true;
-        aboutGrid.classList.add("is-solo");
         return;
       }
       topTracksPanel.hidden = false;
-      aboutGrid.classList.remove("is-solo");
       tracks.forEach((track, index) => {
         const row = document.createElement("button");
         row.type = "button";
@@ -448,12 +446,10 @@
 
     function applyArtist(entry) {
       if (!entry || !entry.id) {
-        aboutGrid.hidden = true;
         aboutPanel.hidden = true;
         return;
       }
       aboutPanel.hidden = false;
-      aboutGrid.hidden = false;
       if (entry.image) {
         artistImg.src = entry.image;
         artistImg.hidden = false;
@@ -516,7 +512,6 @@
         applyArtist(hit);
         return;
       }
-      aboutGrid.hidden = true;
       aboutPanel.hidden = true;
       const [artist, topTracks] = await Promise.all([
         ctx.native.spotifyArtist(id).catch(() => null),
@@ -621,6 +616,51 @@
     });
     container.querySelector(".sp-lyrics-settings").addEventListener("click", () => ctx.openSettings("lyrics"));
     openContextBtn.addEventListener("click", () => openSpotify(current && current.context_uri));
+
+    const clampSplit = (value) => Math.max(35, Math.min(75, Number(value) || 58));
+    const applySplit = (value) => {
+      const pct = clampSplit(value);
+      container.style.setProperty("--sp-split", pct.toFixed(1));
+      splitter.setAttribute("aria-valuenow", String(Math.round(pct)));
+      return pct;
+    };
+    applySplit(appSettings.split);
+    let splitDrag = false;
+    splitter.addEventListener("pointerdown", (e) => {
+      if (window.matchMedia("(max-width: 1050px)").matches) return;
+      splitDrag = true;
+      splitter.classList.add("is-dragging");
+      splitter.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    splitter.addEventListener("pointermove", (e) => {
+      if (!splitDrag) return;
+      const rect = root.getBoundingClientRect();
+      applySplit(((e.clientX - rect.left) / Math.max(1, rect.width)) * 100);
+    });
+    const endSplitDrag = (e) => {
+      if (!splitDrag) return;
+      splitDrag = false;
+      splitter.classList.remove("is-dragging");
+      const rect = root.getBoundingClientRect();
+      appSettings.split = Math.round(applySplit(((e.clientX - rect.left) / Math.max(1, rect.width)) * 100));
+      ctx.saveState();
+    };
+    splitter.addEventListener("pointerup", endSplitDrag);
+    splitter.addEventListener("pointercancel", () => {
+      if (!splitDrag) return;
+      splitDrag = false;
+      splitter.classList.remove("is-dragging");
+      applySplit(appSettings.split);
+    });
+    splitter.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const delta = e.key === "ArrowLeft" ? -2 : 2;
+      appSettings.split = Math.round(applySplit(Number(appSettings.split) + delta));
+      ctx.saveState();
+    });
+
     openTrackBtn.addEventListener("click", () => openSpotify(current && current.uri));
 
     function seekFromPointer(e) {

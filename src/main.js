@@ -1587,6 +1587,7 @@ function spotifyAppSettings() {
   if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 900) s.vinyl = 320;
   if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 56) s.lyricsFont = 16;
   if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 1100) s.lyricsHeight = 520;
+  if (!Number.isFinite(Number(s.split)) || s.split < 35 || s.split > 75) s.split = 58;
   return s;
 }
 
@@ -1597,6 +1598,7 @@ function applySpotifyAppSettings() {
   appViewEl.style.setProperty("--sp-vinyl-w", `${s.vinyl}px`);
   appViewEl.style.setProperty("--sp-lyrics-font", `${s.lyricsFont}px`);
   appViewEl.style.setProperty("--sp-lyrics-h", `${s.lyricsHeight}px`);
+  appViewEl.style.setProperty("--sp-split", String(s.split));
 }
 
 function renderAppBar() {
@@ -6774,6 +6776,7 @@ function renderSpotifyAppSettings(panel) {
     <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="900" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
     <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="56" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
     <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="1100" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
+    <label>Column split <input type="range" id="sp-split" min="35" max="75" step="1" value="${s.split}" /> <span class="muted" id="sp-split-val">${s.split}%</span></label>
     <button class="btn ghost" id="sp-reset">Reset</button>`;
   panel.appendChild(row);
 
@@ -6781,10 +6784,12 @@ function renderSpotifyAppSettings(panel) {
   const vinyl = row.querySelector("#sp-vinyl");
   const lyricsFont = row.querySelector("#sp-lyrics-font");
   const lyricsHeight = row.querySelector("#sp-lyrics-h");
+  const split = row.querySelector("#sp-split");
   const fontVal = row.querySelector("#sp-font-val");
   const vinylVal = row.querySelector("#sp-vinyl-val");
   const lyricsFontVal = row.querySelector("#sp-lyrics-font-val");
   const lyricsHeightVal = row.querySelector("#sp-lyrics-h-val");
+  const splitVal = row.querySelector("#sp-split-val");
   font.addEventListener("input", (e) => {
     s.fontBase = Number(e.target.value);
     fontVal.textContent = `${s.fontBase}px`;
@@ -6809,11 +6814,18 @@ function renderSpotifyAppSettings(panel) {
     applySpotifyAppSettings();
     saveState();
   });
+  split.addEventListener("input", (e) => {
+    s.split = Number(e.target.value);
+    splitVal.textContent = `${s.split}%`;
+    applySpotifyAppSettings();
+    saveState();
+  });
   row.querySelector("#sp-reset").addEventListener("click", () => {
     s.fontBase = 16;
     s.vinyl = 320;
     s.lyricsFont = 16;
     s.lyricsHeight = 520;
+    s.split = 58;
     saveState();
     applySpotifyAppSettings();
     renderSpotifySettings();
