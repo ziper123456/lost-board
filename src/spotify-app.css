@@ -1,6 +1,9 @@
 /* Full-screen Spotify app tab. */
 
 .sp-app {
+  --sp-art-accent: var(--accent);
+  --sp-art-secondary: var(--accent);
+  --sp-art-on-accent: #fff;
   position: relative;
   overflow: hidden;
   display: grid;
@@ -227,7 +230,7 @@
   min-height: 0;
   padding: 22px 24px;
   overflow: auto;
-  background: var(--panel);
+  background: var(--sp-hero-bg, var(--panel));
   border: 1px solid var(--border);
   border-radius: 24px;
   box-shadow: var(--tile-shadow, none);
@@ -592,7 +595,7 @@
 /* ---- about + top tracks ---- */
 .sp-about-panel {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -602,6 +605,45 @@
   box-shadow: var(--tile-shadow, none);
 }
 .sp-about-panel[hidden] { display: none; }
+/* Full-height square artist rail on the far left. */
+.sp-about-media {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: stretch;
+  height: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--panel-2) 70%, var(--accent));
+  border-radius: 19px 0 0 19px;
+}
+.sp-about-media .sp-artist-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  object-fit: cover;
+  background: transparent;
+}
+.sp-artist-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text) 65%, transparent);
+  font-size: 2em;
+  font-weight: 700;
+}
+.sp-artist-fallback[hidden] { display: none; }
+.sp-about-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
 .sp-about-head {
   display: flex;
   align-items: center;
@@ -629,16 +671,7 @@
   border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
 }
 .sp-top-tracks[hidden] { display: none; }
-.sp-artist-img {
-  flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--panel);
-  border: 1px solid var(--border);
-}
-.sp-artist-img[hidden] { display: none; }
+.sp-about-media .sp-artist-img[hidden] { display: none; }
 .sp-about-id { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .sp-artist-link {
   color: var(--text);
@@ -882,7 +915,7 @@
 
 /* ---- theme refinements ---- */
 html[data-theme="cozy"] .sp-hero {
-  background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, #fff), var(--panel));
+  background: var(--sp-hero-bg, linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, #fff), var(--panel)));
 }
 html[data-theme="cozy"] .sp-about-panel {
   background: color-mix(in srgb, var(--tint-peach) 30%, var(--panel));
@@ -893,6 +926,252 @@ html[data-theme="cozy"] .sp-lyrics-panel {
   border-color: color-mix(in srgb, var(--border) 82%, var(--chrome));
 }
 html[data-theme="cozy"] .sp-play-main { color: #fff; }
+
+/* ---- cover-adaptive colours ---- */
+.sp-app.has-art-palette .sp-progress-fill,
+.sp-app.has-art-palette .sp-play-main { background: var(--sp-art-accent); }
+.sp-app.has-art-palette .sp-progress-fill::after { background: var(--sp-art-accent); }
+.sp-app.has-art-palette .sp-play-main {
+  color: var(--sp-art-on-accent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--sp-art-accent) 32%, transparent);
+}
+.sp-app.has-art-palette .sp-play-main:hover {
+  background: color-mix(in srgb, var(--sp-art-accent) 86%, #000);
+  color: var(--sp-art-on-accent);
+}
+.sp-app.has-art-palette .sp-sleeve {
+  box-shadow: 0 16px 32px color-mix(in srgb, var(--sp-art-accent) 26%, transparent);
+}
+.sp-app.has-art-palette .sp-cover:hover,
+.sp-app.has-art-palette .sp-cover:focus-visible { border-color: var(--sp-art-accent); }
+.sp-app.has-art-palette .sp-lyrics-host .lyr-line.cur { color: var(--sp-art-accent); }
+.sp-app.has-art-palette .sp-splitter:hover .sp-splitter-grip,
+.sp-app.has-art-palette .sp-splitter:focus-visible .sp-splitter-grip,
+.sp-app.has-art-palette .sp-splitter.is-dragging .sp-splitter-grip { background: var(--sp-art-accent); }
+
+/* ---- focus mode ---- */
+.sp-focus-toggle {
+  position: absolute;
+  top: 14px;
+  right: 22px;
+  z-index: 35;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.sp-focus-toggle:hover,
+.sp-focus-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.sp-about-head { padding-right: 48px; }
+
+.sp-app.is-focus {
+  grid-template-columns: minmax(0, 1fr);
+  background:
+    radial-gradient(70% 55% at 50% 0%, var(--sp-art-glow, transparent), transparent 70%),
+    var(--board-bg, var(--bg));
+}
+.sp-app.is-focus .sp-splitter,
+.sp-app.is-focus .sp-side,
+.sp-app.is-focus .sp-queue-panel { display: none; }
+.sp-app.is-focus .sp-hero {
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 34px 28px 28px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.sp-app.is-focus .sp-stage { width: min(var(--sp-vinyl-w, 320px), 52vh); }
+.sp-app.is-focus .sp-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.sp-app.is-focus .sp-head-main { align-items: center; width: 100%; }
+.sp-app.is-focus .sp-meta { text-align: center; }
+.sp-app.is-focus .sp-title { font-size: clamp(1.6em, 3.2vw, 2.5em); }
+.sp-app.is-focus .sp-volume-row { justify-content: center; margin: 0 auto; }
+.sp-app.is-focus .sp-cover-rack { justify-content: center; }
+.sp-app.is-focus .sp-progress-wrap,
+.sp-app.is-focus .sp-controls,
+.sp-app.is-focus .sp-status,
+.sp-app.is-focus .sp-focus-lyrics { width: 100%; max-width: 660px; margin-inline: auto; }
+.sp-app.is-focus .sp-controls { justify-content: center; }
+.sp-app.is-focus .sp-controls .sp-play-main { width: 64px; height: 64px; }
+.sp-app.is-focus .sp-focus-lyrics {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4.2em;
+  text-align: center;
+}
+.sp-app.is-focus .sp-focus-lyrics .sp-lyrics-host {
+  flex: none;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  overflow: visible;
+}
+.sp-app.is-focus .sp-focus-lyrics .lyr-wrap { height: auto; }
+.sp-app.is-focus .sp-focus-lyrics .lyr-head,
+.sp-app.is-focus .sp-focus-lyrics .lyr-trans { display: none; }
+.sp-app.is-focus .sp-focus-lyrics .lyr-lines { flex: 0 0 auto; overflow: visible; justify-content: center; }
+/* The renderer writes an inline text-align from the lyrics setting. */
+.sp-app.is-focus .sp-focus-lyrics .lyr-lines,
+.sp-app.is-focus .sp-focus-lyrics .lyr-empty { text-align: center !important; }
+.sp-app.is-focus .sp-focus-lyrics .lyr-line:not(.cur) { display: none; }
+.sp-app.is-focus .sp-focus-lyrics .lyr-line.cur {
+  color: var(--sp-art-accent, var(--accent));
+  font-size: calc(var(--sp-lyrics-font, 16px) * 1.3);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.sp-app.is-focus .sp-focus-lyrics .lyr-line.cur .lyr-tr {
+  color: var(--muted);
+  font-size: 0.7em;
+  font-weight: 400;
+  margin-top: 0.3em;
+}
+.sp-app.is-focus .sp-focus-lyrics .lyr-line.cur .lyr-flag { display: none; }
+.sp-app.is-focus .sp-focus-lyrics .lyr-empty { text-align: center; }
+
+/* ---- search overlay ---- */
+.sp-search {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 4vw 4vh;
+}
+.sp-search[hidden] { display: none; }
+.sp-search-backdrop {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 55%, #000);
+  backdrop-filter: blur(4px);
+}
+.sp-search-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(780px, 100%);
+  max-height: 76vh;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 30px 70px rgba(20, 14, 10, 0.32);
+}
+.sp-search-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sp-search-icon { display: inline-flex; color: var(--muted); }
+.sp-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05em;
+  outline: none;
+}
+.sp-search-input::placeholder { color: var(--muted); }
+.sp-search-input::-webkit-search-cancel-button,
+.sp-search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+.sp-search-status {
+  flex: 0 0 auto;
+  min-height: 1.2em;
+  padding: 8px 16px 0;
+  color: var(--muted);
+  font-size: 0.72em;
+}
+.sp-search-status.is-error { color: var(--red); }
+.sp-search-results { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 8px 12px; }
+.sp-search-group {
+  padding: 10px 8px 4px;
+  color: var(--muted);
+  font-size: 0.64em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sp-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.sp-search-row:hover,
+.sp-search-row.active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sp-search-row img,
+.sp-search-kind {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+}
+.sp-search-kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-2));
+  color: var(--muted);
+  font-size: 0.8em;
+  font-weight: 700;
+}
+.sp-search-meta { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.sp-search-name,
+.sp-search-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-search-name { font-size: 0.86em; font-weight: 600; }
+.sp-search-sub { color: var(--muted); font-size: 0.72em; }
+.sp-search-dur { flex: 0 0 auto; color: var(--muted); font-size: 0.7em; font-variant-numeric: tabular-nums; }
+.sp-search-add {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.sp-search-add:hover {
+  color: var(--accent);
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.sp-search-add.is-added { color: var(--green); }
 
 /* ---- responsive ---- */
 @media (max-width: 1050px) {

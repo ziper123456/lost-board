@@ -19,6 +19,11 @@
   const EXTERNAL = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="m21 3-9 9"/><path d="M19 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/></svg>`;
   const GEAR = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>`;
   const CLOSE = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+  const SEARCH = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`;
+  const EXPAND = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/></svg>`;
+  const COLLAPSE = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></svg>`;
+  const PLUS = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+  const CHECK = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg>`;
 
   function fmtTime(ms) {
     const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
@@ -65,6 +70,7 @@
     container.style.setProperty("--sp-split", String(appSettings.split));
     container.innerHTML = `
       <div class="sp-app">
+        <button class="sp-focus-toggle" title="Focus mode (F)" aria-label="Toggle focus mode" aria-pressed="false">${EXPAND}</button>
         <section class="sp-hero">
           <div class="sp-stage" aria-hidden="true">
             <div class="sp-sleeve"><img class="sp-sleeve-art" alt="" /></div>
@@ -105,6 +111,7 @@
             <button class="sp-ctl sp-repeat" title="Repeat">${REPEAT}</button>
           </div>
           <div class="sp-status" role="status"></div>
+          <div class="sp-focus-lyrics" hidden></div>
           <section class="sp-queue-panel">
             <header class="sp-panel-head"><h2>Up next</h2><span class="sp-queue-count"></span></header>
             <div class="sp-queue-list"></div>
@@ -115,21 +122,26 @@
         </div>
         <aside class="sp-side">
           <section class="sp-about-panel" hidden>
-            <header class="sp-about-head">
+            <div class="sp-about-media">
               <img class="sp-artist-img" alt="" />
-              <div class="sp-about-id">
-                <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
-                <div class="sp-about-stats"></div>
-                <div class="sp-artist-genres"></div>
+              <span class="sp-artist-fallback" hidden></span>
+            </div>
+            <div class="sp-about-body">
+              <header class="sp-about-head">
+                <div class="sp-about-id">
+                  <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
+                  <div class="sp-about-stats"></div>
+                  <div class="sp-artist-genres"></div>
+                </div>
+              </header>
+              <div class="sp-about-scroll">
+                <p class="sp-about-bio" hidden></p>
+                <div class="sp-about-links"></div>
+                <section class="sp-top-tracks">
+                  <header class="sp-about-heading">Top tracks</header>
+                  <div class="sp-top-list"></div>
+                </section>
               </div>
-            </header>
-            <div class="sp-about-scroll">
-              <p class="sp-about-bio" hidden></p>
-              <div class="sp-about-links"></div>
-              <section class="sp-top-tracks">
-                <header class="sp-about-heading">Top tracks</header>
-                <div class="sp-top-list"></div>
-              </section>
             </div>
           </section>
           <section class="sp-lyrics-panel">
@@ -137,6 +149,18 @@
             <div class="sp-lyrics-host"></div>
           </section>
         </aside>
+        <div class="sp-search" hidden>
+          <div class="sp-search-backdrop" data-close="search"></div>
+          <section class="sp-search-panel" role="dialog" aria-modal="true" aria-label="Search Spotify">
+            <header class="sp-search-head">
+              <span class="sp-search-icon" aria-hidden="true">${SEARCH}</span>
+              <input class="sp-search-input" type="search" placeholder="Search tracks, artists, albums, playlists" autocomplete="off" spellcheck="false" />
+              <button class="sp-link-btn sp-search-close" title="Close search">${CLOSE}</button>
+            </header>
+            <div class="sp-search-status" role="status"></div>
+            <div class="sp-search-results" role="listbox" aria-label="Search results"></div>
+          </section>
+        </div>
         <button class="sp-playlist-hotspot" title="Playlists" aria-label="Show playlists"><span aria-hidden="true"></span></button>
         <section class="sp-playlist-drawer" aria-label="Playlists" aria-hidden="true">
           <header class="sp-panel-head">
@@ -182,6 +206,16 @@
     const volEl = container.querySelector(".sp-vol");
     const volValue = container.querySelector(".sp-vol-value");
     const lyricsHost = container.querySelector(".sp-lyrics-host");
+    const lyricsPanel = container.querySelector(".sp-lyrics-panel");
+    const focusToggle = container.querySelector(".sp-focus-toggle");
+    const focusLyrics = container.querySelector(".sp-focus-lyrics");
+    const artistFallback = container.querySelector(".sp-artist-fallback");
+    const searchOverlay = container.querySelector(".sp-search");
+    const searchInput = container.querySelector(".sp-search-input");
+    const searchResults = container.querySelector(".sp-search-results");
+    const searchStatusEl = container.querySelector(".sp-search-status");
+    const searchClose = container.querySelector(".sp-search-close");
+    const searchBackdrop = container.querySelector(".sp-search-backdrop");
     const playlistHotspot = container.querySelector(".sp-playlist-hotspot");
     const playlistDrawer = container.querySelector(".sp-playlist-drawer");
     const playlistGrid = container.querySelector(".sp-playlist-grid");
@@ -208,6 +242,14 @@
     let contextKey = "";
     let contextInfo = null;
     const contextCache = new Map();
+    let focusOn = false;
+    let paletteKey = "";
+    const paletteCache = new Map();
+    let searchItems = [];
+    let searchActive = -1;
+    let searchToken = 0;
+    let searchTimer = 0;
+    let searchQuery = "";
 
     function showStatus(message) {
       statusEl.textContent = message || "";
@@ -221,6 +263,324 @@
         }, 5000);
       }
     }
+
+    // ---- cover palette ------------------------------------------------------
+    function clearArtPalette() {
+      if (!paletteKey && !root.classList.contains("has-art-palette")) return;
+      paletteKey = "";
+      root.classList.remove("has-art-palette");
+      for (const key of [
+        "--sp-art-accent",
+        "--sp-art-secondary",
+        "--sp-art-glow",
+        "--sp-hero-bg",
+        "--sp-art-on-accent",
+      ]) {
+        root.style.removeProperty(key);
+      }
+    }
+
+    function paintArtPalette(palette) {
+      const accent = palette && palette.accent ? palette.accent : "";
+      if (!accent) {
+        clearArtPalette();
+        return;
+      }
+      const secondary = palette.secondary || accent;
+      const light = ctx.Colors ? ctx.Colors.luminance(accent) : 0.2;
+      root.style.setProperty("--sp-art-accent", accent);
+      root.style.setProperty("--sp-art-secondary", secondary);
+      root.style.setProperty("--sp-art-glow", `color-mix(in srgb, ${accent} 22%, transparent)`);
+      root.style.setProperty(
+        "--sp-hero-bg",
+        `linear-gradient(160deg, color-mix(in srgb, ${accent} 14%, var(--panel)), color-mix(in srgb, ${secondary} 8%, var(--panel)) 72%, var(--panel))`
+      );
+      root.style.setProperty("--sp-art-on-accent", light > 0.55 ? "#1c1712" : "#fff");
+      root.classList.add("has-art-palette");
+    }
+
+    async function applyArtPalette(url) {
+      if (!appSettings.adaptiveColors || !url) {
+        clearArtPalette();
+        return;
+      }
+      if (paletteKey === url) return;
+      paletteKey = url;
+      if (paletteCache.has(url)) {
+        paintArtPalette(paletteCache.get(url));
+        return;
+      }
+      try {
+        const palette = await ctx.native.spotifyCoverPalette(url);
+        if (!alive() || paletteKey !== url || !palette) return;
+        paletteCache.set(url, palette);
+        paintArtPalette(palette);
+      } catch {
+        // Keep the theme accent when the cover has no usable palette.
+      }
+    }
+
+    // ---- focus mode ---------------------------------------------------------
+    function setFocus(next, persist = true) {
+      const on = !!next;
+      if (on === focusOn) return;
+      focusOn = on;
+      root.classList.toggle("is-focus", on);
+      focusToggle.innerHTML = on ? COLLAPSE : EXPAND;
+      focusToggle.title = on ? "Exit focus (Esc)" : "Focus mode (F)";
+      focusToggle.setAttribute("aria-pressed", String(on));
+      if (on) {
+        focusLyrics.hidden = false;
+        focusLyrics.appendChild(lyricsHost);
+      } else {
+        lyricsPanel.appendChild(lyricsHost);
+        focusLyrics.hidden = true;
+      }
+      if (persist) {
+        appSettings.focus = on;
+        ctx.saveState();
+      }
+    }
+
+    // ---- search -------------------------------------------------------------
+    function setSearchStatus(message, isError) {
+      searchStatusEl.textContent = message || "";
+      searchStatusEl.classList.toggle("is-error", !!isError);
+    }
+
+    function updateSearchActive() {
+      const rows = [...searchResults.querySelectorAll(".sp-search-row")];
+      rows.forEach((row, i) => row.classList.toggle("active", i === searchActive));
+      const active = rows[searchActive];
+      if (active) active.scrollIntoView({ block: "nearest" });
+    }
+
+    function openSearch() {
+      if (!searchOverlay.hidden) {
+        searchInput.focus();
+        return;
+      }
+      searchOverlay.hidden = false;
+      searchInput.value = "";
+      searchItems = [];
+      searchActive = -1;
+      searchQuery = "";
+      searchResults.innerHTML = "";
+      setSearchStatus("Type at least 2 characters to search");
+      requestAnimationFrame(() => {
+        if (alive()) searchInput.focus();
+      });
+    }
+
+    function closeSearch() {
+      searchOverlay.hidden = true;
+      clearTimeout(searchTimer);
+      searchToken += 1;
+      if (document.activeElement === searchInput) searchInput.blur();
+    }
+
+    function renderSearchResults() {
+      searchResults.innerHTML = "";
+      if (!searchItems.length) {
+        setSearchStatus(searchQuery ? `No results for “${searchQuery}”` : "");
+        return;
+      }
+      const groupNames = { track: "Tracks", artist: "Artists", album: "Albums", playlist: "Playlists" };
+      let lastKind = "";
+      searchItems.forEach((item, index) => {
+        if (item.kind !== lastKind) {
+          lastKind = item.kind;
+          const heading = document.createElement("div");
+          heading.className = "sp-search-group";
+          heading.textContent = groupNames[item.kind] || item.kind;
+          searchResults.appendChild(heading);
+        }
+        const row = document.createElement("div");
+        row.className = "sp-search-row";
+        row.dataset.index = String(index);
+        row.setAttribute("role", "option");
+        if (item.image) {
+          const img = document.createElement("img");
+          img.src = item.image;
+          img.alt = "";
+          img.loading = "lazy";
+          row.appendChild(img);
+        } else {
+          const kind = document.createElement("span");
+          kind.className = "sp-search-kind";
+          kind.textContent = (groupNames[item.kind] || "?")[0];
+          row.appendChild(kind);
+        }
+        const meta = document.createElement("span");
+        meta.className = "sp-search-meta";
+        const name = document.createElement("span");
+        name.className = "sp-search-name";
+        name.textContent = item.name || "Untitled";
+        const sub = document.createElement("span");
+        sub.className = "sp-search-sub";
+        sub.textContent = item.subtitle || groupNames[item.kind] || "";
+        meta.append(name, sub);
+        row.appendChild(meta);
+        if (item.duration_ms) {
+          const dur = document.createElement("span");
+          dur.className = "sp-search-dur";
+          dur.textContent = fmtTime(item.duration_ms);
+          row.appendChild(dur);
+        }
+        if (item.kind === "track") {
+          const add = document.createElement("button");
+          add.type = "button";
+          add.className = "sp-search-add";
+          add.title = `Add ${item.name || "track"} to queue`;
+          add.innerHTML = PLUS;
+          add.addEventListener("click", (e) => {
+            e.stopPropagation();
+            searchInput.focus();
+            void addSearchItemToQueue(item, add);
+          });
+          row.appendChild(add);
+        }
+        row.addEventListener("click", () => {
+          if (alive()) void activateSearchItem(index);
+        });
+        searchResults.appendChild(row);
+      });
+      setSearchStatus(`${searchItems.length} result${searchItems.length === 1 ? "" : "s"}`);
+      updateSearchActive();
+    }
+
+    async function activateSearchItem(index) {
+      const item = searchItems[index];
+      if (!item) return;
+      try {
+        if (item.kind === "track") await ctx.native.spotifyPlayUri(item.uri);
+        else await ctx.native.spotifyPlayContext(item.uri);
+        closeSearch();
+        await refreshNow();
+        void loadQueue();
+      } catch (e) {
+        if (alive()) setSearchStatus(`Playback: ${e.message || e}`, true);
+      }
+    }
+
+    async function addSearchItemToQueue(item, button) {
+      try {
+        await ctx.native.spotifyAddToQueue(item.uri);
+        if (!alive()) return;
+        button.classList.add("is-added");
+        button.innerHTML = CHECK;
+        setSearchStatus(`Added “${item.name || "track"}” to queue`);
+        setTimeout(() => {
+          if (!alive()) return;
+          button.classList.remove("is-added");
+          button.innerHTML = PLUS;
+        }, 1400);
+      } catch (e) {
+        if (alive()) setSearchStatus(`Queue: ${e.message || e}`, true);
+      }
+    }
+
+    searchInput.addEventListener("input", () => {
+      const q = searchInput.value.trim();
+      clearTimeout(searchTimer);
+      searchToken += 1;
+      const token = searchToken;
+      searchQuery = q;
+      if (q.length < 2) {
+        searchItems = [];
+        searchActive = -1;
+        searchResults.innerHTML = "";
+        setSearchStatus("Type at least 2 characters to search");
+        return;
+      }
+      searchItems = [];
+      searchActive = -1;
+      searchResults.innerHTML = "";
+      setSearchStatus("Searching…");
+      searchTimer = setTimeout(async () => {
+        let items = [];
+        try {
+          items = (await ctx.native.spotifySearch(q)) || [];
+        } catch (e) {
+          if (!alive() || token !== searchToken) return;
+          searchItems = [];
+          searchResults.innerHTML = "";
+          setSearchStatus(`Search: ${e.message || e}`, true);
+          return;
+        }
+        if (!alive() || token !== searchToken || searchOverlay.hidden) return;
+        searchItems = Array.isArray(items) ? items : [];
+        searchActive = searchItems.length ? 0 : -1;
+        renderSearchResults();
+      }, 280);
+    });
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSearch();
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (searchItems.length) {
+          searchActive = (searchActive + 1) % searchItems.length;
+          updateSearchActive();
+        }
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (searchItems.length) {
+          searchActive = (searchActive - 1 + searchItems.length) % searchItems.length;
+          updateSearchActive();
+        }
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (searchActive >= 0) void activateSearchItem(searchActive);
+      }
+    });
+    searchClose.addEventListener("click", closeSearch);
+    searchBackdrop.addEventListener("click", closeSearch);
+    focusToggle.addEventListener("click", () => setFocus(!focusOn));
+
+    function onAppKey(e) {
+      if (!alive()) return;
+      const target = e.target;
+      const typing = !!(target && target.matches && target.matches("input, textarea, select, [contenteditable='true']"));
+      const settingsOpen = !document.getElementById("settings")?.classList.contains("hidden");
+      const paletteOpen = !document.getElementById("quick-palette")?.classList.contains("hidden");
+      if (settingsOpen || paletteOpen) return;
+      const cmd = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+      if (cmd && (e.code === "KeyK" || e.code === "KeyS")) {
+        e.preventDefault();
+        if (searchOverlay.hidden) openSearch();
+        else searchInput.focus();
+        return;
+      }
+      if (!typing && e.key === "/" && searchOverlay.hidden) {
+        e.preventDefault();
+        openSearch();
+        return;
+      }
+      if (!typing && (e.key === "f" || e.key === "F") && searchOverlay.hidden) {
+        e.preventDefault();
+        setFocus(!focusOn);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (!searchOverlay.hidden) {
+          e.preventDefault();
+          closeSearch();
+        } else if (focusOn) {
+          e.preventDefault();
+          setFocus(false);
+        }
+      }
+    }
+    document.addEventListener("keydown", onAppKey);
+    ctx.addTimer(container, () => document.removeEventListener("keydown", onAppKey));
 
     async function openSpotify(uri) {
       if (!uri) return;
@@ -266,6 +626,7 @@
         albumEl.textContent = "";
         openTrackBtn.hidden = true;
         paintArt("");
+        clearArtPalette();
         playing = false;
         durationMs = 0;
         anchorProgress = 0;
@@ -295,6 +656,7 @@
       albumEl.textContent = track.album || "";
       openTrackBtn.hidden = !track.uri;
       paintArt(track.art);
+      void applyArtPalette(track.art);
       playBtn.innerHTML = playing ? PAUSE : PLAY;
       shuffleBtn.classList.toggle("is-on", !!track.shuffle);
       shuffleBtn.title = track.smart_shuffle ? "Smart Shuffle is on" : "Shuffle";
@@ -719,9 +1081,12 @@
       if (entry.image) {
         artistImg.src = entry.image;
         artistImg.hidden = false;
+        artistFallback.hidden = true;
       } else {
         artistImg.removeAttribute("src");
         artistImg.hidden = true;
+        artistFallback.hidden = false;
+        artistFallback.textContent = (entry.name || "?").slice(0, 1).toUpperCase();
       }
       artistLink.textContent = `${entry.name || "Artist"} ↗`;
       artistLink.href = `https://open.spotify.com/artist/${entry.id}`;
@@ -956,6 +1321,7 @@
 
     // Lyrics share the existing renderer and its Focus/Full/translation logic.
     ctx.renderLyrics(lyricsHost, ctx.spotifyLyricsComp());
+    if (appSettings.focus) setFocus(true, false);
 
     ctx.subscribePlayback(container, (track) => {
       if (alive()) applyTrack(track);
