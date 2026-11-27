@@ -56,6 +56,9 @@
   }
 
   function renderApp(container, ctx) {
+    const appSettings = ctx.spotifyAppSettings();
+    container.style.setProperty("--sp-font-size", `${appSettings.fontBase}px`);
+    container.style.setProperty("--sp-vinyl-w", `${appSettings.vinyl}px`);
     container.innerHTML = `
       <div class="sp-app">
         <section class="sp-hero">
@@ -98,29 +101,31 @@
             <div class="sp-volume">${VOLUME}<input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" /></div>
           </div>
           <div class="sp-status" role="status"></div>
-          <div class="sp-about-grid" hidden>
-            <section class="sp-about-card">
-              <header class="sp-about-head">
-                <img class="sp-artist-img" alt="" />
-                <div class="sp-about-id">
-                  <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
-                  <div class="sp-about-stats"></div>
-                  <div class="sp-artist-genres"></div>
-                </div>
-              </header>
-              <p class="sp-about-bio" hidden></p>
-              <div class="sp-about-links"></div>
-            </section>
-            <section class="sp-top-tracks">
-              <header class="sp-about-heading">Top tracks</header>
-              <div class="sp-top-list"></div>
-            </section>
-          </div>
-        </section>
-        <aside class="sp-side">
           <section class="sp-queue-panel">
             <header class="sp-panel-head"><h2>Up next</h2><span class="sp-queue-count"></span></header>
             <div class="sp-queue-list"></div>
+          </section>
+        </section>
+        <aside class="sp-side">
+          <section class="sp-about-panel">
+            <div class="sp-about-grid" hidden>
+              <section class="sp-about-card">
+                <header class="sp-about-head">
+                  <img class="sp-artist-img" alt="" />
+                  <div class="sp-about-id">
+                    <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
+                    <div class="sp-about-stats"></div>
+                    <div class="sp-artist-genres"></div>
+                  </div>
+                </header>
+                <p class="sp-about-bio" hidden></p>
+                <div class="sp-about-links"></div>
+              </section>
+              <section class="sp-top-tracks">
+                <header class="sp-about-heading">Top tracks</header>
+                <div class="sp-top-list"></div>
+              </section>
+            </div>
           </section>
           <section class="sp-lyrics-panel">
             <header class="sp-panel-head"><h2>Lyrics</h2><button class="sp-link-btn sp-lyrics-settings" title="Spotify app lyrics settings">${GEAR}</button></header>
@@ -150,6 +155,7 @@
     const queueList = container.querySelector(".sp-queue-list");
     const queueCount = container.querySelector(".sp-queue-count");
     const aboutGrid = container.querySelector(".sp-about-grid");
+    const aboutPanel = container.querySelector(".sp-about-panel");
     const topTracksPanel = container.querySelector(".sp-top-tracks");
     const topTracksList = container.querySelector(".sp-top-list");
     const artistImg = container.querySelector(".sp-artist-img");
@@ -238,6 +244,7 @@
         root.classList.remove("is-playing");
         playBtn.innerHTML = PLAY;
         aboutGrid.hidden = true;
+        aboutPanel.hidden = true;
         lastArtistId = "";
         lastQueueKey = "";
         queueList.innerHTML = `<div class="sp-empty-row">Queue is unavailable while nothing is playing.</div>`;
@@ -272,6 +279,7 @@
       } else if (!track.artist_id) {
         lastArtistId = "";
         aboutGrid.hidden = true;
+        aboutPanel.hidden = true;
       }
 
       const queueKey = track.uri || `${track.title}|${track.artist}`;
@@ -439,8 +447,10 @@
     function applyArtist(entry) {
       if (!entry || !entry.id) {
         aboutGrid.hidden = true;
+        aboutPanel.hidden = true;
         return;
       }
+      aboutPanel.hidden = false;
       aboutGrid.hidden = false;
       if (entry.image) {
         artistImg.src = entry.image;
@@ -505,6 +515,7 @@
         return;
       }
       aboutGrid.hidden = true;
+      aboutPanel.hidden = true;
       const [artist, topTracks] = await Promise.all([
         ctx.native.spotifyArtist(id).catch(() => null),
         ctx.native.spotifyArtistTopTracks(id).catch(() => []),

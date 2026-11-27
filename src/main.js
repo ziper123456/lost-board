@@ -1549,6 +1549,7 @@ function appContext() {
     subscribePlayback,
     renderLyrics: (container, comp) => renderLyricsBody(comp, container),
     spotifyLyricsComp,
+    spotifyAppSettings,
     openSettings: (tab) => {
       settingsEl.classList.remove("hidden");
       activateTab(tab || "grid");
@@ -1573,6 +1574,25 @@ function spotifyAppLyricsData() {
 
 function spotifyLyricsComp() {
   return { id: "spotify-app-lyrics", kind: "lyrics", data: spotifyAppLyricsData() };
+}
+
+// Full-screen Spotify app layout settings (independent of the tile).
+function spotifyAppSettings() {
+  if (!state.apps || typeof state.apps !== "object") state.apps = {};
+  if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
+  const app = state.apps.spotify;
+  if (!app.settings || typeof app.settings !== "object") app.settings = {};
+  const s = app.settings;
+  if (!Number.isFinite(Number(s.fontBase)) || s.fontBase < 11 || s.fontBase > 24) s.fontBase = 16;
+  if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 480) s.vinyl = 320;
+  return s;
+}
+
+function applySpotifyAppSettings() {
+  const s = spotifyAppSettings();
+  if (!appViewEl) return;
+  appViewEl.style.setProperty("--sp-font-size", `${s.fontBase}px`);
+  appViewEl.style.setProperty("--sp-vinyl-w", `${s.vinyl}px`);
 }
 
 function renderAppBar() {
@@ -6732,6 +6752,50 @@ function ensureSpotifyComp() {
   if (!comps.some((c) => c.id === selectedSpotifyId)) selectedSpotifyId = comps[0].id;
   return state.compartments.find((c) => c.id === selectedSpotifyId);
 }
+function renderSpotifyAppSettings(panel) {
+  const s = spotifyAppSettings();
+  const heading = document.createElement("h3");
+  heading.textContent = "Spotify app";
+  panel.appendChild(heading);
+
+  const note = document.createElement("div");
+  note.className = "item-row";
+  note.innerHTML = `<span class="muted">Full-screen app layout. The Spotify tile below keeps its own settings.</span>`;
+  panel.appendChild(note);
+
+  const row = document.createElement("div");
+  row.className = "item-row sp-app-settings-row";
+  row.innerHTML = `
+    <label>Font size <input type="range" id="sp-font" min="11" max="24" step="1" value="${s.fontBase}" /> <span class="muted" id="sp-font-val">${s.fontBase}px</span></label>
+    <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="480" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
+    <button class="btn ghost" id="sp-reset">Reset</button>`;
+  panel.appendChild(row);
+
+  const font = row.querySelector("#sp-font");
+  const vinyl = row.querySelector("#sp-vinyl");
+  const fontVal = row.querySelector("#sp-font-val");
+  const vinylVal = row.querySelector("#sp-vinyl-val");
+  font.addEventListener("input", (e) => {
+    s.fontBase = Number(e.target.value);
+    fontVal.textContent = `${s.fontBase}px`;
+    applySpotifyAppSettings();
+    saveState();
+  });
+  vinyl.addEventListener("input", (e) => {
+    s.vinyl = Number(e.target.value);
+    vinylVal.textContent = `${s.vinyl}px`;
+    applySpotifyAppSettings();
+    saveState();
+  });
+  row.querySelector("#sp-reset").addEventListener("click", () => {
+    s.fontBase = 16;
+    s.vinyl = 320;
+    saveState();
+    applySpotifyAppSettings();
+    renderSpotifySettings();
+  });
+}
+
 function renderSpotifySettings() {
   const panel = document.getElementById("spotify-list");
   if (!panel) return;
@@ -6739,6 +6803,7 @@ function renderSpotifySettings() {
   const comps = state.compartments.filter((c) => c.kind === "spotify");
 
   panel.innerHTML = "";
+  renderSpotifyAppSettings(panel);
   const selectorRow = document.createElement("div");
   selectorRow.className = "item-row";
   selectorRow.innerHTML = `
