@@ -1609,6 +1609,177 @@ async fn spotify_play_context(context_uri: String) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
+struct SpotifySearchItem {
+    kind: String,
+    id: String,
+    uri: String,
+    name: String,
+    subtitle: String,
+    image: String,
+    duration_ms: u64,
+}
+
+fn first_image_url(item: &serde_json::Value) -> String {
+    item.get("images")
+        .and_then(|i| i.as_array())
+        .and_then(|a| a.first())
+        .and_then(|x| x.get("url"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn joined_artists(item: &serde_json::Value) -> String {
+    item.get("artists")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// Catalogue search for the app's command palette. Returns a flat list in a
+/// stable order (tracks, artists, albums, playlists) so the UI can group and
+/// navigate it with one index.
+#[tauri::command]
+async fn spotify_search(query: String) -> Result<Vec<SpotifySearchItem>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    if query.chars().count() > 120 {
+        return Err("search query too long".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get("https://api.spotify.com/v1/search")
+        .bearer_auth(&token)
+        .query(&[
+            ("q", query),
+            ("type", "track,artist,album,playlist"),
+            ("limit", "6"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("search request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("search read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("search parse: {e}, body: {body}"))?;
+    let mut items = Vec::new();
+
+    if let Some(tracks) = v.pointer("/tracks/items").and_then(|x| x.as_array()) {
+        for t in tracks.iter().filter(|t| !t.is_null()) {
+            let uri = t.get("uri").and_then(|x| x.as_str()).unwrap_or("");
+            if !uri.starts_with("spotify:track:")
+                || matches!(t.get("is_playable").and_then(|x| x.as_bool()), Some(false))
+            {
+                continue;
+            }
+            items.push(SpotifySearchItem {
+                kind: "track".to_string(),
+                id: t.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                uri: uri.to_string(),
+                name: t.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                subtitle: joined_artists(t),
+                image: t.get("album").map(first_image_url).unwrap_or_default(),
+                duration_ms: t.get("duration_ms").and_then(|x| x.as_u64()).unwrap_or(0),
+            });
+        }
+    }
+
+    if let Some(artists) = v.pointer("/artists/items").and_then(|x| x.as_array()) {
+        for a in artists.iter().filter(|a| !a.is_null()) {
+            let uri = a.get("uri").and_then(|x| x.as_str()).unwrap_or("");
+            if !uri.starts_with("spotify:artist:") {
+                continue;
+            }
+            items.push(SpotifySearchItem {
+                kind: "artist".to_string(),
+                id: a.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                uri: uri.to_string(),
+                name: a.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                subtitle: "Artist".to_string(),
+                image: first_image_url(a),
+                duration_ms: 0,
+            });
+        }
+    }
+
+    if let Some(albums) = v.pointer("/albums/items").and_then(|x| x.as_array()) {
+        for a in albums.iter().filter(|a| !a.is_null()) {
+            let uri = a.get("uri").and_then(|x| x.as_str()).unwrap_or("");
+            if !uri.starts_with("spotify:album:") {
+                continue;
+            }
+            items.push(SpotifySearchItem {
+                kind: "album".to_string(),
+                id: a.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                uri: uri.to_string(),
+                name: a.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                subtitle: joined_artists(a),
+                image: first_image_url(a),
+                duration_ms: 0,
+            });
+        }
+    }
+
+    if let Some(playlists) = v.pointer("/playlists/items").and_then(|x| x.as_array()) {
+        for p in playlists.iter().filter(|p| !p.is_null()) {
+            let uri = p.get("uri").and_then(|x| x.as_str()).unwrap_or("");
+            if !uri.starts_with("spotify:playlist:") {
+                continue;
+            }
+            items.push(SpotifySearchItem {
+                kind: "playlist".to_string(),
+                id: p.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                uri: uri.to_string(),
+                name: p.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                subtitle: p
+                    .get("owner")
+                    .and_then(|o| o.get("display_name"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                image: first_image_url(p),
+                duration_ms: 0,
+            });
+        }
+    }
+
+    Ok(items)
+}
+
+/// Add one track/episode to the user's playback queue.
+#[tauri::command]
+async fn spotify_add_to_queue(uri: String) -> Result<(), String> {
+    if !(uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:")) {
+        return Err("expected a spotify:track: or spotify:episode: URI".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .post("https://api.spotify.com/v1/me/player/queue")
+        .bearer_auth(&token)
+        .query(&[("uri", uri.as_str())])
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("queue add request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
 struct SpotifyContext {
     name: String,
     image: String,
@@ -3715,6 +3886,8 @@ pub fn run() {
             spotify_playlists,
             spotify_play_context,
             spotify_context,
+            spotify_search,
+            spotify_add_to_queue,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,

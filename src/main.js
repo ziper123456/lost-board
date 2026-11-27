@@ -610,6 +610,13 @@ async openFolder(path) {
     if (window.__TAURI__) return invoke("spotify_context", { contextUri });
     return null;
   },
+  async spotifySearch(query) {
+    if (window.__TAURI__) return invoke("spotify_search", { query });
+    return [];
+  },
+  async spotifyAddToQueue(uri) {
+    if (window.__TAURI__) return invoke("spotify_add_to_queue", { uri });
+  },
   async spotifyArtist(id) {
     if (window.__TAURI__) return invoke("spotify_artist", { id });
     return null;
@@ -1567,7 +1574,18 @@ function appContext() {
       settingsEl.classList.remove("hidden");
       activateTab(tab || "grid");
     },
+    // Immersive app views (e.g. Spotify focus mode) can hide the shell tab bar
+    // and reclaim its reserved height. The shell restores both on slot change.
+    setImmersive: (on) => {
+      if (!appViewEl) return;
+      const immersive = !!on;
+      appViewEl.classList.toggle("app-view-immersive", immersive);
+      const tabs = viewTabsConfig();
+      if ((tabs.active || 1) === 1) return;
+      appBarEl.hidden = immersive;
+    },
     ICON,
+    Colors,
   };
 }
 
@@ -1590,6 +1608,7 @@ function spotifyLyricsComp() {
 }
 
 // Full-screen Spotify app layout settings (independent of the tile).
+const SPOTIFY_AUTOFOCUS_MINUTES = [0, 1, 2, 5, 10, 15, 30];
 function spotifyAppSettings() {
   if (!state.apps || typeof state.apps !== "object") state.apps = {};
   if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
@@ -1599,8 +1618,17 @@ function spotifyAppSettings() {
   if (!Number.isFinite(Number(s.fontBase)) || s.fontBase < 11 || s.fontBase > 24) s.fontBase = 16;
   if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 900) s.vinyl = 320;
   if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 56) s.lyricsFont = 16;
+  const focusFont = Number(s.focusLyricsFont);
+  s.focusLyricsFont =
+    Number.isFinite(focusFont) && focusFont >= 10 && focusFont <= 96
+      ? Math.round(focusFont)
+      : Math.round(Number(s.lyricsFont) * 1.3) || 21;
   if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 1100) s.lyricsHeight = 520;
   if (!Number.isFinite(Number(s.split)) || s.split < 35 || s.split > 75) s.split = 58;
+  if (typeof s.adaptiveColors !== "boolean") s.adaptiveColors = true;
+  if (typeof s.focus !== "boolean") s.focus = false;
+  const idleMinutes = Number(s.autoFocusMinutes);
+  s.autoFocusMinutes = SPOTIFY_AUTOFOCUS_MINUTES.includes(idleMinutes) ? idleMinutes : 1;
   return s;
 }
 
@@ -1610,6 +1638,7 @@ function applySpotifyAppSettings() {
   appViewEl.style.setProperty("--sp-font-size", `${s.fontBase}px`);
   appViewEl.style.setProperty("--sp-vinyl-w", `${s.vinyl}px`);
   appViewEl.style.setProperty("--sp-lyrics-font", `${s.lyricsFont}px`);
+  appViewEl.style.setProperty("--sp-focus-lyrics-font", `${s.focusLyricsFont}px`);
   appViewEl.style.setProperty("--sp-lyrics-h", `${s.lyricsHeight}px`);
   appViewEl.style.setProperty("--sp-split", String(s.split));
 }
@@ -1645,6 +1674,9 @@ function showSlot(n) {
   const tabs = viewTabsConfig();
   const slot = tabs.slots[Number(n) - 1];
   if (!slot || !slot.app || !APPS[slot.app]) return false;
+  // Any app leaving an immersive view must give the shell chrome back; the
+  // focus layout also drops the reserved top-bar height.
+  appViewEl.classList.remove("app-view-immersive");
   // Unmount the app that is actually mounted, not the one recorded in the
   // active slot: Settings can rewrite slot.app before calling showSlot (e.g.
   // clearing the active slot), which would otherwise skip unmount and leak the
@@ -6794,19 +6826,57 @@ function renderSpotifyAppSettings(panel) {
     <label>Font size <input type="range" id="sp-font" min="11" max="24" step="1" value="${s.fontBase}" /> <span class="muted" id="sp-font-val">${s.fontBase}px</span></label>
     <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="900" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
     <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="56" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
+    <label>Focus mode lyric size <input type="range" id="sp-focus-lyrics-font" min="10" max="96" step="1" value="${s.focusLyricsFont}" /> <span class="muted" id="sp-focus-lyrics-font-val">${s.focusLyricsFont}px</span></label>
     <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="1100" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
     <label>Column split <input type="range" id="sp-split" min="35" max="75" step="1" value="${s.split}" /> <span class="muted" id="sp-split-val">${s.split}%</span></label>
     <button class="btn ghost" id="sp-reset">Reset</button>`;
   panel.appendChild(row);
 
+  const toggles = document.createElement("div");
+  toggles.className = "item-row sp-app-settings-row";
+  toggles.innerHTML = `
+    <label><input type="checkbox" id="sp-adaptive" class="switch" ${s.adaptiveColors ? "checked" : ""} /> Cover colours</label>
+    <span class="muted">Ctrl+K / Ctrl+S search · F focus</span>`;
+  panel.appendChild(toggles);
+
+  const refreshMountedApp = () => {
+    const tabs = viewTabsConfig();
+    if (tabs.slots[tabs.active - 1]?.app === "spotify") showSlot(tabs.active);
+  };
+  toggles.querySelector("#sp-adaptive").addEventListener("change", (e) => {
+    s.adaptiveColors = e.target.checked;
+    saveState();
+    refreshMountedApp();
+  });
+
+  const idleRow = document.createElement("div");
+  idleRow.className = "item-row sp-app-settings-row";
+  idleRow.innerHTML = `
+    <label>Auto-focus after idle
+      <select id="sp-autofocus">
+        ${SPOTIFY_AUTOFOCUS_MINUTES.map(
+          (min) => `<option value="${min}" ${s.autoFocusMinutes === min ? "selected" : ""}>${min ? `${min} min` : "Off"}</option>`
+        ).join("")}
+      </select>
+    </label>
+    <span class="muted">Focus stays until F / Esc / the focus button.</span>`;
+  panel.appendChild(idleRow);
+  idleRow.querySelector("#sp-autofocus").addEventListener("change", (e) => {
+    s.autoFocusMinutes = Number(e.target.value);
+    saveState();
+    refreshMountedApp();
+  });
+
   const font = row.querySelector("#sp-font");
   const vinyl = row.querySelector("#sp-vinyl");
   const lyricsFont = row.querySelector("#sp-lyrics-font");
+  const focusLyricsFont = row.querySelector("#sp-focus-lyrics-font");
   const lyricsHeight = row.querySelector("#sp-lyrics-h");
   const split = row.querySelector("#sp-split");
   const fontVal = row.querySelector("#sp-font-val");
   const vinylVal = row.querySelector("#sp-vinyl-val");
   const lyricsFontVal = row.querySelector("#sp-lyrics-font-val");
+  const focusLyricsFontVal = row.querySelector("#sp-focus-lyrics-font-val");
   const lyricsHeightVal = row.querySelector("#sp-lyrics-h-val");
   const splitVal = row.querySelector("#sp-split-val");
   // Apply live, but debounce the IPC save so dragging a slider doesn't write
@@ -6834,6 +6904,14 @@ function renderSpotifyAppSettings(panel) {
     applySpotifyAppSettings();
     scheduleSave();
   });
+  focusLyricsFont.addEventListener("input", (e) => {
+    s.focusLyricsFont = Number(e.target.value);
+    focusLyricsFontVal.textContent = `${s.focusLyricsFont}px`;
+    applySpotifyAppSettings();
+    const inApp = document.querySelector(".sp-focus-font-val");
+    if (inApp) inApp.textContent = `${s.focusLyricsFont}px`;
+    scheduleSave();
+  });
   lyricsHeight.addEventListener("input", (e) => {
     s.lyricsHeight = Number(e.target.value);
     lyricsHeightVal.textContent = `${s.lyricsHeight}px`;
@@ -6851,10 +6929,15 @@ function renderSpotifyAppSettings(panel) {
     s.fontBase = 16;
     s.vinyl = 320;
     s.lyricsFont = 16;
+    s.focusLyricsFont = 21;
     s.lyricsHeight = 520;
     s.split = 58;
+    s.adaptiveColors = true;
+    s.autoFocusMinutes = 1;
+    s.focus = false;
     saveState();
     applySpotifyAppSettings();
+    refreshMountedApp();
     renderSpotifySettings();
   });
 }

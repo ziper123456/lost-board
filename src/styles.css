@@ -1601,6 +1601,7 @@ input[type="color"]:hover { border-color: var(--accent); }
   color: var(--text);
 }
 .app-view[hidden] { display: none; }
+.app-view.app-view-immersive { padding-top: 0; }
 .app-view-empty { padding: 32px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   .app-tab { transition: none; }
