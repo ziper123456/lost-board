@@ -243,7 +243,6 @@
     let contextInfo = null;
     const contextCache = new Map();
     let focusOn = false;
-    let autoFocus = false;
     let idleTimer = 0;
     let lastActivityAt = 0;
     let paletteKey = "";
@@ -324,9 +323,8 @@
     }
 
     // ---- focus mode ---------------------------------------------------------
-    function setFocus(next, persist = true, auto = false) {
+    function setFocus(next, persist = true) {
       const on = !!next;
-      autoFocus = auto && on;
       if (on === focusOn) return;
       focusOn = on;
       root.classList.toggle("is-focus", on);
@@ -348,7 +346,6 @@
 
     // ---- idle auto-focus ----------------------------------------------------
     const activityEvents = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"];
-    const IDLE_FOCUS_MS = 60_000;
 
     // Do not steal the view while the user is already in focus, searching, or
     // using a global overlay.
@@ -364,25 +361,22 @@
 
     function scheduleIdle() {
       clearTimeout(idleTimer);
+      const minutes = Number(appSettings.autoFocusMinutes);
+      if (!Number.isFinite(minutes) || minutes <= 0) return;
       idleTimer = setTimeout(() => {
         if (idleBlocked()) return;
-        setFocus(true, false, true);
-      }, IDLE_FOCUS_MS);
+        // Transient: do not persist focus, so a fresh mount starts normal.
+        setFocus(true, false);
+      }, minutes * 60_000);
     }
 
-    function onActivity(e) {
+    function onActivity() {
       if (!alive()) return;
       const now = Date.now();
       if (now - lastActivityAt < 400) return;
       lastActivityAt = now;
-      const key = e.type === "keydown" ? e.key : "";
-      const onFocusToggle = !!(e.target && e.target.closest && e.target.closest(".sp-focus-toggle"));
-      // Let the focus controls (button / F / Esc) handle their own toggle.
-      if (onFocusToggle || key === "f" || key === "F" || key === "Escape") {
-        scheduleIdle();
-        return;
-      }
-      if (autoFocus && focusOn) setFocus(false, false);
+      // Auto-focus, once entered, stays until explicitly exited. Activity only
+      // restarts the countdown for the next idle period.
       scheduleIdle();
     }
 

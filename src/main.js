@@ -1598,6 +1598,7 @@ function spotifyLyricsComp() {
 }
 
 // Full-screen Spotify app layout settings (independent of the tile).
+const SPOTIFY_AUTOFOCUS_MINUTES = [0, 1, 2, 5, 10, 15, 30];
 function spotifyAppSettings() {
   if (!state.apps || typeof state.apps !== "object") state.apps = {};
   if (!state.apps.spotify || typeof state.apps.spotify !== "object") state.apps.spotify = {};
@@ -1611,6 +1612,8 @@ function spotifyAppSettings() {
   if (!Number.isFinite(Number(s.split)) || s.split < 35 || s.split > 75) s.split = 58;
   if (typeof s.adaptiveColors !== "boolean") s.adaptiveColors = true;
   if (typeof s.focus !== "boolean") s.focus = false;
+  const idleMinutes = Number(s.autoFocusMinutes);
+  s.autoFocusMinutes = SPOTIFY_AUTOFOCUS_MINUTES.includes(idleMinutes) ? idleMinutes : 1;
   return s;
 }
 
@@ -6826,6 +6829,24 @@ function renderSpotifyAppSettings(panel) {
     refreshMountedApp();
   });
 
+  const idleRow = document.createElement("div");
+  idleRow.className = "item-row sp-app-settings-row";
+  idleRow.innerHTML = `
+    <label>Auto-focus after idle
+      <select id="sp-autofocus">
+        ${SPOTIFY_AUTOFOCUS_MINUTES.map(
+          (min) => `<option value="${min}" ${s.autoFocusMinutes === min ? "selected" : ""}>${min ? `${min} min` : "Off"}</option>`
+        ).join("")}
+      </select>
+    </label>
+    <span class="muted">Focus stays until F / Esc / the focus button.</span>`;
+  panel.appendChild(idleRow);
+  idleRow.querySelector("#sp-autofocus").addEventListener("change", (e) => {
+    s.autoFocusMinutes = Number(e.target.value);
+    saveState();
+    refreshMountedApp();
+  });
+
   const font = row.querySelector("#sp-font");
   const vinyl = row.querySelector("#sp-vinyl");
   const lyricsFont = row.querySelector("#sp-lyrics-font");
@@ -6881,6 +6902,7 @@ function renderSpotifyAppSettings(panel) {
     s.lyricsHeight = 520;
     s.split = 58;
     s.adaptiveColors = true;
+    s.autoFocusMinutes = 1;
     s.focus = false;
     saveState();
     applySpotifyAppSettings();
