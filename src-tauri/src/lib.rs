@@ -1717,6 +1717,290 @@ async fn spotify_transfer(device_id: String, play: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct SpotifyTopTrack {
+    id: String,
+    uri: String,
+    name: String,
+    artists: String,
+    album: String,
+    art: String,
+    duration_ms: u64,
+}
+
+/// Artist top tracks for the About card. Uses the user's market implicitly
+/// (valid user token takes priority over the optional market parameter).
+/// The endpoint is marked deprecated by Spotify; callers treat errors as
+/// "no top tracks" and keep the rest of the card.
+#[tauri::command]
+async fn spotify_artist_top_tracks(id: String) -> Result<Vec<SpotifyTopTrack>, String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("invalid artist id".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let resp = reqwest::Client::new()
+        .get(format!("https://api.spotify.com/v1/artists/{id}/top-tracks"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| format!("top tracks request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("top tracks read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("top tracks parse: {e}, body: {body}"))?;
+    Ok(v.get("tracks")
+        .and_then(|t| t.as_array())
+        .map(|tracks| {
+            tracks
+                .iter()
+                .take(5)
+                .map(|t| SpotifyTopTrack {
+                    id: t.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    uri: t.get("uri").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    name: t.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    artists: t
+                        .get("artists")
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.get("name").and_then(|n| n.as_str()))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default(),
+                    album: t
+                        .get("album")
+                        .and_then(|a| a.get("name"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    art: t
+                        .get("album")
+                        .and_then(|a| a.get("images"))
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|x| x.get("url"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    duration_ms: t.get("duration_ms").and_then(|x| x.as_u64()).unwrap_or(0),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// Start one specific track (used by the artist top-tracks list).
+#[tauri::command]
+async fn spotify_play_uri(track_uri: String) -> Result<(), String> {
+    if !track_uri.starts_with("spotify:track:") {
+        return Err("expected a spotify:track: URI".to_string());
+    }
+    let token = spotify_access_token().await?;
+    let payload = serde_json::json!({ "uris": [track_uri] });
+    let resp = reqwest::Client::new()
+        .put("https://api.spotify.com/v1/me/player/play")
+        .bearer_auth(&token)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("play track request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("Spotify HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ArtistLink {
+    label: String,
+    url: String,
+}
+
+#[derive(serde::Serialize)]
+struct ArtistWebInfo {
+    summary: String,
+    wikipedia_url: String,
+    links: Vec<ArtistLink>,
+}
+
+const ARTIST_UA: &str =
+    "lost-board/0.1 (personal dashboard; https://github.com/ziper123456/lost-board)";
+
+fn wd_value(row: &serde_json::Value, key: &str) -> Option<String> {
+    row.get(key)
+        .and_then(|v| v.get("value"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Wikipedia summary + social links for an artist, resolved by the exact
+/// Spotify artist id through Wikidata property P1902. Returns None when the
+/// artist has no Wikidata match; callers then show the Spotify-only card.
+#[tauri::command]
+async fn artist_web_info(spotify_id: String) -> Result<Option<ArtistWebInfo>, String> {
+    if spotify_id.is_empty() || !spotify_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Ok(None);
+    }
+    let query = format!(
+        r#"SELECT ?item ?articleEn ?articleDe ?articleEs ?website ?instagram ?facebook ?tiktok ?youtube WHERE {{
+  ?item wdt:P1902 "{spotify_id}".
+  OPTIONAL {{ ?articleEn schema:about ?item; schema:isPartOf <https://en.wikipedia.org/>. }}
+  OPTIONAL {{ ?articleDe schema:about ?item; schema:isPartOf <https://de.wikipedia.org/>. }}
+  OPTIONAL {{ ?articleEs schema:about ?item; schema:isPartOf <https://es.wikipedia.org/>. }}
+  OPTIONAL {{ ?item wdt:P856 ?website. }}
+  OPTIONAL {{ ?item wdt:P2003 ?instagram. }}
+  OPTIONAL {{ ?item wdt:P2013 ?facebook. }}
+  OPTIONAL {{ ?item wdt:P7085 ?tiktok. }}
+  OPTIONAL {{ ?item wdt:P2397 ?youtube. }}
+}}
+LIMIT 40"#
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://query.wikidata.org/sparql")
+        .header("User-Agent", ARTIST_UA)
+        .query(&[("format", "json"), ("query", query.as_str())])
+        .send()
+        .await
+        .map_err(|e| format!("wikidata request: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("wikidata read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("Wikidata HTTP {status}: {body}"));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("wikidata parse: {e}, body: {body}"))?;
+    let rows = v
+        .pointer("/results/bindings")
+        .and_then(|b| b.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut article = String::new();
+    let mut website = String::new();
+    let mut instagram = String::new();
+    let mut facebook = String::new();
+    let mut tiktok = String::new();
+    let mut youtube = String::new();
+    for row in &rows {
+        if article.is_empty() {
+            article = wd_value(row, "articleEn")
+                .or_else(|| wd_value(row, "articleDe"))
+                .or_else(|| wd_value(row, "articleEs"))
+                .unwrap_or_default();
+        }
+        if website.is_empty() {
+            website = wd_value(row, "website").unwrap_or_default();
+        }
+        if instagram.is_empty() {
+            instagram = wd_value(row, "instagram").unwrap_or_default();
+        }
+        if facebook.is_empty() {
+            facebook = wd_value(row, "facebook").unwrap_or_default();
+        }
+        if tiktok.is_empty() {
+            tiktok = wd_value(row, "tiktok").unwrap_or_default();
+        }
+        if youtube.is_empty() {
+            youtube = wd_value(row, "youtube").unwrap_or_default();
+        }
+    }
+
+    let mut summary = String::new();
+    let mut wikipedia_url = article.clone();
+    if !article.is_empty() {
+        if let Ok(parsed) = url::Url::parse(&article) {
+            let host = parsed.host_str().unwrap_or("en.wikipedia.org").to_string();
+            if let Some(title) = parsed.path().strip_prefix("/wiki/") {
+                let endpoint = format!("https://{host}/api/rest_v1/page/summary/{title}");
+                if let Ok(resp) = client
+                    .get(&endpoint)
+                    .header("User-Agent", ARTIST_UA)
+                    .send()
+                    .await
+                {
+                    if resp.status().is_success() {
+                        if let Ok(text) = resp.text().await {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                summary = json
+                                    .get("extract")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if let Some(url) = json
+                                    .pointer("/content_urls/desktop/page")
+                                    .and_then(|x| x.as_str())
+                                {
+                                    wikipedia_url = url.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut links: Vec<ArtistLink> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push_link = |label: &str, url: String| {
+        if url.is_empty() || !seen.insert(url.clone()) {
+            return;
+        }
+        links.push(ArtistLink {
+            label: label.to_string(),
+            url,
+        });
+    };
+    push_link("Wikipedia", wikipedia_url.clone());
+    if website.starts_with("http") {
+        push_link("Website", website);
+    }
+    if !instagram.is_empty() {
+        push_link(
+            "Instagram",
+            format!("https://www.instagram.com/{}/", instagram.trim_start_matches('@')),
+        );
+    }
+    if !facebook.is_empty() {
+        push_link(
+            "Facebook",
+            format!("https://www.facebook.com/{}/", facebook.trim_start_matches('@')),
+        );
+    }
+    if !tiktok.is_empty() {
+        push_link(
+            "TikTok",
+            format!("https://www.tiktok.com/@{}/", tiktok.trim_start_matches('@')),
+        );
+    }
+    if !youtube.is_empty() {
+        push_link(
+            "YouTube",
+            format!("https://www.youtube.com/channel/{youtube}"),
+        );
+    }
+    if links.is_empty() && summary.is_empty() {
+        return Ok(None);
+    }
+    drop(push_link);
+
+    Ok(Some(ArtistWebInfo {
+        summary,
+        wikipedia_url,
+        links,
+    }))
+}
+
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 struct CoverPalette {
     accent: String,
@@ -3267,6 +3551,9 @@ pub fn run() {
             spotify_artist,
             spotify_devices,
             spotify_transfer,
+            spotify_artist_top_tracks,
+            spotify_play_uri,
+            artist_web_info,
             lyrics_get,
             lyrics_detect,
             lyrics_translate,

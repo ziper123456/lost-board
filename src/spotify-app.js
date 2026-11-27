@@ -98,13 +98,23 @@
             <div class="sp-volume">${VOLUME}<input class="sp-vol" type="range" min="0" max="100" value="50" aria-label="Volume" /></div>
           </div>
           <div class="sp-status" role="status"></div>
-          <div class="sp-artist-card" hidden>
-            <img class="sp-artist-img" alt="" />
-            <div class="sp-artist-info">
-              <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
-              <div class="sp-artist-genres"></div>
-              <div class="sp-artist-followers"></div>
-            </div>
+          <div class="sp-about-grid" hidden>
+            <section class="sp-about-card">
+              <header class="sp-about-head">
+                <img class="sp-artist-img" alt="" />
+                <div class="sp-about-id">
+                  <a class="sp-artist-link" href="#" target="_blank" rel="noreferrer"></a>
+                  <div class="sp-about-stats"></div>
+                  <div class="sp-artist-genres"></div>
+                </div>
+              </header>
+              <p class="sp-about-bio" hidden></p>
+              <div class="sp-about-links"></div>
+            </section>
+            <section class="sp-top-tracks">
+              <header class="sp-about-heading">Top tracks</header>
+              <div class="sp-top-list"></div>
+            </section>
           </div>
         </section>
         <aside class="sp-side">
@@ -139,11 +149,15 @@
     const fillEl = container.querySelector(".sp-progress-fill");
     const queueList = container.querySelector(".sp-queue-list");
     const queueCount = container.querySelector(".sp-queue-count");
-    const artistCard = container.querySelector(".sp-artist-card");
+    const aboutGrid = container.querySelector(".sp-about-grid");
+    const topTracksPanel = container.querySelector(".sp-top-tracks");
+    const topTracksList = container.querySelector(".sp-top-list");
     const artistImg = container.querySelector(".sp-artist-img");
     const artistLink = container.querySelector(".sp-artist-link");
     const artistGenres = container.querySelector(".sp-artist-genres");
-    const artistFollowers = container.querySelector(".sp-artist-followers");
+    const aboutStats = container.querySelector(".sp-about-stats");
+    const aboutBio = container.querySelector(".sp-about-bio");
+    const aboutLinks = container.querySelector(".sp-about-links");
     const volEl = container.querySelector(".sp-vol");
     const lyricsHost = container.querySelector(".sp-lyrics-host");
 
@@ -223,7 +237,7 @@
         anchorProgress = 0;
         root.classList.remove("is-playing");
         playBtn.innerHTML = PLAY;
-        artistCard.hidden = true;
+        aboutGrid.hidden = true;
         lastArtistId = "";
         lastQueueKey = "";
         queueList.innerHTML = `<div class="sp-empty-row">Queue is unavailable while nothing is playing.</div>`;
@@ -257,7 +271,7 @@
         void loadArtist(track.artist_id);
       } else if (!track.artist_id) {
         lastArtistId = "";
-        artistCard.hidden = true;
+        aboutGrid.hidden = true;
       }
 
       const queueKey = track.uri || `${track.title}|${track.artist}`;
@@ -354,27 +368,129 @@
       }
     }
 
-    function applyArtist(artist) {
-      if (!artist) {
-        artistCard.hidden = true;
+    function linkPill(label, url, onClick) {
+      const link = document.createElement("a");
+      link.className = "sp-link-pill";
+      link.textContent = label;
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        onClick();
+      });
+      return link;
+    }
+
+    function renderTopTracks(tracks) {
+      topTracksList.innerHTML = "";
+      if (!tracks || !tracks.length) {
+        topTracksPanel.hidden = true;
+        aboutGrid.classList.add("is-solo");
         return;
       }
-      artistCard.hidden = false;
-      if (artist.image) {
-        artistImg.src = artist.image;
+      topTracksPanel.hidden = false;
+      aboutGrid.classList.remove("is-solo");
+      tracks.forEach((track, index) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "sp-top-track";
+        row.title = `Play ${track.name || "track"}`;
+        const num = document.createElement("span");
+        num.className = "sp-top-index";
+        num.textContent = String(index + 1);
+        row.appendChild(num);
+        if (track.art) {
+          const img = document.createElement("img");
+          img.className = "sp-top-art";
+          img.src = track.art;
+          img.alt = "";
+          row.appendChild(img);
+        }
+        const meta = document.createElement("span");
+        meta.className = "sp-top-meta";
+        const name = document.createElement("span");
+        name.className = "sp-top-name";
+        name.textContent = track.name || "";
+        const artist = document.createElement("span");
+        artist.className = "sp-top-artist";
+        artist.textContent = track.artists || track.album || "";
+        meta.append(name, artist);
+        row.appendChild(meta);
+        const dur = document.createElement("span");
+        dur.className = "sp-top-dur";
+        dur.textContent = fmtTime(track.duration_ms);
+        row.appendChild(dur);
+        row.addEventListener("click", async () => {
+          if (!track.uri) return;
+          try {
+            await ctx.native.spotifyPlayUri(track.uri);
+            await new Promise((resolve) => setTimeout(resolve, 450));
+            await refreshNow();
+            void loadQueue();
+          } catch (e) {
+            showStatus(`Top tracks: ${e.message || e}`);
+          }
+        });
+        topTracksList.appendChild(row);
+      });
+    }
+
+    function applyArtist(entry) {
+      if (!entry || !entry.id) {
+        aboutGrid.hidden = true;
+        return;
+      }
+      aboutGrid.hidden = false;
+      if (entry.image) {
+        artistImg.src = entry.image;
         artistImg.hidden = false;
       } else {
         artistImg.removeAttribute("src");
         artistImg.hidden = true;
       }
-      artistLink.textContent = `${artist.name || "Artist"} ↗`;
-      artistLink.href = artist.id ? `https://open.spotify.com/artist/${artist.id}` : "#";
+      artistLink.textContent = `${entry.name || "Artist"} ↗`;
+      artistLink.href = `https://open.spotify.com/artist/${entry.id}`;
       artistLink.onclick = (e) => {
         e.preventDefault();
-        openSpotify(artist.id ? `spotify:artist:${artist.id}` : "");
+        openSpotify(`spotify:artist:${entry.id}`);
       };
-      artistGenres.textContent = (artist.genres || []).slice(0, 3).join(" · ");
-      artistFollowers.textContent = artist.followers ? `${fmtNumber(artist.followers)} followers` : "";
+
+      const stats = [];
+      if (entry.followers) stats.push(`${fmtNumber(entry.followers)} followers`);
+      if (entry.popularity) stats.push(`${entry.popularity}/100 popularity`);
+      aboutStats.textContent = stats.join(" · ");
+
+      const genres = Array.isArray(entry.genres) ? entry.genres.filter(Boolean).slice(0, 4) : [];
+      artistGenres.textContent = genres.join(" · ");
+      artistGenres.hidden = !genres.length;
+
+      const summary = entry.web && entry.web.summary ? String(entry.web.summary).trim() : "";
+      aboutBio.textContent = summary;
+      aboutBio.hidden = !summary;
+
+      aboutLinks.innerHTML = "";
+      aboutLinks.appendChild(
+        linkPill("Spotify", `https://open.spotify.com/artist/${entry.id}`, () =>
+          openSpotify(`spotify:artist:${entry.id}`)
+        )
+      );
+      for (const link of (entry.web && entry.web.links) || []) {
+        if (!link || !link.url || !link.label) continue;
+        aboutLinks.appendChild(linkPill(link.label, link.url, () => openSpotifyRaw(link.url)));
+      }
+      aboutLinks.hidden = false;
+
+      renderTopTracks(entry.topTracks || []);
+    }
+
+    async function openSpotifyRaw(url) {
+      if (!url) return;
+      try {
+        await ctx.native.openUrl(url);
+      } catch {
+        // External links have no protocol fallback; the click failing is quiet.
+      }
     }
 
     async function loadArtist(id) {
@@ -384,37 +500,46 @@
       }
       const cache = appState(ctx).artistCache || (appState(ctx).artistCache = {});
       const hit = cache[id];
-      if (hit && Date.now() - Number(hit.at || 0) < 86_400_000) {
+      if (hit && hit.v === 2 && Date.now() - Number(hit.at || 0) < 86_400_000) {
         applyArtist(hit);
         return;
       }
-      artistCard.hidden = true;
-      const artist = await ctx.native.spotifyArtist(id).catch(() => null);
+      aboutGrid.hidden = true;
+      const [artist, topTracks] = await Promise.all([
+        ctx.native.spotifyArtist(id).catch(() => null),
+        ctx.native.spotifyArtistTopTracks(id).catch(() => []),
+      ]);
       if (!alive() || lastArtistId !== id) return;
-      if (!artist) {
-        // Keep the link usable even when metadata fails.
-        artistCard.hidden = false;
-        artistImg.hidden = true;
-        artistImg.removeAttribute("src");
-        artistLink.textContent = `${(current && current.artist) || "Artist"} ↗`;
-        artistLink.href = `https://open.spotify.com/artist/${id}`;
-        artistLink.onclick = (e) => {
-          e.preventDefault();
-          openSpotify(`spotify:artist:${id}`);
-        };
-        artistGenres.textContent = "";
-        artistFollowers.textContent = "";
-        return;
-      }
-      const entry = { ...artist, at: Date.now() };
-      cache[id] = entry;
-      const keys = Object.keys(cache);
-      if (keys.length > 30) {
-        keys.sort((a, b) => Number(cache[a].at || 0) - Number(cache[b].at || 0));
-        for (const key of keys.slice(0, keys.length - 30)) delete cache[key];
-      }
-      ctx.saveState();
+      const entry = {
+        id,
+        name: (artist && artist.name) || (current && current.artist) || "Artist",
+        image: (artist && artist.image) || "",
+        genres: (artist && artist.genres) || [],
+        followers: (artist && artist.followers) || 0,
+        popularity: (artist && artist.popularity) || 0,
+        topTracks: Array.isArray(topTracks) ? topTracks : [],
+        web: null,
+        v: 2,
+        at: Date.now(),
+      };
       applyArtist(entry);
+
+      // Enrich with Wikipedia/social links without delaying the basic card.
+      const web = await ctx.native.artistWebInfo(id).catch(() => null);
+      if (!alive() || lastArtistId !== id) return;
+      entry.web = web || null;
+      entry.at = Date.now();
+      applyArtist(entry);
+
+      if (artist) {
+        cache[id] = entry;
+        const keys = Object.keys(cache);
+        if (keys.length > 30) {
+          keys.sort((a, b) => Number(cache[a].at || 0) - Number(cache[b].at || 0));
+          for (const key of keys.slice(0, keys.length - 30)) delete cache[key];
+        }
+        ctx.saveState();
+      }
     }
 
     playBtn.addEventListener("click", async () => {

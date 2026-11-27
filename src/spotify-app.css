@@ -299,36 +299,130 @@
 }
 .sp-status.is-error { color: var(--red); }
 
-/* ---- artist card ---- */
-.sp-artist-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--panel-2) 76%, transparent);
+/* ---- about + top tracks ---- */
+.sp-about-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 14px;
+  flex: 0 0 auto;
+  margin-top: 14px;
 }
-.sp-artist-card[hidden] { display: none; }
+.sp-about-grid:not(.is-solo) { margin-top: auto; }
+.sp-about-grid[hidden] { display: none; }
+.sp-about-grid.is-solo { grid-template-columns: 1fr; }
+.sp-about-card,
+.sp-top-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel-2) 62%, transparent);
+}
+.sp-top-tracks[hidden] { display: none; }
+.sp-about-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .sp-artist-img {
   flex: 0 0 auto;
-  width: 58px;
-  height: 58px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--panel);
   border: 1px solid var(--border);
 }
-.sp-artist-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sp-artist-img[hidden] { display: none; }
+.sp-about-id { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .sp-artist-link {
   color: var(--text);
   font-weight: 600;
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   text-decoration: none;
 }
 .sp-artist-link:hover { color: var(--accent); }
-.sp-artist-genres,
-.sp-artist-followers { color: var(--muted); font-size: 0.74rem; }
+.sp-about-stats,
+.sp-artist-genres { color: var(--muted); font-size: 0.74rem; }
+.sp-artist-genres[hidden] { display: none; }
+.sp-about-bio {
+  margin: 0;
+  color: var(--text);
+  opacity: 0.82;
+  font-size: 0.79rem;
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+.sp-about-bio[hidden] { display: none; }
+.sp-about-links { display: flex; flex-wrap: wrap; gap: 5px; }
+.sp-link-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-decoration: none;
+  background: transparent;
+}
+.sp-link-pill:hover { color: var(--accent); border-color: var(--accent); }
+.sp-about-heading {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sp-top-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.sp-top-track {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sp-top-track:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sp-top-index {
+  flex: 0 0 auto;
+  width: 1em;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.sp-top-art {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--panel);
+}
+.sp-top-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sp-top-name,
+.sp-top-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-top-name { font-size: 0.8rem; }
+.sp-top-artist { color: var(--muted); font-size: 0.7rem; }
+.sp-top-dur {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---- side panels ---- */
 .sp-side { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
@@ -463,8 +557,9 @@
 html[data-theme="cozy"] .sp-hero {
   background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 92%, #fff), var(--panel));
 }
-html[data-theme="cozy"] .sp-artist-card {
-  background: color-mix(in srgb, var(--tint-peach) 38%, var(--panel));
+html[data-theme="cozy"] .sp-about-card,
+html[data-theme="cozy"] .sp-top-tracks {
+  background: color-mix(in srgb, var(--tint-peach) 30%, var(--panel));
   border-color: color-mix(in srgb, var(--border) 78%, var(--tint-peach));
 }
 html[data-theme="cozy"] .sp-queue-panel,
@@ -483,6 +578,7 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
   }
   .sp-side { min-height: 520px; }
   .sp-queue-panel { flex: 0 0 190px; }
+  .sp-about-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

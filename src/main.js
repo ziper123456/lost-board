@@ -608,6 +608,17 @@ async openFolder(path) {
   async spotifyTransfer(deviceId, play) {
     if (window.__TAURI__) return invoke("spotify_transfer", { deviceId, play });
   },
+  async spotifyArtistTopTracks(id) {
+    if (window.__TAURI__) return invoke("spotify_artist_top_tracks", { id });
+    return [];
+  },
+  async spotifyPlayUri(trackUri) {
+    if (window.__TAURI__) return invoke("spotify_play_uri", { trackUri });
+  },
+  async artistWebInfo(spotifyId) {
+    if (window.__TAURI__) return invoke("artist_web_info", { spotifyId });
+    return null;
+  },
   async systemStats() {
     if (window.__TAURI__) return invoke("get_system_stats");
     return { cpu_percent: 0, ram_used_bytes: 0, ram_total_bytes: 1, ram_percent: 0 };
