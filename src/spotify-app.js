@@ -59,6 +59,8 @@
     const appSettings = ctx.spotifyAppSettings();
     container.style.setProperty("--sp-font-size", `${appSettings.fontBase}px`);
     container.style.setProperty("--sp-vinyl-w", `${appSettings.vinyl}px`);
+    container.style.setProperty("--sp-lyrics-font", `${appSettings.lyricsFont}px`);
+    container.style.setProperty("--sp-lyrics-h", `${appSettings.lyricsHeight}px`);
     container.innerHTML = `
       <div class="sp-app">
         <section class="sp-hero">

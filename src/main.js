@@ -1585,6 +1585,8 @@ function spotifyAppSettings() {
   const s = app.settings;
   if (!Number.isFinite(Number(s.fontBase)) || s.fontBase < 11 || s.fontBase > 24) s.fontBase = 16;
   if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 480) s.vinyl = 320;
+  if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 28) s.lyricsFont = 16;
+  if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 700) s.lyricsHeight = 520;
   return s;
 }
 
@@ -1593,6 +1595,8 @@ function applySpotifyAppSettings() {
   if (!appViewEl) return;
   appViewEl.style.setProperty("--sp-font-size", `${s.fontBase}px`);
   appViewEl.style.setProperty("--sp-vinyl-w", `${s.vinyl}px`);
+  appViewEl.style.setProperty("--sp-lyrics-font", `${s.lyricsFont}px`);
+  appViewEl.style.setProperty("--sp-lyrics-h", `${s.lyricsHeight}px`);
 }
 
 function renderAppBar() {
@@ -6768,13 +6772,19 @@ function renderSpotifyAppSettings(panel) {
   row.innerHTML = `
     <label>Font size <input type="range" id="sp-font" min="11" max="24" step="1" value="${s.fontBase}" /> <span class="muted" id="sp-font-val">${s.fontBase}px</span></label>
     <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="480" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
+    <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="28" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
+    <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="700" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
     <button class="btn ghost" id="sp-reset">Reset</button>`;
   panel.appendChild(row);
 
   const font = row.querySelector("#sp-font");
   const vinyl = row.querySelector("#sp-vinyl");
+  const lyricsFont = row.querySelector("#sp-lyrics-font");
+  const lyricsHeight = row.querySelector("#sp-lyrics-h");
   const fontVal = row.querySelector("#sp-font-val");
   const vinylVal = row.querySelector("#sp-vinyl-val");
+  const lyricsFontVal = row.querySelector("#sp-lyrics-font-val");
+  const lyricsHeightVal = row.querySelector("#sp-lyrics-h-val");
   font.addEventListener("input", (e) => {
     s.fontBase = Number(e.target.value);
     fontVal.textContent = `${s.fontBase}px`;
@@ -6787,9 +6797,23 @@ function renderSpotifyAppSettings(panel) {
     applySpotifyAppSettings();
     saveState();
   });
+  lyricsFont.addEventListener("input", (e) => {
+    s.lyricsFont = Number(e.target.value);
+    lyricsFontVal.textContent = `${s.lyricsFont}px`;
+    applySpotifyAppSettings();
+    saveState();
+  });
+  lyricsHeight.addEventListener("input", (e) => {
+    s.lyricsHeight = Number(e.target.value);
+    lyricsHeightVal.textContent = `${s.lyricsHeight}px`;
+    applySpotifyAppSettings();
+    saveState();
+  });
   row.querySelector("#sp-reset").addEventListener("click", () => {
     s.fontBase = 16;
     s.vinyl = 320;
+    s.lyricsFont = 16;
+    s.lyricsHeight = 520;
     saveState();
     applySpotifyAppSettings();
     renderSpotifySettings();

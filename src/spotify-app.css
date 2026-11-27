@@ -430,13 +430,13 @@
 .sp-about-panel {
   display: flex;
   flex-direction: column;
-  flex: 1 1 48%;
-  min-height: 230px;
+  flex: 1 1 auto;
+  min-height: 130px;
   min-width: 0;
   overflow: hidden;
 }
 .sp-about-panel[hidden] { display: none; }
-.sp-side:has(.sp-about-panel[hidden]) .sp-lyrics-panel { flex: 1 1 100%; }
+.sp-side:has(.sp-about-panel[hidden]) .sp-lyrics-panel { flex: 1 1 100%; max-height: none; }
 .sp-side .sp-about-grid {
   grid-template-columns: 1fr;
   flex: 1 1 auto;
@@ -457,7 +457,11 @@
   overflow: hidden;
 }
 .sp-queue-panel { flex: 1 1 auto; min-height: 160px; margin-top: 2px; }
-.sp-lyrics-panel { flex: 1 1 52%; min-height: 220px; }
+.sp-lyrics-panel {
+  flex: 0 0 var(--sp-lyrics-h, 520px);
+  min-height: 220px;
+  max-height: calc(100% - 140px);
+}
 .sp-panel-head {
   display: flex;
   align-items: center;
@@ -520,6 +524,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 8px 12px 10px;
+  font-size: var(--sp-lyrics-font, 1em);
 }
 .sp-lyrics-host .lyr-wrap { height: 100%; }
 .sp-lyrics-host .lyr-track { display: none; }
