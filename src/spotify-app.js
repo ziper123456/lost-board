@@ -66,6 +66,7 @@
     container.style.setProperty("--sp-font-size", `${appSettings.fontBase}px`);
     container.style.setProperty("--sp-vinyl-w", `${appSettings.vinyl}px`);
     container.style.setProperty("--sp-lyrics-font", `${appSettings.lyricsFont}px`);
+    container.style.setProperty("--sp-focus-lyrics-font", `${appSettings.focusLyricsFont}px`);
     container.style.setProperty("--sp-lyrics-h", `${appSettings.lyricsHeight}px`);
     container.style.setProperty("--sp-split", String(appSettings.split));
     container.innerHTML = `
@@ -110,6 +111,7 @@
             <button class="sp-ctl sp-next" title="Next">${NEXT}</button>
             <button class="sp-ctl sp-repeat" title="Repeat">${REPEAT}</button>
           </div>
+          <div class="sp-focus-tools" hidden></div>
           <div class="sp-status" role="status"></div>
           <div class="sp-focus-lyrics" hidden></div>
           <section class="sp-queue-panel">
@@ -209,6 +211,7 @@
     const lyricsPanel = container.querySelector(".sp-lyrics-panel");
     const focusToggle = container.querySelector(".sp-focus-toggle");
     const focusLyrics = container.querySelector(".sp-focus-lyrics");
+    const focusTools = container.querySelector(".sp-focus-tools");
     const artistFallback = container.querySelector(".sp-artist-fallback");
     const searchOverlay = container.querySelector(".sp-search");
     const searchInput = container.querySelector(".sp-search-input");
@@ -332,17 +335,60 @@
       focusToggle.innerHTML = on ? COLLAPSE : EXPAND;
       focusToggle.title = on ? "Exit focus (Esc)" : "Focus mode (F)";
       focusToggle.setAttribute("aria-pressed", String(on));
+      const head = lyricsHost.querySelector(".lyr-head") || focusTools.querySelector(".lyr-head");
       if (on) {
         focusLyrics.hidden = false;
+        if (head) focusTools.appendChild(head);
+        focusTools.hidden = false;
         focusLyrics.appendChild(lyricsHost);
       } else {
+        if (head) {
+          const wrap = lyricsHost.querySelector(".lyr-wrap");
+          if (wrap) wrap.prepend(head);
+        }
         lyricsPanel.appendChild(lyricsHost);
+        focusTools.hidden = true;
         focusLyrics.hidden = true;
       }
       if (persist) {
         appSettings.focus = on;
         ctx.saveState();
       }
+    }
+
+    // ---- focus lyric tools ------------------------------------------------
+    let focusFontValue = null;
+    function applyFocusFont(next) {
+      const value = Math.max(10, Math.min(96, Math.round(Number(next) || appSettings.focusLyricsFont || 21)));
+      appSettings.focusLyricsFont = value;
+      container.style.setProperty("--sp-focus-lyrics-font", `${value}px`);
+      if (focusFontValue) focusFontValue.textContent = `${value}px`;
+      ctx.saveState();
+    }
+
+    function buildFocusFontControls() {
+      const tools = lyricsHost.querySelector(".lyr-tools");
+      if (!tools || tools.querySelector(".sp-focus-font")) return;
+      const group = document.createElement("span");
+      group.className = "sp-focus-font";
+      const down = document.createElement("button");
+      down.type = "button";
+      down.className = "btn ghost sp-focus-font-btn";
+      down.textContent = "A−";
+      down.title = "Smaller focus lyrics";
+      const value = document.createElement("span");
+      value.className = "sp-focus-font-val";
+      value.textContent = `${appSettings.focusLyricsFont}px`;
+      focusFontValue = value;
+      const up = document.createElement("button");
+      up.type = "button";
+      up.className = "btn ghost sp-focus-font-btn";
+      up.textContent = "A+";
+      up.title = "Larger focus lyrics";
+      down.addEventListener("click", () => applyFocusFont(appSettings.focusLyricsFont - 1));
+      up.addEventListener("click", () => applyFocusFont(appSettings.focusLyricsFont + 1));
+      group.append(down, value, up);
+      tools.appendChild(group);
     }
 
     // ---- idle auto-focus ----------------------------------------------------
@@ -1370,6 +1416,7 @@
 
     // Lyrics share the existing renderer and its Focus/Full/translation logic.
     ctx.renderLyrics(lyricsHost, ctx.spotifyLyricsComp());
+    buildFocusFontControls();
     if (appSettings.focus) setFocus(true, false);
 
     ctx.subscribePlayback(container, (track) => {
