@@ -431,7 +431,7 @@
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 130px;
+  min-height: 56px;
   min-width: 0;
   overflow: hidden;
 }
@@ -460,7 +460,7 @@
 .sp-lyrics-panel {
   flex: 0 0 var(--sp-lyrics-h, 520px);
   min-height: 220px;
-  max-height: calc(100% - 140px);
+  max-height: calc(100% - 70px);
 }
 .sp-panel-head {
   display: flex;
@@ -602,7 +602,7 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
   }
   .sp-side { min-height: 520px; }
   .sp-queue-panel { flex: 0 0 190px; }
-  .sp-about-panel { min-height: 320px; }
+  .sp-about-panel { min-height: 180px; }
   .sp-about-grid { grid-template-columns: 1fr; }
 }
 

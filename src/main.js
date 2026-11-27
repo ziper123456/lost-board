@@ -1584,9 +1584,9 @@ function spotifyAppSettings() {
   if (!app.settings || typeof app.settings !== "object") app.settings = {};
   const s = app.settings;
   if (!Number.isFinite(Number(s.fontBase)) || s.fontBase < 11 || s.fontBase > 24) s.fontBase = 16;
-  if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 480) s.vinyl = 320;
-  if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 28) s.lyricsFont = 16;
-  if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 700) s.lyricsHeight = 520;
+  if (!Number.isFinite(Number(s.vinyl)) || s.vinyl < 180 || s.vinyl > 900) s.vinyl = 320;
+  if (!Number.isFinite(Number(s.lyricsFont)) || s.lyricsFont < 10 || s.lyricsFont > 56) s.lyricsFont = 16;
+  if (!Number.isFinite(Number(s.lyricsHeight)) || s.lyricsHeight < 220 || s.lyricsHeight > 1100) s.lyricsHeight = 520;
   return s;
 }
 
@@ -6771,9 +6771,9 @@ function renderSpotifyAppSettings(panel) {
   row.className = "item-row sp-app-settings-row";
   row.innerHTML = `
     <label>Font size <input type="range" id="sp-font" min="11" max="24" step="1" value="${s.fontBase}" /> <span class="muted" id="sp-font-val">${s.fontBase}px</span></label>
-    <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="480" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
-    <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="28" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
-    <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="700" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
+    <label>Vinyl size <input type="range" id="sp-vinyl" min="180" max="900" step="10" value="${s.vinyl}" /> <span class="muted" id="sp-vinyl-val">${s.vinyl}px</span></label>
+    <label>Lyrics font <input type="range" id="sp-lyrics-font" min="10" max="56" step="1" value="${s.lyricsFont}" /> <span class="muted" id="sp-lyrics-font-val">${s.lyricsFont}px</span></label>
+    <label>Lyrics height <input type="range" id="sp-lyrics-h" min="220" max="1100" step="10" value="${s.lyricsHeight}" /> <span class="muted" id="sp-lyrics-h-val">${s.lyricsHeight}px</span></label>
     <button class="btn ghost" id="sp-reset">Reset</button>`;
   panel.appendChild(row);
 
