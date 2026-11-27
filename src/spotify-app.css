@@ -995,6 +995,7 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
 }
 .sp-app.is-focus .sp-stage { width: min(var(--sp-vinyl-w, 320px), 52vh); }
 .sp-app.is-focus .sp-head {
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   gap: 16px;
@@ -1014,10 +1015,10 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
 .sp-app.is-focus .sp-controls { justify-content: center; }
 .sp-app.is-focus .sp-controls .sp-play-main { width: 64px; height: 64px; }
 .sp-app.is-focus .sp-focus-lyrics {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
+  flex: 0 0 auto;
   min-height: 4.2em;
+  padding: 2px 0;
   text-align: center;
 }
 .sp-app.is-focus .sp-focus-lyrics .sp-lyrics-host {
@@ -1046,6 +1047,10 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
   font-size: 0.7em;
   font-weight: 400;
   margin-top: 0.3em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sp-app.is-focus .sp-focus-lyrics .lyr-line.cur .lyr-flag { display: none; }
 .sp-app.is-focus .sp-focus-lyrics .lyr-empty { text-align: center; }
