@@ -984,6 +984,9 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
 .sp-app.is-focus .sp-splitter,
 .sp-app.is-focus .sp-side,
 .sp-app.is-focus .sp-queue-panel { display: none; }
+/* Immersive focus: no volume row and no queue/playlist cover rack. */
+.sp-app.is-focus .sp-volume-row,
+.sp-app.is-focus .sp-cover-rack { display: none; }
 .sp-app.is-focus .sp-hero {
   width: 100%;
   max-width: 1040px;
