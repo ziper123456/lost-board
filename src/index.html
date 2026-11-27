@@ -97,6 +97,7 @@
               <select id="set-theme">
                 <option value="dark">Dark</option>
                 <option value="light">Light</option>
+                <option value="cozy">Cozy</option>
                 <option value="midnight">Midnight</option>
                 <option value="emerald">Emerald</option>
                 <option value="amber">Amber</option>
@@ -108,6 +109,10 @@
                 <option value="gruvbox">Gruvbox</option>
               </select>
             </label>
+            <div id="theme-hint" class="setting-hint" hidden>
+              <span id="theme-hint-text"></span>
+              <button id="theme-hint-apply" class="btn primary">Apply Cozy preset</button>
+            </div>
             <label>Corner radius <input id="set-radius" type="number" min="0" max="24" value="10" /></label>
             <label>Tool-wall background
               <input id="set-wall" type="checkbox" class="switch" />

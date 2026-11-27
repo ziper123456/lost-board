@@ -106,6 +106,19 @@ function lyricsTargetsConfig() {
 const THEMES = {
   dark: { bg: "#101014", panel: "#1a1a20", panel2: "#23232b", border: "#2c2c36", text: "#e6e6ea", muted: "#9a9aa6", accent: "#7c3aed" },
   light: { bg: "#f4f4f7", panel: "#ffffff", panel2: "#eceef2", border: "#d7d9e0", text: "#1c1c22", muted: "#6b6b76", accent: "#7c3aed" },
+  // Warm, low-contrast palette. Extra keys (chrome, tints, font) are optional
+  // and only consumed by applyAppearance; other themes leave them undefined.
+  cozy: {
+    bg: "#F5EBDD", panel: "#FBF5EC", panel2: "#F3E8D8", border: "#E4D8C7",
+    text: "#2F2A24", muted: "#6B6255", accent: "#9E4E30",
+    green: "#5E8C61", red: "#B4544E", amber: "#B9853F",
+    chrome: "#B7C9B4",
+    tintPeach: "#F6D6C9", tintButter: "#F5E4B8", tintBlue: "#D8E5EF", tintSage: "#DDE7D8",
+    accentSoft: "#E8C0AC",
+    tileShadow: "0 6px 20px rgba(122, 94, 66, 0.08)",
+    font: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+    googleFont: "DM Sans",
+  },
   midnight: { bg: "#0a0e14", panel: "#111722", panel2: "#18202e", border: "#243044", text: "#dbe4f0", muted: "#7d8ca3", accent: "#38bdf8" },
   emerald: { bg: "#0b1512", panel: "#0f1c18", panel2: "#15251f", border: "#1f3a30", text: "#e0f0e8", muted: "#7fa593", accent: "#10b981" },
   amber: { bg: "#16120a", panel: "#1f180d", panel2: "#2a2113", border: "#3a2f1c", text: "#f2ead9", muted: "#a89570", accent: "#f59e0b" },
@@ -145,8 +158,14 @@ function applyAppearance() {
     const from = Colors.mixHex(baseBg, dynamicPalette.accent, amt);
     const to = Colors.mixHex(baseBg, dynamicPalette.secondary || dynamicPalette.accent, amt * 0.6);
     boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${from}, ${to})`;
+  } else if (d.bgFrom && d.bgTo) {
+    boardBg = `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})`;
+  } else if (state.theme === "cozy") {
+    // A soft paper wash instead of a flat fill. It stays a single gradient so
+    // the drill popup can paint it as a background image layer unchanged.
+    boardBg = "radial-gradient(1200px 900px at 50% -15%, #FFFAF2 0%, #F5EBDD 55%, #F1E4D3 100%)";
   } else {
-    boardBg = d.bgFrom && d.bgTo ? `linear-gradient(${v("bgAngle", 135)}deg, ${d.bgFrom}, ${d.bgTo})` : "var(--bg)";
+    boardBg = "var(--bg)";
   }
   // Dynamic tiles: tint the border with the cover accent and give tiles a soft
   // cover-coloured glow (both scale with the accent blend).
@@ -155,7 +174,7 @@ function applyAppearance() {
   const effectiveTileBorder = dynOn
     ? Colors.mixHex(tileBorderBase, effectiveAccent, dynAmt)
     : v("tileBorderColor", "var(--border)");
-  let effectiveTileShadow = v("tileShadow", "none");
+  let effectiveTileShadow = v("tileShadow", t.tileShadow || "none");
   if (dynOn) {
     const c = Colors.hexToRgb(dynamicPalette.accent);
     const alpha = (0.12 + dynAmt * 0.22).toFixed(2);
@@ -180,6 +199,11 @@ function applyAppearance() {
   const effectiveInputBg = mixSurf("inputBg", t.panel2, 0.25, "var(--panel-2)");
   const effectiveScroll = mixSurf("scrollThumb", t.panel2, 0.4, "var(--panel-2)");
   const effectiveBtnHover = mixSurf("btnHoverBg", t.border, 0.4, "var(--border)");
+  // Theme-provided typography is a fallback below explicit design overrides.
+  const effectiveFont = v("font", t.font || '"Segoe UI", system-ui, sans-serif');
+  const effectiveGreen = v("green", t.green || "#22c55e");
+  const effectiveRed = v("red", t.red || "#ef4444");
+  const effectiveAmber = v("amber", t.amber || "#f59e0b");
   root.setProperty("--bg", v("bg", t.bg));
   root.setProperty("--panel", effectivePanel);
   root.setProperty("--panel-2", effectivePanel2);
@@ -188,9 +212,27 @@ function applyAppearance() {
   root.setProperty("--text", v("text", t.text));
   root.setProperty("--muted", v("muted", t.muted));
   root.setProperty("--accent", effectiveAccent);
-  root.setProperty("--green", v("green", "#22c55e"));
-  root.setProperty("--red", v("red", "#ef4444"));
-  root.setProperty("--amber", v("amber", "#f59e0b"));
+  root.setProperty("--green", effectiveGreen);
+  root.setProperty("--red", effectiveRed);
+  root.setProperty("--amber", effectiveAmber);
+  // Extra theme surfaces. Existing themes leave these unset, so the CSS
+  // fallbacks collapse them back to the normal panel colours.
+  root.setProperty("--chrome", t.chrome || effectivePanel2);
+  root.setProperty("--accent-soft", t.accentSoft || `color-mix(in srgb, ${effectiveAccent} 20%, ${effectivePanel})`);
+  root.setProperty("--tint-peach", t.tintPeach || effectivePanel2);
+  root.setProperty("--tint-butter", t.tintButter || effectivePanel2);
+  root.setProperty("--tint-blue", t.tintBlue || effectivePanel2);
+  root.setProperty("--tint-sage", t.tintSage || effectivePanel2);
+  // Scoped CSS (cozy-only chrome, tiles, scrims) keys off this attribute.
+  document.documentElement.dataset.theme = THEMES[state.theme] ? state.theme : "dark";
+  if (state.theme === "cozy") {
+    root.setProperty(
+      "color-scheme",
+      typeof Colors !== "undefined" && Colors.luminance(v("bg", t.bg)) > 0.5 ? "light" : "dark"
+    );
+  } else {
+    root.removeProperty("color-scheme");
+  }
   const radiusGlobal = v("radiusGlobal", state.cornerRadius != null ? state.cornerRadius : 10);
   root.setProperty("--radius", `${radiusGlobal}px`);
   root.setProperty("--btn-radius", px("radiusButton", 6));
@@ -206,9 +248,9 @@ function applyAppearance() {
   root.setProperty("--tile-border", effectiveTileBorder);
   root.setProperty("--tile-border-w", px("tileBorderWidth", 1));
   root.setProperty("--tile-shadow", effectiveTileShadow);
-  root.setProperty("--font", v("font", '"Segoe UI", system-ui, sans-serif'));
+  root.setProperty("--font", effectiveFont);
   root.setProperty("--font-size", px("fontBase", 16));
-  void ensureGoogleFontLoaded(d.googleFont);
+  void ensureGoogleFontLoaded(d.googleFont || t.googleFont);
   root.setProperty("--scroll-thumb", effectiveScroll);
   // Heading weight / transition are only set when overridden, so their per-element
   // CSS fallbacks preserve the current look until the user changes them.
@@ -240,15 +282,40 @@ function applyAppearance() {
       `--text:${v("text", t.text)};` +
       `--muted:${v("muted", t.muted)};` +
       `--accent:${effectiveAccent};` +
-      `--green:${v("green", "#22c55e")};` +
-      `--red:${v("red", "#ef4444")};` +
-      `--amber:${v("amber", "#f59e0b")};` +
+      `--green:${effectiveGreen};` +
+      `--red:${effectiveRed};` +
+      `--amber:${effectiveAmber};` +
       `--radius:${radiusGlobal}px;` +
-      `--font:${v("font", '"Segoe UI", system-ui, sans-serif')};` +
+      `--font:${effectiveFont};` +
       `--font-size:${v("fontBase", 16)}px;` +
       `--board-bg:${popupBoardBg};` +
       "}";
     void native.setPopupTheme(popupCss).catch(() => {});
+  }
+  updateThemeHint();
+}
+
+// The theme palette is layered *under* Design overrides. Tell the user when
+// their saved design tokens are hiding the selected theme (common after
+// switching an existing customized board to Cozy).
+function updateThemeHint() {
+  const el = document.getElementById("theme-hint");
+  if (!el) return;
+  const cozy = DESIGN_PRESETS.Cozy;
+  const keys = Object.keys(state.design || {});
+  const isCozyPreset =
+    keys.length === Object.keys(cozy).length &&
+    Object.entries(cozy).every(([k, val]) => state.design[k] === val);
+  if (state.theme !== "cozy" || isCozyPreset) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  const text = el.querySelector("#theme-hint-text");
+  if (text) {
+    text.textContent = keys.length
+      ? "Design overrides are active and take priority over the theme. Apply the Cozy preset for the full warm look."
+      : "For the full cozy look, apply the Cozy preset: rounded tiles, soft shadows and DM Sans.";
   }
 }
 
@@ -1199,6 +1266,15 @@ document.addEventListener("keydown", (e) => {
 const tileEls = new Map();
 const overlayEls = new Map();
 
+// Cozy-only pastel tile surfaces, rotated by stable tile order. Custom tile
+// backgrounds and a global tile-background design token always win.
+const COZY_TINTS = ["peach", "butter", "blue", "sage"];
+function cozyTileBackground(comp, index) {
+  if (state.theme !== "cozy") return "";
+  if ((comp.bgFrom && comp.bgTo) || comp.tileBg || state.design?.tileBg) return "";
+  return `color-mix(in srgb, var(--tint-${COZY_TINTS[index % COZY_TINTS.length]}) 68%, var(--panel))`;
+}
+
 function render() {
   closeCtxMenu(); // a re-render invalidates any open context menu
   // Unscaled grid size; a CSS transform scales it visually, and the scaler is
@@ -1228,7 +1304,9 @@ function render() {
     }
   }
 
+  let tileIndex = -1;
   for (const c of state.compartments) {
+    tileIndex += 1;
     const collapsed = c.collapsed === true;
     let rec = tileEls.get(c.id);
     if (!rec) {
@@ -1277,7 +1355,7 @@ function render() {
       "--tile-bg",
       c.bgFrom && c.bgTo
         ? `linear-gradient(${c.bgAngle != null ? c.bgAngle : 135}deg, ${c.bgFrom}, ${c.bgTo})`
-        : c.tileBg || ""
+        : c.tileBg || cozyTileBackground(c, tileIndex)
     );
 
     // Header — rebuild only when title / collapse / collapsible changed.
@@ -1344,6 +1422,10 @@ function renderOverlays() {
     rec.el.style.top = `${GUTTER / 2 + c.y * ROW_H + ROW_H}px`;
     rec.el.style.width = `${c.w * cw - GUTTER}px`;
     rec.el.style.height = `${(c.h - 1) * ROW_H - GUTTER}px`;
+    // Match the parent tile's cozy tint so an open collapsed tile blends in.
+    const overlayTint = cozyTileBackground(c, state.compartments.indexOf(c));
+    if (overlayTint) rec.el.style.setProperty("--tile-bg", overlayTint);
+    else rec.el.style.removeProperty("--tile-bg");
 
     const bs = tileBodySig(c);
     if (rec.bodySig !== bs) {
@@ -3882,6 +3964,7 @@ function appendCollapsibleRow(panel, comp) {
 // (text character or image file), and header/content background colors.
 function appendAppearanceRow(panel, comp) {
   comp.icon = comp.icon || { type: "", value: "" };
+  const theme = THEMES[state.theme] || THEMES.dark;
 
   const iconRow = document.createElement("div");
   iconRow.className = "item-row";
@@ -3895,7 +3978,7 @@ function appendAppearanceRow(panel, comp) {
     <input class="icon-text" type="text" maxlength="3" placeholder="e.g. ★" value="${escapeHtml(comp.icon.type === "text" ? comp.icon.value : "")}" ${comp.icon.type === "text" ? "" : "hidden"} />
     <button class="btn ghost icon-browse" ${comp.icon.type === "file" ? "" : "hidden"}>Browse…</button>
     <label class="icon-color-label" ${comp.icon.type === "file" ? "" : "hidden"}>SVG color
-      <input class="icon-color" type="color" value="${comp.iconColor || "#e6e6ea"}" />
+      <input class="icon-color" type="color" value="${comp.iconColor || theme.text}" />
     </label>
     <button class="btn ghost icon-color-reset" ${comp.iconColor ? "" : "hidden"} title="Reset color">✕</button>
     <span class="icon-preview">${
@@ -3913,10 +3996,10 @@ function appendAppearanceRow(panel, comp) {
   colorRow.className = "item-row";
   colorRow.innerHTML = `
     <label>Header color</label>
-    <input class="col-header" type="color" value="${comp.headerColor || "#23232b"}" />
+    <input class="col-header" type="color" value="${comp.headerColor || theme.panel2}" />
     <button class="btn ghost col-header-reset" title="Reset">✕</button>
     <label>Content color</label>
-    <input class="col-content" type="color" value="${comp.contentColor || "#1a1a20"}" />
+    <input class="col-content" type="color" value="${comp.contentColor || theme.panel}" />
     <button class="btn ghost col-content-reset" title="Reset">✕</button>`;
   panel.appendChild(colorRow);
 
@@ -4012,12 +4095,13 @@ function appendAppearanceRow(panel, comp) {
 // render() pushes the values as per-tile CSS variables.
 function appendDecorationRow(panel, comp) {
   const commit = () => { saveState(); render(); };
+  const theme = THEMES[state.theme] || THEMES.dark;
 
   const bRow = document.createElement("div");
   bRow.className = "item-row";
   bRow.innerHTML = `
     <label>Tile border</label>
-    <input type="color" class="td-border" value="${comp.borderColor || "#2c2c36"}" />
+    <input type="color" class="td-border" value="${comp.borderColor || theme.border}" />
     <button class="btn ghost td-reset" data-k="borderColor" title="Reset">✕</button>
     <label>Width <input type="number" class="td-bw" min="0" max="6" step="1" placeholder="1" value="${comp.borderWidth != null ? comp.borderWidth : ""}" /></label>
     <button class="btn ghost td-reset" data-k="borderWidth" title="Reset">✕</button>`;
@@ -4057,8 +4141,8 @@ function appendDecorationRow(panel, comp) {
   gRow.innerHTML = `
     <label>Tile gradient <input type="checkbox" class="td-grad-on switch" ${gradOn ? "checked" : ""} /></label>
     <span class="td-grad-fields" ${gradOn ? "" : "hidden"}>
-      <input type="color" class="td-grad-from" value="${comp.bgFrom || "#1a1a20"}" />
-      <input type="color" class="td-grad-to" value="${comp.bgTo || "#2a1a4a"}" />
+      <input type="color" class="td-grad-from" value="${comp.bgFrom || theme.bg}" />
+      <input type="color" class="td-grad-to" value="${comp.bgTo || theme.panel2}" />
       <input type="number" class="td-grad-angle" min="0" max="360" step="5" value="${comp.bgAngle != null ? comp.bgAngle : 135}" />
     </span>
     <button class="btn ghost td-reset" data-k="grad" title="Reset">✕</button>`;
@@ -4091,8 +4175,8 @@ function appendDecorationRow(panel, comp) {
   const gradFields = gRow.querySelector(".td-grad-fields");
   gRow.querySelector(".td-grad-on").addEventListener("change", (e) => {
     if (e.target.checked) {
-      comp.bgFrom = comp.bgFrom || "#1a1a20";
-      comp.bgTo = comp.bgTo || "#2a1a4a";
+      comp.bgFrom = comp.bgFrom || theme.bg;
+      comp.bgTo = comp.bgTo || theme.panel2;
       gradFields.hidden = false;
     } else {
       delete comp.bgFrom;
@@ -8331,7 +8415,8 @@ function cleanGoogleFontFamily(value) {
 function updateFontPreviewStatus() {
   const el = document.getElementById("fp-status");
   if (!el) return;
-  const family = state.design && state.design.googleFont;
+  const themeFont = (THEMES[state.theme] || {}).googleFont;
+  const family = (state.design && state.design.googleFont) || themeFont;
   if (!family) {
     el.textContent = "System / custom stack";
     el.classList.remove("error");
@@ -8413,6 +8498,7 @@ function ensureGoogleFontLoaded(family) {
 
 const DESIGN_SHADOWS = [
   ["None", "none"],
+  ["Warm", "0 8px 24px rgba(122, 94, 66, 0.12)"],
   ["Soft", "0 4px 16px rgba(0,0,0,0.35)"],
   ["Medium", "0 10px 30px rgba(0,0,0,0.5)"],
   ["Hard", "0 14px 40px rgba(0,0,0,0.65)"],
@@ -8420,6 +8506,17 @@ const DESIGN_SHADOWS = [
 ];
 const DESIGN_PRESETS = {
   Default: null,
+  Cozy: {
+    radiusGlobal: 18,
+    radiusTile: 20,
+    radiusButton: 12,
+    radiusInput: 12,
+    tileBorderWidth: 1,
+    tileShadow: "0 8px 24px rgba(122, 94, 66, 0.12)",
+    font: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+    googleFont: "DM Sans",
+    transitionMs: 170,
+  },
   Glass: { panel: "rgba(34,34,46,0.55)", panel2: "rgba(48,48,64,0.5)", borderColor: "rgba(255,255,255,0.14)", tileBg: "rgba(34,34,46,0.45)", tileBorderColor: "rgba(255,255,255,0.16)", radiusTile: 18, radiusButton: 12, tileShadow: "0 8px 30px rgba(0,0,0,0.45)", rowBg: "rgba(255,255,255,0.03)" },
   Neon: { bg: "#06090c", panel: "#0a1014", panel2: "#0e161c", borderColor: "#123a3a", accent: "#00ffc8", tileBorderColor: "#00ffc8", tileBorderWidth: 1, tileShadow: "0 0 14px rgba(0,255,200,0.30)", btnBg: "transparent", radiusButton: 4 },
   Soft: { radiusGlobal: 18, radiusTile: 20, radiusButton: 12, radiusInput: 12, panel: "#22222c", panel2: "#2c2c38", tileShadow: "0 6px 20px rgba(0,0,0,0.35)" },
@@ -8430,6 +8527,10 @@ function renderDesignSettings() {
   const panel = document.getElementById("design-list");
   if (!panel) return;
   state.design = state.design || {};
+  const theme = THEMES[state.theme] || THEMES.dark;
+  // Colour pickers start from the active theme when no override exists, so the
+  // swatch matches what is actually painted (important for light/cozy themes).
+  const themeColor = (key, fallback) => theme[key] || fallback;
   panel.innerHTML = "";
   // Live apply on every input, but debounce the (IPC) save so dragging a slider
   // doesn't spam save_state. Discrete changes save immediately.
@@ -8513,7 +8614,7 @@ function renderDesignSettings() {
   );
 
   heading("Background");
-  colorRow("Board color", "bg", "#101014");
+  colorRow("Board color", "bg", themeColor("bg", "#101014"));
   const gradOn = !!(state.design.bgFrom && state.design.bgTo);
   const gradRow = document.createElement("div");
   gradRow.className = "item-row";
@@ -8521,8 +8622,8 @@ function renderDesignSettings() {
   panel.appendChild(gradRow);
   gradRow.querySelector(".d-input").addEventListener("change", (e) => {
     if (e.target.checked) {
-      state.design.bgFrom = state.design.bgFrom || "#101014";
-      state.design.bgTo = state.design.bgTo || "#2a1a4a";
+      state.design.bgFrom = state.design.bgFrom || theme.bg;
+      state.design.bgTo = state.design.bgTo || theme.panel2;
     } else {
       delete state.design.bgFrom;
       delete state.design.bgTo;
@@ -8531,16 +8632,16 @@ function renderDesignSettings() {
     renderDesignSettings();
   });
   if (gradOn) {
-    colorRow("Gradient from", "bgFrom", "#101014");
-    colorRow("Gradient to", "bgTo", "#2a1a4a");
+    colorRow("Gradient from", "bgFrom", themeColor("bg", "#101014"));
+    colorRow("Gradient to", "bgTo", themeColor("panel2", "#2a1a4a"));
     numRow("Gradient angle", "bgAngle", 0, 360, 5, "°", 135);
   }
 
   heading("Surfaces & borders");
-  colorRow("Panel", "panel", "#1a1a20");
-  colorRow("Panel 2", "panel2", "#23232b");
-  colorRow("Border color", "borderColor", "#2c2c36");
-  colorRow("Tile border", "tileBorderColor", "#2c2c36");
+  colorRow("Panel", "panel", themeColor("panel", "#1a1a20"));
+  colorRow("Panel 2", "panel2", themeColor("panel2", "#23232b"));
+  colorRow("Border color", "borderColor", themeColor("border", "#2c2c36"));
+  colorRow("Tile border", "tileBorderColor", themeColor("border", "#2c2c36"));
   numRow("Tile border width", "tileBorderWidth", 0, 6, 1, "px", 1);
 
   heading("Radius");
@@ -8563,8 +8664,8 @@ function renderDesignSettings() {
 
   const fontRow = document.createElement("div");
   fontRow.className = "item-row";
-  const curFont = state.design.font || DESIGN_FONTS[0][1];
-  const googleFamily = state.design.googleFont || "";
+  const curFont = state.design.font || theme.font || DESIGN_FONTS[0][1];
+  const googleFamily = state.design.googleFont || (!state.design.font ? theme.googleFont || "" : "");
   const curatedGoogle = DESIGN_GOOGLE_FONTS.find(([, family]) => family === googleFamily);
   const googleValue = googleFamily
     ? curatedGoogle
@@ -8664,20 +8765,20 @@ function renderDesignSettings() {
   numRow("Heading weight", "headingWeight", 400, 800, 50, "", 600);
 
   heading("Buttons");
-  colorRow("Background", "btnBg", "#23232b");
-  colorRow("Text", "btnText", "#e6e6ea");
-  colorRow("Border", "btnBorder", "#2c2c36");
-  colorRow("Hover background", "btnHoverBg", "#2c2c36");
+  colorRow("Background", "btnBg", themeColor("panel2", "#23232b"));
+  colorRow("Text", "btnText", themeColor("text", "#e6e6ea"));
+  colorRow("Border", "btnBorder", themeColor("border", "#2c2c36"));
+  colorRow("Hover background", "btnHoverBg", themeColor("border", "#2c2c36"));
 
   heading("Rows, inputs & tiles");
-  colorRow("Row background", "rowBg", "#1a1a20");
-  colorRow("Input background", "inputBg", "#23232b");
-  colorRow("Tile background", "tileBg", "#1a1a20");
+  colorRow("Row background", "rowBg", themeColor("panel", "#1a1a20"));
+  colorRow("Input background", "inputBg", themeColor("panel2", "#23232b"));
+  colorRow("Tile background", "tileBg", themeColor("panel", "#1a1a20"));
   selectRow("Tile shadow", "tileShadow", DESIGN_SHADOWS, "none");
 
   heading("Accents & effects");
-  colorRow("Accent", "accent", "#7c3aed");
-  colorRow("Scrollbar thumb", "scrollThumb", "#23232b");
+  colorRow("Accent", "accent", themeColor("accent", "#7c3aed"));
+  colorRow("Scrollbar thumb", "scrollThumb", themeColor("panel2", "#23232b"));
   numRow("Transition speed", "transitionMs", 0, 600, 10, "ms", 150);
 }
 
@@ -8740,6 +8841,17 @@ document.getElementById("set-theme").addEventListener("change", (e) => {
   state.theme = THEMES[e.target.value] ? e.target.value : "dark";
   saveState();
   applyAppearance();
+  // Tile surfaces (cozy tints) and Design-tab swatch defaults depend on the
+  // theme, so refresh both after a theme switch.
+  render();
+  renderDesignSettings();
+});
+document.getElementById("theme-hint-apply").addEventListener("click", () => {
+  state.design = { ...DESIGN_PRESETS.Cozy };
+  saveState();
+  applyAppearance();
+  render();
+  renderDesignSettings();
 });
 document.getElementById("set-radius").addEventListener("change", (e) => {
   state.cornerRadius = Math.min(24, Math.max(0, Number(e.target.value) || 0));
