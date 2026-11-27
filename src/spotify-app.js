@@ -77,9 +77,6 @@
           <div class="sp-head">
             <div class="sp-head-main">
               <div class="sp-meta">
-                <div class="sp-kicker">
-                  <span class="sp-context-type"></span>
-                </div>
                 <div class="sp-title-row">
                   <h1 class="sp-title">Nothing playing</h1>
                   <button class="sp-link-btn sp-open-track" title="Open current track in Spotify" hidden>${EXTERNAL}</button>
@@ -160,7 +157,6 @@
     const titleEl = container.querySelector(".sp-title");
     const artistEl = container.querySelector(".sp-artist-line");
     const albumEl = container.querySelector(".sp-album");
-    const contextEl = container.querySelector(".sp-context-type");
     const openTrackBtn = container.querySelector(".sp-open-track");
     const playBtn = container.querySelector(".sp-play");
     const shuffleBtn = container.querySelector(".sp-shuffle");
@@ -207,6 +203,7 @@
     let playlists = null;
     let playlistsLoading = false;
     let drawerHideTimer = 0;
+    let rackCollapseTimer = 0;
     let queueItems = [];
     let contextKey = "";
     let contextInfo = null;
@@ -267,7 +264,6 @@
         titleEl.textContent = "Nothing playing";
         artistEl.textContent = "";
         albumEl.textContent = "";
-        contextEl.textContent = "";
         openTrackBtn.hidden = true;
         paintArt("");
         playing = false;
@@ -297,7 +293,6 @@
       titleEl.textContent = track.title || "Nothing playing";
       artistEl.textContent = track.artist || "";
       albumEl.textContent = track.album || "";
-      contextEl.textContent = track.context_type ? track.context_type.toUpperCase() : "";
       openTrackBtn.hidden = !track.uri;
       paintArt(track.art);
       playBtn.innerHTML = playing ? PAUSE : PLAY;
@@ -479,7 +474,28 @@
         );
       }
       coverRack.hidden = !coverRack.children.length;
+      if (coverRack.hidden) coverRack.classList.remove("is-expanded");
     }
+
+    function expandCoverRack() {
+      clearTimeout(rackCollapseTimer);
+      coverRack.classList.add("is-expanded");
+    }
+    function scheduleCollapseCoverRack() {
+      clearTimeout(rackCollapseTimer);
+      rackCollapseTimer = setTimeout(() => {
+        if (coverRack.matches(":hover") || coverRack.contains(document.activeElement)) return;
+        coverRack.classList.remove("is-expanded");
+      }, 160);
+    }
+    coverRack.addEventListener("mouseover", (e) => {
+      if (e.target.closest(".sp-cover-current")) expandCoverRack();
+    });
+    coverRack.addEventListener("mouseleave", scheduleCollapseCoverRack);
+    coverRack.addEventListener("focusin", (e) => {
+      if (e.target.closest(".sp-cover-current")) expandCoverRack();
+    });
+    coverRack.addEventListener("focusout", scheduleCollapseCoverRack);
 
     function linkPill(label, url, onClick) {
       const link = document.createElement("a");
@@ -940,6 +956,7 @@
     }, 250));
     ctx.addTimer(container, () => clearTimeout(statusTimer));
     ctx.addTimer(container, () => clearTimeout(drawerHideTimer));
+    ctx.addTimer(container, () => clearTimeout(rackCollapseTimer));
 
     void syncVolume();
     void refreshNow();

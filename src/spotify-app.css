@@ -413,6 +413,12 @@
 }
 .sp-cover-next:first-child { margin-left: 0; }
 .sp-cover-next-first { width: 76px; height: 76px; }
+.sp-cover-rack:not(.is-expanded) .sp-cover-next:nth-of-type(n + 2) { display: none; }
+.sp-cover-rack.is-expanded .sp-cover-next { animation: sp-cover-in 0.16s ease; }
+@keyframes sp-cover-in {
+  from { opacity: 0; transform: translateX(6px); }
+  to { opacity: 1; transform: none; }
+}
 .sp-cover-fallback {
   display: flex;
   align-items: center;
@@ -910,6 +916,7 @@ html[data-theme="cozy"] .sp-play-main { color: #fff; }
   .sp-tonearm-arm { transition: none; }
   .sp-progress-fill { transition: none; }
   .sp-ctl { transition: none; }
+  .sp-cover-rack.is-expanded .sp-cover-next { animation: none; }
 }
 
 /* Settings → Spotify app sliders (not inside .sp-app). */
